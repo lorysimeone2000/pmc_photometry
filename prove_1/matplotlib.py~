@@ -1,0 +1,33 @@
+import matplotlib.pyplot as plt
+import numpy as np
+
+ax1 = np.arange(10)
+
+ay1 = 5+10*ax1**0.5
+ay2 = 2+ax1**2
+
+plt.plot(ax1, ay1, 'o-', color='limegreen', label='Y1' )
+plt.plot(ax1, ay2, 'o',  color='red' ,      label='Y2' )
+
+fig,ax = plt.subplots(1,2, figsize=(12,6) )  
+print('ax shape', ax.shape)
+
+ax[0].plot(ax1, ay1, 's-', color='limegreen')
+ax[1].plot(ax1, ay2, '*',  color='red'  )
+
+ax[0].set_title('Grafico Y1', fontsize=15, color='limegreen')
+ax[1].set_title('Grafico Y2', fontsize=15, color='red')
+
+ax[0].set_xlabel('X1')
+ax[0].set_ylabel('Y1')
+
+ax[1].set_xlabel('X2')
+ax[1].set_ylabel('Y2')
+
+ax[0].tick_params(axis='x', labelsize=14)
+ax[0].tick_params(axis='y', labelsize=14)
+ax[0].set_xlim(-1, 10)
+ax[0].set_ylim(0, 40)
+ax[0].grid(True)
+
+plt.show()

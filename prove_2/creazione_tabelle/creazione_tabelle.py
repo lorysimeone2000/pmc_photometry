@@ -52,6 +52,8 @@ warnings.filterwarnings('ignore', category=VerifyWarning)
 # 0. CONFIGURAZIONE PERCORSI DINAMICA (PORTABILITÀ TOTALE)
 # =============================================================================
 
+# ciao
+
 def trova_cartella_base(nome_target="pmc_photometry"):
     """
     Risale la directory partendo dalla posizione dello script fino a trovare

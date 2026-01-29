@@ -7,8 +7,52 @@ from astropy.table import Table
 import warnings
 from astropy.wcs import FITSFixedWarning
 
+# --- IMPORT FONDAMENTALE PER LA PORTABILITÀ (AGGIUNTO) ---
+from pathlib import Path
+
 # Sopprime il warning FITSFixedWarning
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
+
+
+# =============================================================================
+# 0. NUOVA GESTIONE PERCORSI (LOGICA IMPORTATA)
+# =============================================================================
+
+def trova_cartella_base(nome_target="pmc_photometry"):
+    """
+    Risale la directory partendo dalla posizione dello script fino a trovare
+    la cartella target (es. 'pmc_photometry').
+    """
+    path_corrente = Path(__file__).resolve()
+
+    # Risaliamo fino a trovare la cartella target
+    for parent in [path_corrente] + list(path_corrente.parents):
+        if parent.name == nome_target:
+            return parent
+
+    # Fallback: se non la trova, usa la cartella dello script
+    print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
+    return path_corrente.parent
+
+def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
+    """
+    Cerca una CARTELLA ricorsivamente in tutte le sottocartelle di base_dir.
+    """
+    cartelle_trovate = [p for p in base_dir.rglob(nome_cartella_esatto) if p.is_dir()]
+
+    if not cartelle_trovate:
+        return None
+
+    cartelle_trovate.sort(key=lambda p: len(str(p)))
+
+    if len(cartelle_trovate) > 1:
+        print(f"INFO: Trovate {len(cartelle_trovate)} cartelle '{nome_cartella_esatto}'. Uso la prima: {cartelle_trovate[0].relative_to(base_dir)}")
+
+    return cartelle_trovate[0]
+
+# =============================================================================
+# FINE NUOVA GESTIONE PERCORSI
+# =============================================================================
 
 
 # --- FUNZIONI DI UTILITÀ ---
@@ -47,13 +91,27 @@ def somma_magnitudini(series_mags):
 run = 1
 INDICE_IMMAGINE_RIFERIMENTO = 35
 
-# Percorsi
-base_path = "/home/lorysimeone/tesi_magistrale/prove_2/tabelle/tabelle_unite"
-cartella_csv = os.path.join(base_path, f"tabelle_unite_run_{run}")
+# --- MODIFICA: APPLICAZIONE LOGICA DI RICERCA DINAMICA ---
 
-if not os.path.exists(cartella_csv):
-    print(f"Errore: La cartella {cartella_csv} non esiste.")
+# 1. Trova la base del progetto
+BASE_DIR = trova_cartella_base("pmc_photometry")
+print(f"--- CONFIGURAZIONE SISTEMA ---")
+print(f"Cartella Base rilevata: {BASE_DIR}")
+
+# 2. Cerca la cartella specifica del run
+nome_cartella_target = f"tabelle_unite_run_{run}"
+path_cartella_csv = cerca_cartella_nel_progetto(BASE_DIR, nome_cartella_target)
+
+if path_cartella_csv is None:
+    print(f"Errore: La cartella {nome_cartella_target} non è stata trovata in nessuna sottocartella di {BASE_DIR}.")
     exit()
+
+# Conversione in stringa per compatibilità con il codice originale
+cartella_csv = str(path_cartella_csv)
+print(f"Cartella dati trovata: {path_cartella_csv.relative_to(BASE_DIR)}")
+print(f"------------------------------")
+
+# --- FINE MODIFICA PERCORSI ---
 
 # Lista file ordinata
 file_csv = sorted([f for f in os.listdir(cartella_csv) if f.endswith('.csv')])

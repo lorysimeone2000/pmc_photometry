@@ -1,11 +1,11 @@
 import pandas as pd
-#pd.set_option('display.show_dimensions', False)
+# pd.set_option('display.show_dimensions', False)
 from photutils.datasets import make_100gaussians_image
 from photutils.background import Background2D, MedianBackground
 from astropy.convolution import convolve
 from photutils.segmentation import make_2dgaussian_kernel
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm # permette di avere la scala logaritmica
+from matplotlib.colors import LogNorm  # permette di avere la scala logaritmica
 from scipy.optimize import curve_fit
 from photutils.segmentation import detect_sources
 from photutils.segmentation import SourceCatalog
@@ -41,20 +41,87 @@ import warnings
 from astropy.io.fits.verify import VerifyWarning
 import warnings
 from astropy.wcs import FITSFixedWarning
-warnings.filterwarnings('ignore', category=FITSFixedWarning) # Sopprime il warning FITSFixedWarning
 
+warnings.filterwarnings('ignore', category=FITSFixedWarning)  # Sopprime il warning FITSFixedWarning
+
+# --- IMPORT FONDAMENTALE PER LA PORTABILITÀ ---
 from pathlib import Path
 
 # sopprimo i warning non critici
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', category=VerifyWarning)
 
-# inizializzo Vizier con i suoi parametri di default
+
+# =============================================================================
+# 0. CONFIGURAZIONE PERCORSI DINAMICA (PORTABILITÀ TOTALE)
+# =============================================================================
+
+def trova_cartella_base(nome_target="pmc_photometry"):
+    """
+    Risale la directory partendo dalla posizione dello script fino a trovare
+    la cartella target (es. 'pmc_photometry').
+    """
+    path_corrente = Path(__file__).resolve()
+
+    # Risaliamo fino a trovare la cartella target
+    for parent in [path_corrente] + list(path_corrente.parents):
+        if parent.name == nome_target:
+            return parent
+
+    # Fallback: se non la trova, usa la cartella dello script
+    print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
+    return path_corrente.parent
+
+
+def cerca_file_nel_progetto(base_dir, nome_file_esatto):
+    """
+    Cerca un file ricorsivamente in tutte le sottocartelle di base_dir.
+    """
+    files_trovati = list(base_dir.rglob(nome_file_esatto))
+
+    if not files_trovati:
+        return None
+
+    if len(files_trovati) > 1:
+        files_trovati.sort(key=lambda p: len(str(p)))
+        print(
+            f"INFO: Trovati {len(files_trovati)} file '{nome_file_esatto}'. Uso il primo: {files_trovati[0].relative_to(base_dir)}")
+
+    return files_trovati[0]
+
+
+def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
+    """
+    Cerca una CARTELLA ricorsivamente in tutte le sottocartelle di base_dir.
+    """
+    cartelle_trovate = [p for p in base_dir.rglob(nome_cartella_esatto) if p.is_dir()]
+
+    if not cartelle_trovate:
+        return None
+
+    cartelle_trovate.sort(key=lambda p: len(str(p)))
+
+    if len(cartelle_trovate) > 1:
+        print(
+            f"INFO: Trovate {len(cartelle_trovate)} cartelle '{nome_cartella_esatto}'. Uso la prima: {cartelle_trovate[0].relative_to(base_dir)}")
+
+    return cartelle_trovate[0]
+
+
+# Definisco la BASE_DIR dinamicamente
+BASE_DIR = trova_cartella_base("pmc_photometry")
+
+print(f"--- CONFIGURAZIONE SISTEMA ---")
+print(f"Cartella Base rilevata: {BASE_DIR}")
+print(f"------------------------------")
+
+# Inizializzo Vizier
 vizier = Vizier(
     catalog="II/389/ps1_dr2",
-    columns=['objID','RAJ2000', 'DEJ2000', 'gmag'],
+    columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag'],
     row_limit=-1
 )
+
 
 def salva_csv_con_header_fits(dataframe, header_fits, filename, nome_file_fits):
     """Salva il DataFrame in CSV includendo l'header FITS come commenti"""
@@ -68,108 +135,112 @@ def salva_csv_con_header_fits(dataframe, header_fits, filename, nome_file_fits):
         # Scrivi il DataFrame
         dataframe.to_csv(f, index=False)
 
-def tabella_catalogo(image_file_,magnitudine_massima): # questa funzione restituisce la tabella delle sorgenti catalogate nel riquadro della pmc
-        """
-        Seleziona le stelle del catalogo che rientrano nel riquadro e che sono sotto una certa magnitudine
-        e che non stanno entro 7 pixel dal bordo
 
-        Parameters:
-        image_file_ (string): percorso del file da cui estrarre l'header e quindi le coordinate dell'astrometria
-        magnitudine_massima (float): magnitudina massima presa dal catalogo
+def tabella_catalogo(image_file_,
+                     magnitudine_massima):  # questa funzione restituisce la tabella delle sorgenti catalogate nel riquadro della pmc
+    """
+    Seleziona le stelle del catalogo che rientrano nel riquadro e che sono sotto una certa magnitudine
+    e che non stanno entro 7 pixel dal bordo
 
-        Returns:
-        astropy.table.Table: Tabella delle stelle del catalogo che rientrano nel riquadro e che sono sotto una certa magnitudine
-        """
+    Parameters:
+    image_file_ (string): percorso del file da cui estrarre l'header e quindi le coordinate dell'astrometria
+    magnitudine_massima (float): magnitudina massima presa dal catalogo
 
-        hdu_list_ = fits.open(image_file_)
+    Returns:
+    astropy.table.Table: Tabella delle stelle del catalogo che rientrano nel riquadro e che sono sotto una certa magnitudine
+    """
+    #
+    # This image helps visualize how a FITS file stores the Header (metadata/WCS) separately from the Data (pixel array).
+    hdu_list_ = fits.open(image_file_)
 
-        wcs = WCS(hdu_list_[0].header)  # creo un oggetto WCS usando l'header del file FITS,
-        # che contiene le informazioni per le trasformazioni di coordinate
-        data_ = hdu_list_[0].data
+    wcs = WCS(hdu_list_[0].header)  # creo un oggetto WCS usando l'header del file FITS,
+    # che contiene le informazioni per le trasformazioni di coordinate
+    data_ = hdu_list_[0].data
 
-        # Definisco il bordo
-        bordo = 7
-        h, w = data_.shape[0], data_.shape[1]
+    # Definisco il bordo
+    bordo = 7
+    h, w = data_.shape[0], data_.shape[1]
 
-        # tolgo le stelle che non vorrei siano prese da Vizier
-        # mag_limite_tra_hipparco_e_vizier = 7.
-        tbl_catalogo_vizier = tbl_riquadro_esterno_vizier[
-            (tbl_riquadro_esterno_vizier['gmag'] >= mag_limite_tra_hipparco_e_vizier)
-        ]
+    # tolgo le stelle che non vorrei siano prese da Vizier
+    # mag_limite_tra_hipparco_e_vizier = 7.
+    tbl_catalogo_vizier = tbl_riquadro_esterno_vizier[
+        (tbl_riquadro_esterno_vizier['gmag'] >= mag_limite_tra_hipparco_e_vizier)
+    ]
 
+    '''# Esploro il catalogo
+    print("\n=== INFORMAZIONI DEL CATALOGO ===")
+    print(f"Numero di stelle nel catalogo: {len(tbl_catalogo_hipparco)}")
+    print(f"Nomi delle colonne: {tbl_catalogo_hipparco.colnames}")'''
 
+    # adesso mi costruisco una mia tabella astropy complessiva
 
-        '''# Esploro il catalogo
-        print("\n=== INFORMAZIONI DEL CATALOGO ===")
-        print(f"Numero di stelle nel catalogo: {len(tbl_catalogo_hipparco)}")
-        print(f"Nomi delle colonne: {tbl_catalogo_hipparco.colnames}")'''
+    # ricreo le colonne dei cataloghi
 
-        # adesso mi costruisco una mia tabella astropy complessiva
+    nome_catalogo_vizier = []
+    for i in range(len(tbl_catalogo_vizier)): nome_catalogo_vizier.append("II/389/ps1_dr2")
+    colonne_vizier = {
+        'ID': tbl_catalogo_vizier['objID'],
+        'RAJ2000': tbl_catalogo_vizier['RAJ2000'],
+        'DEJ2000': tbl_catalogo_vizier['DEJ2000'],
+        'Mag': tbl_catalogo_vizier['gmag'],
+        'Catalogo': nome_catalogo_vizier
+    }
 
-        # ricreo le colonne dei cataloghi
+    nome_catalogo_hipparco = []
+    for i in range(len(tbl_catalogo_hipparco)): nome_catalogo_hipparco.append("I/239/hip_main")
+    colonne_hipparco = {
+        'Catalogo': nome_catalogo_hipparco,
+        'ID': tbl_catalogo_hipparco['HIP'],
+        'RAJ2000': tbl_catalogo_hipparco['_RAJ2000'],
+        'DEJ2000': tbl_catalogo_hipparco['_DEJ2000'],
+        'Mag': tbl_catalogo_hipparco['Vmag'],
+    }
 
-        nome_catalogo_vizier = []
-        for i in range(len(tbl_catalogo_vizier)): nome_catalogo_vizier.append("II/389/ps1_dr2")
-        colonne_vizier = {
-            'ID': tbl_catalogo_vizier['objID'],
-            'RAJ2000': tbl_catalogo_vizier['RAJ2000'],
-            'DEJ2000': tbl_catalogo_vizier['DEJ2000'],
-            'Mag': tbl_catalogo_vizier['gmag'],
-            'Catalogo': nome_catalogo_vizier
-        }
+    t1 = Table(colonne_vizier)
+    t2 = Table(colonne_hipparco)
 
-        nome_catalogo_hipparco = []
-        for i in range(len(tbl_catalogo_hipparco)): nome_catalogo_hipparco.append("I/239/hip_main")
-        colonne_hipparco = {
-            'Catalogo': nome_catalogo_hipparco,
-            'ID': tbl_catalogo_hipparco['HIP'],
-            'RAJ2000': tbl_catalogo_hipparco['_RAJ2000'],
-            'DEJ2000': tbl_catalogo_hipparco['_DEJ2000'],
-            'Mag': tbl_catalogo_hipparco['Vmag'],
-        }
+    tbl_unita_estesa = vstack([t1, t2])
+    tbl_unita_estesa['Mag'].description = 'Magnitudine AB nel filtro g di Pan-STARRS'
+    # print("Tabella estesa:\n", tbl_unita_estesa)
 
-        t1 = Table(colonne_vizier)
-        t2 = Table(colonne_hipparco)
+    # --- MODIFICA QUI ---
 
-        tbl_unita_estesa = vstack([t1, t2])
-        tbl_unita_estesa['Mag'].description = 'Magnitudine AB nel filtro g di Pan-STARRS'
-        # print("Tabella estesa:\n", tbl_unita_estesa)
+    # Invece di proiettare gli angoli sul cielo, proiettiamo il catalogo sui pixel
 
-        # --- MODIFICA QUI ---
+    # 1. Creiamo un oggetto SkyCoord per tutte le stelle della tabella unita
+    coords_catalogo = SkyCoord(
+        ra=tbl_unita_estesa['RAJ2000'],
+        dec=tbl_unita_estesa['DEJ2000'],
+        unit=u.deg
+    )
 
-        # Invece di proiettare gli angoli sul cielo, proiettiamo il catalogo sui pixel
+    #
+    # This diagram illustrates how WCS maps the curved celestial sphere (RA/Dec) onto a flat 2D pixel grid.
+    # 2. Convertiamo tutte le coordinate celesti in coordinate pixel (x, y)
+    x_pix, y_pix = wcs.world_to_pixel(coords_catalogo)
 
-        # 1. Creiamo un oggetto SkyCoord per tutte le stelle della tabella unita
-        coords_catalogo = SkyCoord(
-            ra=tbl_unita_estesa['RAJ2000'],
-            dec=tbl_unita_estesa['DEJ2000'],
-            unit=u.deg
-        )
+    # 3. Creiamo la maschera usando le coordinate pixel
+    # Vogliamo le stelle che sono DENTRO i bordi:
+    # x deve essere > bordo E < (larghezza - bordo)
+    # y deve essere > bordo E < (altezza - bordo)
+    mask_bordo = (
+            (x_pix >= bordo) &
+            (x_pix < (w - bordo)) &
+            (y_pix >= bordo) &
+            (y_pix < (h - bordo))
+    )
 
-        # 2. Convertiamo tutte le coordinate celesti in coordinate pixel (x, y)
-        x_pix, y_pix = wcs.world_to_pixel(coords_catalogo)
+    # 4. Applichiamo la maschera alla tabella
+    tbl_cataloghi_ = tbl_unita_estesa[mask_bordo]
 
-        # 3. Creiamo la maschera usando le coordinate pixel
-        # Vogliamo le stelle che sono DENTRO i bordi:
-        # x deve essere > bordo E < (larghezza - bordo)
-        # y deve essere > bordo E < (altezza - bordo)
-        mask_bordo = (
-                (x_pix >= bordo) &
-                (x_pix < (w - bordo)) &
-                (y_pix >= bordo) &
-                (y_pix < (h - bordo))
-        )
+    # Opzionale: Se vuoi salvare anche le coordinate pixel nella tabella risultante
+    # tbl_cataloghi_['x_pix'] = x_pix[mask_bordo]
+    # tbl_cataloghi_['y_pix'] = y_pix[mask_bordo]
 
-        # 4. Applichiamo la maschera alla tabella
-        tbl_cataloghi_ = tbl_unita_estesa[mask_bordo]
+    hdu_list_.close()  # È buona norma chiudere il file fits
 
-        # Opzionale: Se vuoi salvare anche le coordinate pixel nella tabella risultante
-        # tbl_cataloghi_['x_pix'] = x_pix[mask_bordo]
-        # tbl_cataloghi_['y_pix'] = y_pix[mask_bordo]
+    return tbl_cataloghi_
 
-        hdu_list_.close()  # È buona norma chiudere il file fits
-
-        return tbl_cataloghi_
 
 def calcolo_distanze(tbl_trovate, tbl_catalogate, image_file):
     """
@@ -218,16 +289,19 @@ def calcolo_distanze(tbl_trovate, tbl_catalogate, image_file):
                                      dec=tbl_catalogate['DEJ2000'],
                                      unit=u.deg)
 
-    print("numero di stelle catalogate" , np.shape(coords_catalogate))
+    print("numero di stelle catalogate", np.shape(coords_catalogate))
 
     # calcolo le distanze di tutti i centroidi da tutte le stelle catalogate
     distanze_minime = []
     corrispondenze = []
-    righe_tabella_combinata = [] # lista per la tabella combinata
+    righe_tabella_combinata = []  # lista per la tabella combinata
 
+    #
+    # Useful to understand that 'separation' calculates the Great Circle distance, not linear Euclidean distance.
     for i, coord_trovata in enumerate(coords_trovate):
         # calcolo la distanza da tutte le stelle catalogate
-        distanze_singola = coord_trovata.separation(coords_catalogate) # Calcola la distanza angolare tra la singola stella trovata
+        distanze_singola = coord_trovata.separation(
+            coords_catalogate)  # Calcola la distanza angolare tra la singola stella trovata
         # (coord_trovata) e tutte le stelle del catalogo (coords_catalogate). Restituisce un array di distanze angolari.
         # if i == 1: print(np.shape(distanze_singola))
         # trovo la distanza minima e l'indice della stella più vicina
@@ -239,6 +313,7 @@ def calcolo_distanze(tbl_trovate, tbl_catalogate, image_file):
     hdu_list.close()
 
     return distanze_gradi
+
 
 def converti_valore(valore):
     """
@@ -272,6 +347,7 @@ def converti_valore(valore):
     # Altrimenti restituisci la stringa originale
     return valore
 
+
 def leggi_header_da_csv(filename):
     """Legge l'header FITS dal file CSV"""
     header_dict = {}
@@ -289,25 +365,60 @@ def leggi_header_da_csv(filename):
 
     return header_dict
 
-run = int(input("Quale run vuoi elaborare: ")) # numero run: 1, 2 o 3
 
-'''# Cartella contenente i file CSV
-cartella_csv = f"/home/lorysimeone/tesi_magistrale/prove_2/tabelle/sorgenti_catalogate_run/sorgenti_catalogate_run_{run}"
+run = int(input("Quale run vuoi elaborare: "))  # numero run: 1, 2 o 3
 
-file_csv = sorted([f for f in os.listdir(cartella_csv) if f.endswith('.csv')]) # lista tutti i file CSV ordinati per nome
+# =============================================================================
+# RICERCA FILE DALLA CARTELLA RUN (NUOVA LOGICA)
+# =============================================================================
 
-print(f"Trovati {len(file_csv)} file CSV:")
-for file in file_csv:
-    print(f"  - {file}")'''
+# --- RICERCA CARTELLE RUN ---
+nome_cartella_run = f"20250120_run{run}"
+found_folders = list(BASE_DIR.rglob(nome_cartella_run))
 
-# Leggo la lista
+if not found_folders:
+    print(f"ERRORE: Cartella '{nome_cartella_run}' non trovata in nessuna sottocartella di {BASE_DIR}")
+    exit()
 
-with open(f'/home/lorysimeone/tesi_magistrale/prove_2/liste_percorsi_run/lista_immagini_run_{run}.txt', 'r') as file:
-    file_list = file.read().splitlines() # creo una lista di stringhe che sono i percorsi
-# print(file_list)
+run_folder = found_folders[0]
+if len(found_folders) > 1:
+    print(f"AVVISO: Trovate {len(found_folders)} cartelle. Uso la prima: {run_folder}")
+else:
+    print(f"Cartella dati trovata: {run_folder.relative_to(BASE_DIR)}")
 
-# definisco la cartella di output
-output_dir = f"/home/lorysimeone/tesi_magistrale/prove_2/tabelle/sorgenti_catalogate_run/sorgenti_catalogate_run_{run}"
+# Cerca i file FITS
+estensioni_valide = ['*.fit', '*.fits', '*.FIT', '*.FITS']
+file_list = []
+for ext in estensioni_valide:
+    file_list.extend(run_folder.glob(ext))
+
+file_list = sorted(file_list, key=lambda x: x.name)
+file_list = [str(f) for f in file_list]
+
+if not file_list:
+    print(f"ERRORE: Nessun file FITS trovato in {run_folder}")
+    exit()
+
+print(f"Trovati {len(file_list)} file da elaborare.")
+
+# =============================================================================
+# FINE RICERCA FILE
+# =============================================================================
+
+
+# --- GESTIONE DINAMICA CARTELLA OUTPUT ---
+cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR, "tabelle")
+if cartella_tabelle is None:
+    # Crea se non esiste in base_dir
+    cartella_tabelle = BASE_DIR / "tabelle"
+    cartella_tabelle.mkdir(exist_ok=True)
+
+# Crea sottocartella specifica
+output_dir = cartella_tabelle / "sorgenti_catalogate_run" / f"sorgenti_catalogate_run_{run}"
+output_dir.mkdir(parents=True, exist_ok=True)
+output_dir_str = str(output_dir)
+
+print(f"Cartella Output: {output_dir.relative_to(BASE_DIR)}")
 
 i = 0
 j = 0
@@ -318,22 +429,18 @@ tempo = []
 # Itera su tutti i file fits
 for percorso_file_fits in file_list:
     i += 1
-    #filename = os.path.join(cartella_csv, nome_file) # nome del file csv
-    # print(filename)
-    #dataframe = pd.read_csv(filename, skiprows=59)
-    #header_dal_csv = leggi_header_da_csv(filename)
-    #percorso_file_fits = header_dal_csv['PERCORSO_FILE']
+    # Check esistenza file
+    if not os.path.exists(percorso_file_fits):
+        print(f"AVVISO: File non trovato, salto: {percorso_file_fits}")
+        continue
+
     hdu_list = fits.open(percorso_file_fits)
     image_header = hdu_list[0].header
 
-    #tbl_trovate = Table.from_pandas(dataframe)
-    if i == 1: # chiamo il sito una volta sola su un'immagine più grande per non mandarlo in down
-        '''print("Nome del file fits:" , percorso_file_fits)
-        print("Nome del file csv:" , filename)
-        print("Tabella astropy ricavata:\n" , tbl_trovate)'''
+    # tbl_trovate = Table.from_pandas(dataframe)
+    if i == 1:  # chiamo il sito una volta sola su un'immagine più grande per non mandarlo in down
 
-
-        #header = leggi_header_da_csv(filename)
+        # header = leggi_header_da_csv(filename)
 
         # prendo un riquadro globale leggermente più grande del riquadro della pmc
 
@@ -349,40 +456,28 @@ for percorso_file_fits in file_list:
         basso_sinistra = w.pixel_to_world(0, 0)
         basso_destra = w.pixel_to_world(0, 2047)
 
-        '''print(f"Coordinate in alto a destra: {alto_destra}")
-        print(f"Coordinate in basso a sinistra: {basso_sinistra}")
-        print(f"Coordinate in alto a sinistra: {alto_sinistra}")
-        print(f"Coordinate in basso a destra: {basso_destra}")
-
-        ra_alto_destra = alto_destra.ra.deg
-        ra_basso_destra = basso_destra.ra.deg
-        ra_basso_sinistra = basso_sinistra.ra.deg
-        ra_alto_sinistra = alto_sinistra.ra.deg
-        dec_alto_destra = alto_destra.dec.deg
-        dec_basso_destra = basso_destra.dec.deg
-        dec_basso_sinistra = basso_sinistra.dec.deg
-        dec_alto_sinistra = alto_sinistra.dec.deg
-
-        ra_max = np.max(np.array([ra_alto_destra, ra_basso_sinistra, ra_basso_destra, ra_alto_sinistra]))
-        ra_min = np.min(np.array([ra_alto_destra, ra_basso_sinistra, ra_basso_destra, ra_alto_sinistra]))
-        dec_max = np.max(np.array([dec_alto_destra, dec_basso_sinistra, dec_basso_destra, dec_alto_sinistra]))
-        dec_min = np.min(np.array([dec_alto_destra, dec_basso_sinistra, dec_basso_destra, dec_alto_sinistra]))'''
-
         centro = SkyCoord(ra_centro, dec_centro, unit=u.deg)
 
+        #
+        # Illustrates the "query_region" operation: selecting stars within a specific angular radius around a central coordinate.
         # creo un riquadro esterno leggermente più grande per assicurarmi che anche gli elementi successivi della run
         # rientrino nella query, poi farò il taglio preciso nella tabella astropy
         riquadro_esterno_vizier = vizier.query_region(coord.SkyCoord(ra=ra_centro, dec=dec_centro,
-                                            unit=(u.deg, u.deg),
-                                            frame='icrs'),
-                        radius= Angle(centro.separation(alto_destra)*1.5, "deg"),
-                        column_filters={'gmag': f'<{15}'},
-                        ) # ho messo un limite di magnitudine per non scaricare milioni di stelle
+                                                                     unit=(u.deg, u.deg),
+                                                                     frame='icrs'),
+                                                      radius=Angle(centro.separation(alto_destra) * 1.5, "deg"),
+                                                      column_filters={'gmag': f'<{15}'},
+                                                      )  # ho messo un limite di magnitudine per non scaricare milioni di stelle
         tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
 
         # aggiungo il catalogo Hipparco per le magnitudini inferiori a 7
 
-        file_hipparco = "/home/lorysimeone/tesi_magistrale/prove_2/cataloghi_scaricati/hipparco.fit"
+        # --- RICERCA DINAMICA HIPPARCO ---
+        file_hipparco_path = cerca_file_nel_progetto(BASE_DIR, "hipparco.fit")
+        if file_hipparco_path is None:
+            print("ERRORE CRITICO: Catalogo 'hipparco.fit' non trovato.")
+            exit()
+        file_hipparco = str(file_hipparco_path)
 
         # Apro il catalogo in formato fit, lo faccio solo una volta
 
@@ -397,22 +492,20 @@ for percorso_file_fits in file_list:
 
         print("-----------------------------")
 
-
     print(f"Elaborando {percorso_file_fits}")
     print("\n")
 
     mag_max = 15
 
-    tbl_catalogate = tabella_catalogo(percorso_file_fits , mag_max) # tabelle del catalogo all'interno della specifica run
+    tbl_catalogate = tabella_catalogo(percorso_file_fits,
+                                      mag_max)  # tabelle del catalogo all'interno della specifica run
     numero_stelle_catalogate.append(len(tbl_catalogate))
     print(f"Trovate {len(tbl_catalogate)} stelle dei cataloghi nel riquadro {i}")
 
     # creo i file csv
     dataframe = tbl_catalogate.to_pandas()
-    filename = os.path.join(output_dir, f'run_{run}_stelle_catalogate_immagine_{i:03d}.csv')
-    salva_csv_con_header_fits(dataframe, image_header, filename, percorso_file_fits)
+    # Uso output_dir (Path object)
+    filename = output_dir / f'run_{run}_stelle_catalogate_immagine_{i:03d}.csv'
+    salva_csv_con_header_fits(dataframe, image_header, str(filename), percorso_file_fits)
 
     # if i == 10: break
-
-
-

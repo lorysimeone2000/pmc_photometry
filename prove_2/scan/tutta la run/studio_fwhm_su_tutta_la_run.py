@@ -16,7 +16,10 @@ import astropy.units as u
 import warnings
 from astropy.wcs import FITSFixedWarning
 import matplotlib.ticker as ticker
-from tqdm import tqdm  # Assicuriamoci che sia importato
+from tqdm import tqdm
+
+# --- IMPORT FONDAMENTALE PER LA PORTABILITÀ ---
+from pathlib import Path
 
 # --- GESTIONE WARNING ---
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
@@ -24,6 +27,52 @@ warnings.filterwarnings('ignore', message='Units from inserted quantities will b
 
 # Registra il tempo di inizio globale
 start_time_global = time.time()
+
+
+# =============================================================================
+# 0. GESTIONE PERCORSI DINAMICA (PORTABILITÀ TOTALE)
+# =============================================================================
+
+def trova_cartella_base(nome_target="pmc_photometry"):
+    """
+    Risale la directory partendo dalla posizione dello script fino a trovare
+    la cartella target (es. 'pmc_photometry').
+    """
+    path_corrente = Path(__file__).resolve()
+
+    # Risaliamo fino a trovare la cartella target
+    for parent in [path_corrente] + list(path_corrente.parents):
+        if parent.name == nome_target:
+            return parent
+
+    # Fallback: se non la trova, usa la cartella dello script
+    print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
+    return path_corrente.parent
+
+
+def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
+    """
+    Cerca una CARTELLA ricorsivamente in tutte le sottocartelle di base_dir.
+    """
+    cartelle_trovate = [p for p in base_dir.rglob(nome_cartella_esatto) if p.is_dir()]
+
+    if not cartelle_trovate:
+        return None
+
+    cartelle_trovate.sort(key=lambda p: len(str(p)))
+
+    if len(cartelle_trovate) > 1:
+        # Preferisci quella più vicina alla root se ce ne sono multiple, o stampa info
+        pass
+
+    return cartelle_trovate[0]
+
+# Definisco la BASE_DIR dinamicamente
+BASE_DIR = trova_cartella_base("pmc_photometry")
+
+print(f"--- CONFIGURAZIONE SISTEMA ---")
+print(f"Cartella Base rilevata: {BASE_DIR}")
+print(f"------------------------------")
 
 
 # --- FUNZIONI DI UTILITÀ ---
@@ -61,7 +110,8 @@ def leggi_header_da_csv(filename):
 
 
 def elabora_file_fits(percorso_file):
-    with fits.open(percorso_file) as hdu:
+    # memmap=False per sicurezza su file network/condivisi
+    with fits.open(percorso_file, memmap=False) as hdu:
         header = hdu[0].header
         data = hdu[0].data
         wcs = WCS(header)
@@ -239,7 +289,7 @@ PARAMETRI_FISSI = {
 }
 
 # Parametri Scan
-FWHM_RANGE = np.linspace(1.0, 3.5, 50)
+FWHM_RANGE = np.linspace(2., 3.5, 50)
 SIZES_TO_TEST = [3, 5]
 soglia_correlazione = 0.003349 * u.deg
 MAG_LIMIT_ANALYSIS = 10.0  # Soglia per definire le stelle "importanti" (Stelle Perse < 10)
@@ -253,16 +303,22 @@ def analizza_singola_run(run_id):
     print(f"AVVIO ANALISI PER RUN {run_id}")
     print(f"{'=' * 60}")
 
-    cartella_csv_cat = f"/home/lorysimeone/tesi_magistrale/prove_2/tabelle/sorgenti_catalogate_run/sorgenti_catalogate_run_{run_id}"
+    # --- RICERCA DINAMICA CARTELLA CSV ---
+    nome_cartella_csv = f"sorgenti_catalogate_run_{run_id}"
+    cartella_csv_path = cerca_cartella_nel_progetto(BASE_DIR, nome_cartella_csv)
 
-    if not os.path.exists(cartella_csv_cat):
-        print(f"ERRORE: Cartella non trovata: {cartella_csv_cat}")
+    if cartella_csv_path is None:
+        print(f"ERRORE: Cartella '{nome_cartella_csv}' non trovata in {BASE_DIR}")
         return
 
-    file_csv_cat = sorted([f for f in os.listdir(cartella_csv_cat) if f.endswith('.csv')])
+    print(f"Cartella sorgenti rilevata: {cartella_csv_path.relative_to(BASE_DIR)}")
+    file_csv_cat = sorted([f for f in cartella_csv_path.glob('*.csv')])
+
+    if not file_csv_cat:
+        print(f"ATTENZIONE: Nessun file CSV trovato in {cartella_csv_path}")
+        return
 
     # --- RESET STRUTTURE DATI PER QUESTA RUN ---
-    # raw_corr conterrà il numero di STELLE PERSE (False Negatives) < Mag 10
     raw_corr = {size: [[] for _ in range(len(FWHM_RANGE))] for size in SIZES_TO_TEST}
     raw_fp = {size: [[] for _ in range(len(FWHM_RANGE))] for size in SIZES_TO_TEST}
 
@@ -279,20 +335,35 @@ def analizza_singola_run(run_id):
     print("-" * 60)
 
     # --- SETUP BARRA DI AVANZAMENTO TQDM ---
-    # Usiamo tqdm per gestire automaticamente percentuale ed ETA
     pbar = tqdm(total=total_steps, desc=f"Run {run_id} Progress", unit="step")
 
     # --- CICLO SULLE IMMAGINI (ESTERNO) ---
-    for idx_img, file_csv in enumerate(file_csv_cat):
+    for idx_img, percorso_csv in enumerate(file_csv_cat):
 
-        percorso_csv = os.path.join(cartella_csv_cat, file_csv)
         success = False
 
         try:
             header_info = leggi_header_da_csv(percorso_csv)
-            percorso_fits = header_info.get('PERCORSO_FILE', '')
+            percorso_fits_str = header_info.get('PERCORSO_FILE', '')
 
-            if os.path.exists(percorso_fits):
+            # --- LOGICA RISOLUZIONE PATH FITS (PORTABILITÀ) ---
+            # Se il percorso assoluto non esiste, proviamo a risolverlo relativo alla base
+            if not os.path.exists(percorso_fits_str):
+                p_obj = Path(percorso_fits_str)
+                # Tenta di ricostruire il path se fa parte di "pmc_photometry" o "prove_2"
+                try:
+                    if "pmc_photometry" in p_obj.parts:
+                        idx = p_obj.parts.index("pmc_photometry")
+                        new_path = BASE_DIR.joinpath(*p_obj.parts[idx + 1:])
+                        if new_path.exists(): percorso_fits_str = str(new_path)
+                    elif "prove_2" in p_obj.parts:
+                        idx = p_obj.parts.index("prove_2")
+                        new_path = BASE_DIR.joinpath(*p_obj.parts[idx + 1:])
+                        if new_path.exists(): percorso_fits_str = str(new_path)
+                except:
+                    pass
+
+            if os.path.exists(percorso_fits_str):
                 dataframe = pd.read_csv(percorso_csv, comment='#')
                 tbl_catalogate = Table.from_pandas(dataframe)
 
@@ -302,8 +373,11 @@ def analizza_singola_run(run_id):
                     ra_vals, dec_vals = np.array(tbl_catalogate['RAJ2000']), np.array(tbl_catalogate['DEJ2000'])
                 coords_catalogate = SkyCoord(ra=ra_vals * u.deg, dec=dec_vals * u.deg)
 
-                data_sub, wcs, median_val = elabora_file_fits(percorso_fits)
+                data_sub, wcs, median_val = elabora_file_fits(percorso_fits_str)
                 success = True
+            else:
+                 # Debug silenzioso: se fallisce ancora, non crashare ma salta
+                 pass
 
         except Exception:
             pass
@@ -358,7 +432,7 @@ def analizza_singola_run(run_id):
             # Se l'immagine viene saltata, aggiorniamo comunque la barra per non falsare l'ETA
             step_saltati = len(SIZES_TO_TEST) * len(FWHM_RANGE)
             pbar.update(step_saltati)
-            pbar.set_postfix_str(f"Img {idx_img + 1} SKIPPED")
+            pbar.set_postfix_str(f"Img {idx_img + 1} SKIPPED (File not found)")
 
     pbar.close()  # Chiude la barra alla fine della run
 
@@ -445,7 +519,7 @@ def analizza_singola_run(run_id):
 
 # --- BLOCCO DI ESECUZIONE GLOBALE ---
 if __name__ == "__main__":
-    runs_to_process = [1,2,3]
+    runs_to_process = [1, 2, 3]
 
     for r in runs_to_process:
         analizza_singola_run(r)

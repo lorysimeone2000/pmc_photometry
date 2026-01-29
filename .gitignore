@@ -1,0 +1,5 @@
+# Ignora tutti i file CSV
+*.csv
+
+# Ignora i file temporanei di Windows (Zone.Identifier)
+*:Zone.Identifier

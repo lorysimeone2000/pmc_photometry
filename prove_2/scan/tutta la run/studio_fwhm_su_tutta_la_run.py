@@ -62,10 +62,11 @@ def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
     cartelle_trovate.sort(key=lambda p: len(str(p)))
 
     if len(cartelle_trovate) > 1:
-        # Preferisci quella più vicina alla root se ce ne sono multiple, o stampa info
+        # Preferisci quella più vicina alla root se ce ne sono multiple
         pass
 
     return cartelle_trovate[0]
+
 
 # Definisco la BASE_DIR dinamicamente
 BASE_DIR = trova_cartella_base("pmc_photometry")
@@ -277,7 +278,9 @@ def unione_tabelle_ottimizzata(tbl_seg, tbl_cat, wcs, coords_catalogate, soglia_
         if star_id in ids_trovati_e_correlati:
             num_brillanti += 1
 
-    return tbl_unite, num_brillanti
+    # --- RITORNO COORDINATE E TABELLA PER LOGICA FP ---
+    # Restituisco anche coords_trovate per facilitare il recupero delle RA/DEC dei NO
+    return tbl_unite, num_brillanti, coords_trovate
 
 
 # --- CONFIGURAZIONE GLOBALE ---
@@ -322,6 +325,10 @@ def analizza_singola_run(run_id):
     raw_corr = {size: [[] for _ in range(len(FWHM_RANGE))] for size in SIZES_TO_TEST}
     raw_fp = {size: [[] for _ in range(len(FWHM_RANGE))] for size in SIZES_TO_TEST}
 
+    # --- NUOVA STRUTTURA: Storage per le coordinate dei Falsi Positivi ---
+    # fp_coords_storage[size][fwhm_idx] = lista di tuple (ra_arr, dec_arr) una per ogni immagine
+    fp_coords_storage = {size: [[] for _ in range(len(FWHM_RANGE))] for size in SIZES_TO_TEST}
+
     # Contatore per le immagini effettivamente processate
     immagini_processate_correttamente = 0
     totale_immagini = len(file_csv_cat)
@@ -347,10 +354,8 @@ def analizza_singola_run(run_id):
             percorso_fits_str = header_info.get('PERCORSO_FILE', '')
 
             # --- LOGICA RISOLUZIONE PATH FITS (PORTABILITÀ) ---
-            # Se il percorso assoluto non esiste, proviamo a risolverlo relativo alla base
             if not os.path.exists(percorso_fits_str):
                 p_obj = Path(percorso_fits_str)
-                # Tenta di ricostruire il path se fa parte di "pmc_photometry" o "prove_2"
                 try:
                     if "pmc_photometry" in p_obj.parts:
                         idx = p_obj.parts.index("pmc_photometry")
@@ -376,8 +381,7 @@ def analizza_singola_run(run_id):
                 data_sub, wcs, median_val = elabora_file_fits(percorso_fits_str)
                 success = True
             else:
-                 # Debug silenzioso: se fallisce ancora, non crashare ma salta
-                 pass
+                pass
 
         except Exception:
             pass
@@ -395,15 +399,18 @@ def analizza_singola_run(run_id):
                     tbl_trovate = esegui_segmentazione_dinamica(data_sub, fwhm=fwhm_val, size=size_val,
                                                                 params=PARAMETRI_FISSI)
 
-                    # Default: se non trovo nulla, ho perso tutte le target stars
                     val_perse = num_target_stars
-                    val_fp = 0
+                    val_fp_raw = 0
+
+                    # Coordinate FP correnti (default vuote)
+                    current_fp_ra = np.array([])
+                    current_fp_dec = np.array([])
 
                     if tbl_trovate is not None and len(tbl_trovate) > 0:
                         tbl_trovate = filtra_vicini_saturi(tbl_trovate, median_bg=median_val)
 
                         # Match con il catalogo
-                        tbl_matched, num_found_bright = unione_tabelle_ottimizzata(
+                        tbl_matched, num_found_bright, coords_trovate_obj = unione_tabelle_ottimizzata(
                             tbl_trovate,
                             tbl_catalogate,
                             wcs,
@@ -415,12 +422,32 @@ def analizza_singola_run(run_id):
                         # --- CALCOLO STELLE PERSE (Solo quelle < 10) ---
                         val_perse = max(0, num_target_stars - num_found_bright)
 
+                        # --- IDENTIFICAZIONE FP (Provvisoria) ---
                         mask_no = tbl_matched['Corrispondenza'] == 'NO'
-                        val_fp = np.sum(mask_no)
+                        val_fp_raw = np.sum(mask_no)
+
+                        # --- RECUPERO COORDINATE FP PER FILTRAGGIO SUCCESSIVO ---
+                        if val_fp_raw > 0:
+                            # Nota: tbl_matched è ordinata come df_finale.
+                            # Dobbiamo assicurarci di estrarre le coordinate corrette.
+                            # La funzione unione_tabelle_ottimizzata ritorna coords_trovate (tutte le trovate)
+                            # Ma tbl_matched potrebbe aver cambiato ordine.
+                            # Tuttavia, se guardiamo unione_tabelle_ottimizzata, i 'NO' sono appesi in fondo
+                            # o riordinati per label.
+                            # Più robusto: ricalcoliamo RA/DEC dai centroidi della tabella matched filtrata NO.
+                            tbl_fp = tbl_matched[mask_no]
+                            coords_fp = wcs.pixel_to_world(tbl_fp['xcentroid'], tbl_fp['ycentroid'])
+                            current_fp_ra = coords_fp.ra.deg
+                            current_fp_dec = coords_fp.dec.deg
 
                     # Appendiamo i risultati
                     raw_corr[size_val][i_fwhm].append(val_perse)
-                    raw_fp[size_val][i_fwhm].append(val_fp)
+
+                    # Salviamo il conto RAW (sarà sovrascritto dopo)
+                    raw_fp[size_val][i_fwhm].append(val_fp_raw)
+
+                    # Salviamo le coordinate per il post-processing
+                    fp_coords_storage[size_val][i_fwhm].append((current_fp_ra, current_fp_dec))
 
                     # Aggiorna la barra di avanzamento di 1 step
                     pbar.update(1)
@@ -436,7 +463,69 @@ def analizza_singola_run(run_id):
 
     pbar.close()  # Chiude la barra alla fine della run
 
-    print(f"\nRun {run_id} terminata. Immagini valide: {immagini_processate_correttamente}/{totale_immagini}")
+    print(f"\nRun {run_id} terminata (Scan Immagini). Avvio Filtraggio Transienti...")
+
+    # =========================================================================
+    # --- FASE DI POST-PROCESSING: FILTRAGGIO Falsi Positivi (Logica Ripetizione) ---
+    # =========================================================================
+
+    if immagini_processate_correttamente > 0:
+        for size_val in SIZES_TO_TEST:
+            for i_fwhm in range(len(FWHM_RANGE)):
+
+                # Lista di tuple (ra, dec) per ogni immagine processata per questo set di parametri
+                list_of_img_coords = fp_coords_storage[size_val][i_fwhm]
+
+                # Appiattiamo tutto per il cross-match globale
+                all_ra = []
+                all_dec = []
+                map_idx_to_img = {}  # Mappa indice globale -> indice immagine originale
+
+                global_counter = 0
+                for img_idx, (ra_arr, dec_arr) in enumerate(list_of_img_coords):
+                    if len(ra_arr) > 0:
+                        all_ra.extend(ra_arr)
+                        all_dec.extend(dec_arr)
+                        for _ in range(len(ra_arr)):
+                            map_idx_to_img[global_counter] = img_idx
+                            global_counter += 1
+
+                # Lista dei nuovi conteggi FP filtrati (inizializzata a 0 per ogni immagine)
+                filtered_fp_counts = [0] * len(list_of_img_coords)
+
+                if len(all_ra) > 0:
+                    c_tot = SkyCoord(ra=all_ra * u.deg, dec=all_dec * u.deg)
+                    dist_limit = 0.0011 * u.deg  # Soglia spaziale transienti
+
+                    # Search around sky su se stesso
+                    idx1, idx2, _, _ = c_tot.search_around_sky(c_tot, dist_limit)
+
+                    indices_with_valid_neighbor = set()
+
+                    for k in range(len(idx1)):
+                        i1 = idx1[k]
+                        i2 = idx2[k]
+                        if i1 == i2: continue  # Se stesso
+
+                        # Verifica se il vicino è in un'immagine diversa
+                        img1 = map_idx_to_img[i1]
+                        img2 = map_idx_to_img[i2]
+
+                        if img1 != img2:
+                            indices_with_valid_neighbor.add(i1)
+
+                    # Conteggio finale: solo chi ha un vicino valido è un "FP Reale" (non transiente)
+                    # Quelli isolati (transienti) vengono scartati
+                    for idx_globale in indices_with_valid_neighbor:
+                        img_origin = map_idx_to_img[idx_globale]
+                        filtered_fp_counts[img_origin] += 1
+
+                # --- SOVRASCRITTURA DI raw_fp ---
+                # Sostituiamo i conti raw con quelli filtrati
+                raw_fp[size_val][i_fwhm] = filtered_fp_counts
+
+    print(f"Filtraggio Transienti completato.")
+    print(f"Immagini valide: {immagini_processate_correttamente}/{totale_immagini}")
 
     # --- CALCOLO MEDIA E DEVIAZIONE STANDARD ---
     results_mean_corr = {}
@@ -453,7 +542,7 @@ def analizza_singola_run(run_id):
 
             for i_fwhm in range(len(FWHM_RANGE)):
                 vals_c = raw_corr[size_val][i_fwhm]
-                vals_f = raw_fp[size_val][i_fwhm]
+                vals_f = raw_fp[size_val][i_fwhm]  # Ora contiene i valori filtrati
 
                 mean_c.append(np.mean(vals_c))
                 std_c.append(np.std(vals_c))

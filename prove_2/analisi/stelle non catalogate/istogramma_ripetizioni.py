@@ -132,6 +132,7 @@ def leggi_file_parametri(percorso):
                         pass
     return parametri
 
+
 def elabora_file_fits(percorso_file_):
     """Carica il FITS e sottrae il fondo."""
     # memmap=False previene errori con BZERO/BSCALE
@@ -170,6 +171,7 @@ def leggi_header_da_csv(filename):
                 break
     return header_dict
 
+
 # Definisco la BASE_DIR dinamicamente
 BASE_DIR = trova_cartella_base("pmc_photometry")
 
@@ -177,7 +179,7 @@ print(f"--- CONFIGURAZIONE SISTEMA ---")
 print(f"Cartella Base rilevata: {BASE_DIR}")
 print(f"------------------------------")
 
-RUN = [1,2,3]
+RUN = [1, 2, 3]
 
 # Dizionario per salvare i percorsi dei file: { numero_run: [lista_percorsi_csv] }
 files_per_run = {}
@@ -209,10 +211,6 @@ for r in RUN:
 
     files_per_run[r] = lista_csv
 
-lista_run_1 = [str(p) for p in files_per_run.get(1, [])]
-lista_run_2 = [str(p) for p in files_per_run.get(2, [])]
-lista_run_3 = [str(p) for p in files_per_run.get(3, [])]
-
 # =============================================================================
 # ANALISI GLOBALE SU TUTTE LE RUN E ISTOGRAMMA GENERALIZZATO
 # =============================================================================
@@ -221,18 +219,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 
-# 1. CALCOLO DINAMICO DEL MASSIMO NUMERO DI ELEMENTI (PER ASSE X)
-max_immagini_globali = 0
-for r in RUN:
-    n_files = len(files_per_run.get(r, []))
-    if n_files > max_immagini_globali:
-        max_immagini_globali = n_files
+# --- MODIFICA 1: Dizionario per accumulare le ripetizioni per ID invece di lista piatta ---
+mappa_ripetizioni_globali = {}
 
-print(f"\n[INFO] La run più numerosa contiene {max_immagini_globali} immagini.")
-print(f"[INFO] L'istogramma avrà un range X da 0 a {max_immagini_globali}.")
-
-# Lista per accumulare i valori di ripetizione di TUTTI gli oggetti unici di TUTTE le run
-valori_ripetizione_globali = []
+# --- MODIFICA 2: Contatore totale delle immagini processate per definire il range X ---
+totale_immagini_processate = 0
 
 # 2. CICLO SU TUTTE LE RUN
 for r in RUN:
@@ -241,6 +232,9 @@ for r in RUN:
     if not files_correnti:
         continue
 
+    # Aggiorniamo il contatore totale delle immagini (asse X massimo potenziale)
+    totale_immagini_processate += len(files_correnti)
+
     lista_dfs_run_corrente = []
 
     # -- A. Estrazione e Filtraggio per la Run corrente --
@@ -248,43 +242,75 @@ for r in RUN:
     for nome_csv in tqdm(files_correnti, desc=descrizione_bar):
 
         # Leggi CSV
-        df_temp = pd.read_csv(nome_csv, comment='#')
+        try:
+            df_temp = pd.read_csv(nome_csv, comment='#')
+        except Exception as e:
+            print(f"Errore lettura {nome_csv}: {e}")
+            continue
 
         # Filtra 'NO'
-        df_no = df_temp[df_temp['Corrispondenza'] == 'NO'].copy()
-
-        if not df_no.empty:
-            lista_dfs_run_corrente.append(df_no)
+        if 'Corrispondenza' in df_temp.columns:
+            df_no = df_temp[df_temp['Corrispondenza'] == 'NO'].copy()
+            if not df_no.empty:
+                lista_dfs_run_corrente.append(df_no)
 
     # -- B. Concatenazione e Deduplicazione per la Run corrente --
     if lista_dfs_run_corrente:
         # Concateniamo tutti gli oggetti della run r
         df_concat_run = pd.concat(lista_dfs_run_corrente, ignore_index=True)
 
-        # Riduciamo a oggetti unici (una riga per ID)
-        df_unici_run = df_concat_run.drop_duplicates(subset=['ID'], keep='first')
+        # Riduciamo a oggetti unici (una riga per ID).
+        # IMPORTANTE: L'ID 'INT_X' è univoco tra le run grazie allo script creazione_tabelle.py
+        if 'ID' in df_concat_run.columns:
+            df_unici_run = df_concat_run.drop_duplicates(subset=['ID'], keep='first')
 
-        # --- MODIFICA QUI: Nome colonna dinamico ---
-        nome_colonna_ripetizioni = f"ripetizioni_run_{r}"
+            # Nome colonna specifico per questa run
+            nome_colonna_ripetizioni = f"ripetizioni_run_{r}"
 
-        if nome_colonna_ripetizioni in df_unici_run.columns:
-            # Estraiamo i valori usando il nome specifico della run
-            ripetizioni = df_unici_run[nome_colonna_ripetizioni].values
+            if nome_colonna_ripetizioni in df_unici_run.columns:
+                # Estraiamo ID e valori di ripetizione
+                ids_oggetti = df_unici_run['ID'].values
+                ripetizioni = df_unici_run[nome_colonna_ripetizioni].values
 
-            # Aggiungiamo alla lista globale
-            valori_ripetizione_globali.extend(ripetizioni)
+                # --- MODIFICA 3: Somma accumulativa per ID ---
+                count_nuovi = 0
+                for obj_id, n_rep in zip(ids_oggetti, ripetizioni):
+                    # Convertiamo a int per sicurezza (gestione NaN o float)
+                    try:
+                        val = int(float(n_rep))
+                    except:
+                        val = 0
 
-            print(
-                f" -> Run {r}: Trovati {len(df_unici_run)} oggetti unici. (Colonna usata: {nome_colonna_ripetizioni})")
-        else:
-            print(f" -> [ERRORE] Run {r}: La colonna '{nome_colonna_ripetizioni}' non esiste nel DataFrame!")
+                    if val > 0:
+                        # Se l'ID esiste già (trovato in run precedenti), sommiamo
+                        if obj_id in mappa_ripetizioni_globali:
+                            mappa_ripetizioni_globali[obj_id] += val
+                        else:
+                            # Altrimenti inizializziamo
+                            mappa_ripetizioni_globali[obj_id] = val
+                        count_nuovi += 1
+
+                print(f" -> Run {r}: Aggiornati/Aggiunti {count_nuovi} oggetti unici nella mappa globale.")
+            else:
+                print(f" -> [ERRORE] Run {r}: La colonna '{nome_colonna_ripetizioni}' non esiste nel DataFrame!")
+
+# Estraiamo la lista finale dei valori (sommati) dal dizionario
+valori_ripetizione_globali = list(mappa_ripetizioni_globali.values())
+oggetti_con_ripetizioni = sum(1 for x in valori_ripetizione_globali if x > 1)
+
+# Definizione del massimo asse X basata sulla somma totale delle immagini
+max_immagini_globali = totale_immagini_processate
+print(f"\nTotale immagini analizzate (tutte le run): {max_immagini_globali}")
+print(f"Totale oggetti unici trovati: {len(valori_ripetizione_globali)}")
+print(f"Totale oggetti unici che si ripetono almeno una volta: {oggetti_con_ripetizioni}")
 
 # 3. GENERAZIONE ISTOGRAMMA GLOBALE
 if valori_ripetizione_globali:
 
     plt.figure(figsize=(16, 8))
 
-    # Definizione bin dinamici basati sulla run più numerosa
+    # Definizione bin dinamici fino al totale delle immagini processate
+    # max_immagini_globali + 2 per assicurare che l'ultimo bin sia incluso
     bins = np.arange(1, max_immagini_globali + 2) - 0.5
 
     plt.hist(valori_ripetizione_globali,
@@ -297,14 +323,21 @@ if valori_ripetizione_globali:
     # Configurazione Assi Dinamica
     plt.xlim(0.5, max_immagini_globali + 0.5)
 
-    # Gestione etichette asse X: se sono troppe, ne mostriamo una ogni 5 o 10
-    step_xticks = 5 if max_immagini_globali < 150 else 10
+    # Gestione etichette asse X:
+    # Se abbiamo molte immagini, sfoltiamo le etichette per leggibilità
+    if max_immagini_globali < 50:
+        step_xticks = 1
+    elif max_immagini_globali < 150:
+        step_xticks = 5
+    else:
+        step_xticks = 20
+
     plt.xticks(np.arange(0, max_immagini_globali + 1, step_xticks))
 
     plt.title(
-        f"Distribuzione Globale Ripetizioni Oggetti Non Catalogati (Tutte le Run)\nTotale Oggetti Unici: {len(valori_ripetizione_globali)}",
+        f"Distribuzione Globale Ripetizioni (SOMMATE su tutte le Run)\nTotale Oggetti Unici: {len(valori_ripetizione_globali)}",
         fontsize=16)
-    plt.xlabel("Numero di Apparizioni (Ripetizione)", fontsize=14)
+    plt.xlabel("Numero Totale di Apparizioni (Somma Run 1 + 2 + 3)", fontsize=14)
     plt.ylabel("Numero di Oggetti Unici", fontsize=14)
 
     plt.grid(axis='y', linestyle='--', alpha=0.6, zorder=0)

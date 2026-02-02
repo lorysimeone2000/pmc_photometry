@@ -378,18 +378,10 @@ if __name__ == "__main__":
                 hdu_list = fits.open(percorso_file)
                 w = WCS(hdu_list[0].header)
                 ra_c, dec_c = hdu_list[0].header["RA"], hdu_list[0].header["DEC"]
-                # creo un riquadro esterno leggermente più grande per assicurarmi che anche gli elementi successivi della run
-                # rientrino nella query, poi farò il taglio preciso nella tabella astropy
-
-                alto_destra = w.pixel_to_world(3071, 2047)
-                centro = SkyCoord(ra_c, dec_c, unit=u.deg)
-
-                riquadro_esterno_vizier = vizier.query_region(coord.SkyCoord(ra=ra_c, dec=dec_c,
-                                                                             unit=(u.deg, u.deg),
-                                                                             frame='icrs'),
-                                                              radius=Angle(centro.separation(alto_destra) * 1.5, "deg"),
-                                                              column_filters={'gmag': f'<{15}'},
-                                                              )  # ho messo un limite di magnitudine per non scaricare milioni di stelle
+                riquadro_esterno_vizier = vizier.query_region(
+                    coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
+                    radius=Angle(0.5, "deg"), column_filters={'gmag': f'<{15}'}
+                )
                 tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
 
                 file_hipparco = cerca_file_nel_progetto(BASE_DIR, "hipparco.fit")
@@ -592,7 +584,10 @@ if __name__ == "__main__":
     big_df = pd.concat(lista_df, ignore_index=True)
 
     # 2. Assegnazione ID Univoco (run_unique_id) SU TUTTO IL DATASET
+    # CORREZIONE TIPO: Inizializza come object per evitare errori di tipo
     big_df['run_unique_id'] = np.nan
+    big_df['run_unique_id'] = big_df['run_unique_id'].astype(object)
+
     mask_si = big_df['Corrispondenza'].str.startswith('SI', na=False)
     big_df.loc[mask_si, 'run_unique_id'] = "CAT_" + big_df.loc[mask_si, 'ID'].astype(str)
 
@@ -650,8 +645,8 @@ if __name__ == "__main__":
     # Groupby ID per stats globali
     grouped = big_df.groupby('run_unique_id')
     means = grouped[cols_flux_presenti].mean()
-    stds = grouped[cols_flux_presenti].std()
 
+    # CORREZIONE DEVIAZIONE STANDARD DELLA MEDIA (SEM)
     counts_grouped = grouped[cols_flux_presenti].count()
     stds_sample = grouped[cols_flux_presenti].std()
     stds = stds_sample / np.sqrt(counts_grouped)
@@ -670,6 +665,9 @@ if __name__ == "__main__":
         stat_columns.extend([col_mean, col_std])
 
     for c in stat_columns: big_df[c] = big_df[c].map(lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
+
+    # CORREZIONE: Convertiamo ID in object per poter ospitare stringhe "INT_X"
+    big_df['ID'] = big_df['ID'].astype(object)
 
     mask_no_match = big_df['Corrispondenza'] == 'NO'
     big_df.loc[mask_no_match, 'ID'] = big_df.loc[mask_no_match, 'run_unique_id']

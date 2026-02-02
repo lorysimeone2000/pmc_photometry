@@ -1,5 +1,7 @@
 # Ignora tutti i file CSV
 *.csv
+*.fit
+*.png
 
 # Ignora i file temporanei di Windows (Zone.Identifier)
 *:Zone.Identifier

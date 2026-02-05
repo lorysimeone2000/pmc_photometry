@@ -227,7 +227,7 @@ if len(X) > 0:
         fmt='o', markersize=4, color='blue', ecolor='lightblue', alpha=0.7,
         label=f'Catalogati Validi ({len(X)})'
     )
-
+#
 # B. Stelle Sature (X Rossa)
 if len(df_sature) > 0:
     mask_sat_valid = (df_sature[col_flux] > 0) & (df_sature[col_mag].notna())

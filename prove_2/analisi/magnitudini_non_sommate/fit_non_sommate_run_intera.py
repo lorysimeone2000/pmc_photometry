@@ -8,7 +8,7 @@ from pathlib import Path
 from tqdm import tqdm  # Aggiunto per barra caricamento
 
 # Ignora warning numerici (es. log(0))
-warnings.filterwarnings('ignore', category=RuntimeWarning)
+warnings.filterwarnings('ignore', category=RuntimeWarning) #yugyugy
 
 
 # =============================================================================

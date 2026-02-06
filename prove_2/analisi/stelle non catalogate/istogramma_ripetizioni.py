@@ -283,7 +283,7 @@ for r in RUN:
 
                     if val > 0:
                         # Se l'ID esiste già (trovato in run precedenti), sommiamo
-                        if obj_id in mappa_ripetizioni_globali:
+                        if obj_id in mappa_ripetizioni_globali: # hbuiybuvbyvyiviyvv
                             mappa_ripetizioni_globali[obj_id] += val
                         else:
                             # Altrimenti inizializziamo

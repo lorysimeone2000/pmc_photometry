@@ -191,7 +191,7 @@ def salva_csv_con_header_fits(dataframe, header_fits, filename, nome_file_fits, 
         for key, value in header_fits.items():
             clean_val = str(value).replace('\n', ' ')
             f.write(f"# {key}: {clean_val}\n")
-        f.write(f"# NOME_FILE: {nome_solo}\n")
+        f.write(f"# NOME_FILE_FITS: {nome_solo}\n")
         f.write("#\n# PARAMETRI SEGMENTAZIONE:\n")
         if parametri_seg:
             for key, value in parametri_seg.items():
@@ -507,7 +507,26 @@ if __name__ == "__main__":
         for file_csv in tqdm(file_csv_list, desc="Ricalcolo Flussi"):
             df_frame = pd.read_csv(file_csv, comment='#')
             header_info = leggi_header_da_csv(file_csv)
-            path_fits = header_info.get('PERCORSO_FILE', '')
+            # 1. Cerchiamo il nome del file fits nell'header (chiave 'NOME_FILE' che hai salvato in Fase 1)
+            nome_file_puro = header_info.get('NOME_FILE_FITS', '')
+
+            # Fallback: Se NOME_FILE non c'è, proviamo a estrarlo da PERCORSO_FILE se presente
+            if not nome_file_puro:
+                vecchio_percorso = header_info.get('PERCORSO_FILE', '')
+                if vecchio_percorso:
+                    nome_file_puro = os.path.basename(str(vecchio_percorso))
+
+            path_fits = None
+            if nome_file_puro:
+                # cerco questo file fits ovunque dentro la cartella del progetto corrente
+                file_trovato_path = cerca_file_nel_progetto(BASE_DIR, nome_file_puro)
+                if file_trovato_path:
+                    path_fits = str(file_trovato_path)
+
+            # Controllo finale: se non l'abbiamo trovato, saltiamo
+            if not path_fits or not os.path.exists(path_fits):
+                print(f"Impossibile trovare il FITS originale: {nome_file_puro}")
+                continue
 
             if not os.path.exists(path_fits):
                 p_obj = Path(path_fits)
@@ -651,7 +670,7 @@ if __name__ == "__main__":
     stds_sample = grouped[cols_flux_presenti].std()
     stds = stds_sample / np.sqrt(counts_grouped)
 
-    # Per repetitioni, dobbiamo contare per (ID, Run)
+    # Per ripetizioni, dobbiamo contare per (ID, Run)
     # Crea una tabella pivot: Index=ID, Columns=Run, Values=Count
     repetition_pivot = pd.pivot_table(big_df, index='run_unique_id', columns='run_number', aggfunc='size', fill_value=0)
 
@@ -685,7 +704,7 @@ if __name__ == "__main__":
             for k, v in header_dict.items():
                 if k != 'PERCORSO_FILE':  # Scriveremo noi il nome pulito
                     f.write(f"# {k}: {v}\n")
-            f.write(f"# NOME_FILE: {nome_solo}\n")
+            f.write(f"# NOME_FILE_CSV: {nome_solo}\n")
             f.write("#\n")
             df.to_csv(f, index=False)
 

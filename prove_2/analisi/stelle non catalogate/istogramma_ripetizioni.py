@@ -283,7 +283,7 @@ for r in RUN:
 
                     if val > 0:
                         # Se l'ID esiste già (trovato in run precedenti), sommiamo
-                        if obj_id in mappa_ripetizioni_globali:
+                        if obj_id in mappa_ripetizioni_globali: # hbuiybuvbyvyiviyvv
                             mappa_ripetizioni_globali[obj_id] += val
                         else:
                             # Altrimenti inizializziamo
@@ -348,5 +348,64 @@ if valori_ripetizione_globali:
     plt.tight_layout()
     plt.show()
 
+    # =============================================================================
+    # PLOTTING
+    # =============================================================================
+
+    valori_totali = list(mappa_ripetizioni_globali.values())
+
+    print(f"\n--- STATISTICHE FINALI ---")
+    print(f"Totale Immagini (Run {RUN}): {totale_immagini_processate}")
+    print(f"Oggetti 'NO' Unici Totali: {len(valori_totali)}")
+
+    if valori_totali:
+        plt.figure(figsize=(15, 7))
+
+        # Binning: da 1 al totale immagini (+2 per margine destro)
+        bins = np.arange(1, totale_immagini_processate + 2) - 0.5
+
+        # --- MODIFICA QUI: log=True ---
+        plt.hist(valori_totali,
+                 bins=bins,
+                 color='royalblue',
+                 edgecolor='black',
+                 alpha=0.8,
+                 log=True)  # <--- Questo attiva la scala logaritmica sulle barre
+
+        # Setup Assi
+        plt.xlim(0, totale_immagini_processate + 1)
+
+        # IMPORTANTE PER SCALA LOG: Impostiamo il fondo a un valore > 0 (es. 0.5 o 0.8)
+        # altrimenti matplotlib potrebbe cercare di disegnare fino a -infinito
+        plt.ylim(bottom=0.8)
+
+        plt.xlabel(f"Numero Totale di Apparizioni (Somma su Run {RUN})", fontsize=12)
+        plt.ylabel("Numero di Oggetti 'NO' Unici (Scala Log)", fontsize=12)
+        plt.title(
+            f"Istogramma Cumulativo Oggetti Senza Corrispondenza\n(Totale immagini analizzate: {totale_immagini_processate})",
+            fontsize=14)
+
+        # Grid e Ticks intelligenti
+        plt.grid(axis='y', linestyle='--', alpha=0.5, which='both')  # which='both' mostra la griglia logaritmica fine
+        plt.minorticks_on()
+
+        # Se l'asse X è molto lungo, sfoltiamo i tick
+        if totale_immagini_processate > 50:
+            step = int(totale_immagini_processate / 20)
+            plt.xticks(np.arange(0, totale_immagini_processate + 1, step))
+        else:
+            plt.xticks(np.arange(0, totale_immagini_processate + 1, 1))
+
+        output_plot = "istogramma_ripetizioni_globale_log.png"
+        plt.savefig(output_plot, dpi=300, bbox_inches='tight')
+        print(f"Grafico salvato in: {output_plot}")
+        plt.show()
+
+    else:
+        print("Nessun dato da graficare.")
+
 else:
     print("\n[AVVISO] Nessun oggetto non catalogato trovato in nessuna delle run.")
+
+
+

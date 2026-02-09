@@ -469,89 +469,92 @@ if __name__ == "__main__":
                 df_final = df_trovate.copy()
                 df_final['Corrispondenza'] = 'NO'
 
-            # =================================================================
-            # INIZIO BLOCCO: TRACKING GLOBALE OTTIMIZZATO
-            # =================================================================
-            # Inizializza contatore label se prima volta
-            if global_max_label == 0 and len(df_final) > 0:
-                # Assicuriamoci di partire da 0 o da max(df_trovate) ma qui assegniamo noi
-                pass
+                # =================================================================
+                # INIZIO BLOCCO: TRACKING GLOBALE OTTIMIZZATO (CORRETTO)
+                # =================================================================
 
-            # Prepara colonna label finale
-            final_labels = np.zeros(len(df_final), dtype=int)
+                # Prepara colonna label finale
+                final_labels = np.zeros(len(df_final), dtype=int)
 
-            # 1. GESTIONE OGGETTI CATALOGATI (SI) - Usa ID per matching veloce
-            mask_cat = df_final['Corrispondenza'] != 'NO'
-            if mask_cat.any():
-                indices_cat = np.where(mask_cat)[0]
-                ids_cat = df_final.loc[mask_cat, 'ID'].values
+                # Per gestire i gruppi, usiamo le coordinate pixel che sono univoche per ogni "pallocchio"
+                # Creiamo un identificativo temporaneo basato su x,y per raggruppare le righe duplicate
+                # (Poiché sono float, li convertiamo in stringa o tupla per il raggruppamento sicuro)
+                df_final['temp_group_id'] = list(zip(df_final['xcentroid'], df_final['ycentroid']))
 
-                for idx_row, cat_id in zip(indices_cat, ids_cat):
-                    if cat_id in global_catalog_label_map:
-                        final_labels[idx_row] = global_catalog_label_map[cat_id]
+                grouped = df_final.groupby('temp_group_id')
+
+                for _, group in grouped:
+                    indices = group.index.values
+
+                    # Caso 1: Il gruppo contiene almeno un match a catalogo (SI)
+                    # Cerchiamo se c'è un Rank 1, che comanda su tutti
+                    mask_rank1 = group['Corrispondenza'] == 'SI (Rank 1)'
+                    mask_any_cat = group['Corrispondenza'] != 'NO'
+
+                    assigned_label = 0
+
+                    if mask_any_cat.any():
+                        # Prendiamo l'ID del Rank 1 se esiste, altrimenti il primo disponibile (caso raro)
+                        if mask_rank1.any():
+                            ref_row = group.loc[mask_rank1].iloc[0]
+                        else:
+                            ref_row = group.loc[mask_any_cat].iloc[0]
+
+                        cat_id = ref_row['ID']
+
+                        # Logica standard: se l'ID (del Rank 1) esiste già, usalo. Se no, crealo.
+                        if cat_id in global_catalog_label_map:
+                            assigned_label = global_catalog_label_map[cat_id]
+                        else:
+                            global_max_label += 1
+                            global_catalog_label_map[cat_id] = global_max_label
+                            assigned_label = global_max_label
+
+                    # Caso 2: Il gruppo è tutto "NO" (non catalogato)
                     else:
-                        global_max_label += 1
-                        global_catalog_label_map[cat_id] = global_max_label
-                        final_labels[idx_row] = global_max_label
+                        # Usiamo le coordinate del primo elemento del gruppo (sono tutte uguali)
+                        ra_obj = group.iloc[0]['RA_centroid']
+                        dec_obj = group.iloc[0]['DEC_centroid']
+                        coord_obj = SkyCoord(ra=ra_obj * u.deg, dec=dec_obj * u.deg)
 
-            # 2. GESTIONE OGGETTI NON CATALOGATI (NO) - Usa Matching Spaziale
-            mask_no = ~mask_cat
-            if mask_no.any():
-                indices_no = np.where(mask_no)[0]
-                coords_no = SkyCoord(ra=df_final.loc[mask_no, 'RA_centroid'].values * u.deg,
-                                     dec=df_final.loc[mask_no, 'DEC_centroid'].values * u.deg)
+                        if global_tracker_coords is None:
+                            # Primo oggetto NO in assoluto
+                            global_max_label += 1
+                            assigned_label = global_max_label
+                            global_tracker_coords = coord_obj
+                            global_tracker_labels = [assigned_label]
+                        else:
+                            # Cerca nel tracker esistente
+                            idx, d2d, _ = coord_obj.match_to_catalog_sky(global_tracker_coords)
+                            if d2d < soglia_correlazione:
+                                # Trovato: usa il label storico
+                                assigned_label = global_tracker_labels[idx]
+                            else:
+                                # Nuovo: crea label
+                                global_max_label += 1
+                                assigned_label = global_max_label
 
-                assigned_no_labels = np.zeros(len(indices_no), dtype=int)
+                                # Aggiorna il tracker
+                                # Concatenazione sicura di SkyCoord
+                                temp_coords = SkyCoord([global_tracker_coords, coord_obj])
+                                # Nota: SkyCoord concatenato diventa un array appiattito
+                                global_tracker_coords = temp_coords
+                                global_tracker_labels.append(assigned_label)
 
-                if global_tracker_coords is None:
-                    # Primo batch assoluto di NO
-                    start_id = global_max_label + 1
-                    end_id = start_id + len(indices_no)
-                    new_ids = np.arange(start_id, end_id)
-                    assigned_no_labels = new_ids
+                    # ASSEGNAZIONE FINALE: Lo stesso label va a TUTTE le righe del gruppo
+                    final_labels[indices] = assigned_label
 
-                    global_tracker_coords = coords_no
-                    global_tracker_labels = list(new_ids)
-                    global_max_label = end_id - 1
-                else:
-                    # Match spaziale contro i NO già noti
-                    idx, d2d, _ = coords_no.match_to_catalog_sky(global_tracker_coords)
-                    matched_mask_no = d2d < soglia_correlazione
+                df_final['label'] = final_labels
+                if 'temp_group_id' in df_final.columns:
+                    df_final.drop(columns=['temp_group_id'], inplace=True)
 
-                    # Case A: Trovati nel tracker
-                    if matched_mask_no.any():
-                        idx_matched = idx[matched_mask_no]
-                        assigned_no_labels[matched_mask_no] = np.array(global_tracker_labels)[idx_matched]
+                # Aggiunta colonne identificative Run e Immagine
+                df_final['run_id'] = run
+                df_final['img_index'] = n
 
-                    # Case B: Nuovi NO
-                    unmatched_mask_no = ~matched_mask_no
-                    num_new = np.sum(unmatched_mask_no)
-                    if num_new > 0:
-                        start_id = global_max_label + 1
-                        end_id = start_id + num_new
-                        new_ids = np.arange(start_id, end_id)
-                        assigned_no_labels[unmatched_mask_no] = new_ids
-
-                        # Aggiorna tracker
-                        new_coords_obj = coords_no[unmatched_mask_no]
-                        combined_ra = np.concatenate([global_tracker_coords.ra.deg, new_coords_obj.ra.deg])
-                        combined_dec = np.concatenate([global_tracker_coords.dec.deg, new_coords_obj.dec.deg])
-                        global_tracker_coords = SkyCoord(ra=combined_ra * u.deg, dec=combined_dec * u.deg)
-                        global_tracker_labels.extend(new_ids)
-                        global_max_label = end_id - 1
-
-                final_labels[indices_no] = assigned_no_labels
-
-            # Applica i label calcolati
-            df_final['label'] = final_labels
-
-            # Aggiunta colonne identificative Run e Immagine
-            df_final['run_id'] = run
-            df_final['img_index'] = n
-
-            # =================================================================
-            # FINE BLOCCO TRACKING
-            # =================================================================
+                # =================================================================
+                # FINE BLOCCO TRACKING
+                # =================================================================
 
             if 'label' in df_final.columns: df_final.sort_values('label', inplace=True)
 
@@ -793,7 +796,7 @@ if __name__ == "__main__":
     stds_sample = grouped[cols_flux_presenti].std()
     stds = stds_sample / np.sqrt(counts_grouped)
 
-    # Per repetitioni, dobbiamo contare per (ID, Run)
+    # Per "ripetizioni", dobbiamo contare per (ID, Run)
     # Crea una tabella pivot: Index=ID, Columns=Run, Values=Count
     repetition_pivot = pd.pivot_table(big_df, index='run_unique_id', columns='run_number', aggfunc='size', fill_value=0)
 
@@ -849,7 +852,6 @@ if __name__ == "__main__":
         # --- FILTRO TRANSIENTI DISATTIVATO (COMMENTATO) ---
         '''
         # Nota: qui "ripetizioni" deve riferirsi a cosa? Alla run corrente o globale?
-        # Solitamente si filtra se appare 1 volta sola in TOTALE o nella RUN.
 
         mask_trash = (df_file['Corrispondenza'] == 'NO') & (df_file[col_rip_name] <= 1)
         num_falsi_positivi = mask_trash.sum()

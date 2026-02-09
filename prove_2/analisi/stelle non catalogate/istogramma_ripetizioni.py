@@ -202,7 +202,7 @@ for r in RUN:
         except Exception as e:
             print(f"Errore lettura {nome_csv}: {e}")
             continue
-
+#
 # 3. ELABORAZIONE E DEDUPLICAZIONE
 print("\n--- ELABORAZIONE DATI ---")
 

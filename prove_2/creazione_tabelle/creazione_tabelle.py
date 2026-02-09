@@ -191,7 +191,7 @@ def salva_csv_con_header_fits(dataframe, header_fits, filename, nome_file_fits, 
         for key, value in header_fits.items():
             clean_val = str(value).replace('\n', ' ')
             f.write(f"# {key}: {clean_val}\n")
-        f.write(f"# NOME_FILE_FITS: {nome_solo}\n")
+        f.write(f"# NOME_FILE: {nome_solo}\n")
         f.write("#\n# PARAMETRI SEGMENTAZIONE:\n")
         if parametri_seg:
             for key, value in parametri_seg.items():
@@ -307,7 +307,7 @@ def analisi_image_segmentation(percorso_file_, parametri_globali):
         kron_manuale_seg.append(fl_seg)
 
         is_good = (np.sum(valori_pixel > soglia_assoluta) >= 3) and (
-                    np.sum(valori_pixel > soglia_relativa * prop.max_value) >= 2)
+                np.sum(valori_pixel > soglia_relativa * prop.max_value) >= 2)
         mask_keep.append(is_good)
 
     tbl['kron_manuale_seg'] = kron_manuale_seg
@@ -342,6 +342,14 @@ if __name__ == "__main__":
 
     # Accumulatore per tutti i file CSV generati in tutte le run
     tutti_i_file_csv_generati = []
+
+    # --- STRUTTURE PER IL TRACKING GLOBALE DEGLI OGGETTI (LABEL PERSISTENTI) ---
+    # MODIFICA: Ottimizzazione Tracking
+    # global_tracker_coords: contiene SOLO le coordinate degli oggetti NON CATALOGATI (NO)
+    global_tracker_coords = None
+    global_tracker_labels = []  # Label corrispondenti per gli oggetti NO
+    global_max_label = 0  # Contatore globale
+    global_catalog_label_map = {}  # Dizionario {ID_CATALOGO: LABEL_ASSEGNATO} per gli oggetti SI
 
     # --- CICLO PER OGNI RUN ---
     for run in RUN:
@@ -378,9 +386,14 @@ if __name__ == "__main__":
                 hdu_list = fits.open(percorso_file)
                 w = WCS(hdu_list[0].header)
                 ra_c, dec_c = hdu_list[0].header["RA"], hdu_list[0].header["DEC"]
+
+                alto_destra = w.pixel_to_world(3071, 2047)
+                centro = SkyCoord(ra_c, dec_c, unit=u.deg)
+
                 riquadro_esterno_vizier = vizier.query_region(
                     coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
-                    radius=Angle(0.5, "deg"), column_filters={'gmag': f'<{15}'}
+                    radius=Angle(centro.separation(alto_destra) * 1.5, "deg"),
+                    column_filters={'gmag': f'<{15}'}
                 )
                 tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
 
@@ -409,13 +422,14 @@ if __name__ == "__main__":
 
             df_trovate = df_trovate[[c for c in cols_keep if c in df_trovate.columns]].copy()
 
+            # Calcolo coordinate astronomiche per le sorgenti trovate
             with fits.open(percorso_file, memmap=False) as hdu:
                 w = WCS(hdu[0].header)
             coords = w.pixel_to_world(df_trovate['xcentroid'], df_trovate['ycentroid'])
             df_trovate['RA_centroid'] = coords.ra.deg
             df_trovate['DEC_centroid'] = coords.dec.deg
 
-            # Spostamento colonne RA/DEC
+            # Spostamento colonne RA/DEC per ordine visuale
             cols_order = df_trovate.columns.tolist()
             if 'ycentroid' in cols_order:
                 for c in ['RA_centroid', 'DEC_centroid']:
@@ -425,6 +439,9 @@ if __name__ == "__main__":
                 cols_order.insert(idx_y + 2, 'DEC_centroid')
                 df_trovate = df_trovate[cols_order]
 
+            # =================================================================
+            # MATCHING COL CATALOGO (Spostato PRIMA del Tracking)
+            # =================================================================
             if 'RAJ2000' in df_catalogate.columns:
                 c_cat = SkyCoord(ra=df_catalogate['RAJ2000'].values * u.deg,
                                  dec=df_catalogate['DEJ2000'].values * u.deg)
@@ -452,13 +469,116 @@ if __name__ == "__main__":
                 df_final = df_trovate.copy()
                 df_final['Corrispondenza'] = 'NO'
 
+            # =================================================================
+            # INIZIO BLOCCO: TRACKING GLOBALE OTTIMIZZATO
+            # =================================================================
+            # Inizializza contatore label se prima volta
+            if global_max_label == 0 and len(df_final) > 0:
+                # Assicuriamoci di partire da 0 o da max(df_trovate) ma qui assegniamo noi
+                pass
+
+            # Prepara colonna label finale
+            final_labels = np.zeros(len(df_final), dtype=int)
+
+            # 1. GESTIONE OGGETTI CATALOGATI (SI) - Usa ID per matching veloce
+            mask_cat = df_final['Corrispondenza'] != 'NO'
+            if mask_cat.any():
+                indices_cat = np.where(mask_cat)[0]
+                ids_cat = df_final.loc[mask_cat, 'ID'].values
+
+                for idx_row, cat_id in zip(indices_cat, ids_cat):
+                    if cat_id in global_catalog_label_map:
+                        final_labels[idx_row] = global_catalog_label_map[cat_id]
+                    else:
+                        global_max_label += 1
+                        global_catalog_label_map[cat_id] = global_max_label
+                        final_labels[idx_row] = global_max_label
+
+            # 2. GESTIONE OGGETTI NON CATALOGATI (NO) - Usa Matching Spaziale
+            mask_no = ~mask_cat
+            if mask_no.any():
+                indices_no = np.where(mask_no)[0]
+                coords_no = SkyCoord(ra=df_final.loc[mask_no, 'RA_centroid'].values * u.deg,
+                                     dec=df_final.loc[mask_no, 'DEC_centroid'].values * u.deg)
+
+                assigned_no_labels = np.zeros(len(indices_no), dtype=int)
+
+                if global_tracker_coords is None:
+                    # Primo batch assoluto di NO
+                    start_id = global_max_label + 1
+                    end_id = start_id + len(indices_no)
+                    new_ids = np.arange(start_id, end_id)
+                    assigned_no_labels = new_ids
+
+                    global_tracker_coords = coords_no
+                    global_tracker_labels = list(new_ids)
+                    global_max_label = end_id - 1
+                else:
+                    # Match spaziale contro i NO già noti
+                    idx, d2d, _ = coords_no.match_to_catalog_sky(global_tracker_coords)
+                    matched_mask_no = d2d < soglia_correlazione
+
+                    # Case A: Trovati nel tracker
+                    if matched_mask_no.any():
+                        idx_matched = idx[matched_mask_no]
+                        assigned_no_labels[matched_mask_no] = np.array(global_tracker_labels)[idx_matched]
+
+                    # Case B: Nuovi NO
+                    unmatched_mask_no = ~matched_mask_no
+                    num_new = np.sum(unmatched_mask_no)
+                    if num_new > 0:
+                        start_id = global_max_label + 1
+                        end_id = start_id + num_new
+                        new_ids = np.arange(start_id, end_id)
+                        assigned_no_labels[unmatched_mask_no] = new_ids
+
+                        # Aggiorna tracker
+                        new_coords_obj = coords_no[unmatched_mask_no]
+                        combined_ra = np.concatenate([global_tracker_coords.ra.deg, new_coords_obj.ra.deg])
+                        combined_dec = np.concatenate([global_tracker_coords.dec.deg, new_coords_obj.dec.deg])
+                        global_tracker_coords = SkyCoord(ra=combined_ra * u.deg, dec=combined_dec * u.deg)
+                        global_tracker_labels.extend(new_ids)
+                        global_max_label = end_id - 1
+
+                final_labels[indices_no] = assigned_no_labels
+
+            # Applica i label calcolati
+            df_final['label'] = final_labels
+
+            # Aggiunta colonne identificative Run e Immagine
+            df_final['run_id'] = run
+            df_final['img_index'] = n
+
+            # =================================================================
+            # FINE BLOCCO TRACKING
+            # =================================================================
+
             if 'label' in df_final.columns: df_final.sort_values('label', inplace=True)
 
             cols = df_final.columns.tolist()
             if 'ID' in cols and 'Catalogo' in cols:
                 cols.remove('Catalogo')
                 cols.insert(cols.index('ID'), 'Catalogo')
-                df_final = df_final[cols]
+                # Riordino finale per mettere run_id e img_index prima di Corrispondenza
+                # Cerchiamo dove sono finiti run_id e img_index (sono in df_trovate, quindi in df_si e df_no)
+
+            # Logica riordino colonne richiesta
+            final_cols = df_final.columns.tolist()
+            # Rimuoviamo temporaneamente
+            for c in ['run_id', 'img_index']:
+                if c in final_cols: final_cols.remove(c)
+
+            # Cerchiamo l'indice di Corrispondenza
+            if 'Corrispondenza' in final_cols:
+                idx_corr = final_cols.index('Corrispondenza')
+                final_cols.insert(idx_corr, 'img_index')
+                final_cols.insert(idx_corr, 'run_id')
+            else:
+                # Fallback se Corrispondenza non c'è
+                final_cols.insert(0, 'run_id')
+                final_cols.insert(1, 'img_index')
+
+            df_final = df_final[final_cols]
 
             file_out = output_dir / f'run_{run}_stelle_trovate_e_catalogate_immagine_{n:03d}.csv'
             salva_csv_con_header_fits(df_final, dict(fits.getheader(percorso_file)),
@@ -507,38 +627,41 @@ if __name__ == "__main__":
         for file_csv in tqdm(file_csv_list, desc="Ricalcolo Flussi"):
             df_frame = pd.read_csv(file_csv, comment='#')
             header_info = leggi_header_da_csv(file_csv)
-            # 1. Cerchiamo il nome del file fits nell'header (chiave 'NOME_FILE' che hai salvato in Fase 1)
-            nome_file_puro = header_info.get('NOME_FILE_FITS', '')
 
-            # Fallback: Se NOME_FILE non c'è, proviamo a estrarlo da PERCORSO_FILE se presente
-            if not nome_file_puro:
-                vecchio_percorso = header_info.get('PERCORSO_FILE', '')
-                if vecchio_percorso:
-                    nome_file_puro = os.path.basename(str(vecchio_percorso))
+            # Recuperiamo percorso e nome file dall'header del CSV
+            path_fits = header_info.get('PERCORSO_FILE', '')
+            nome_fits = header_info.get('NOME_FILE', '')
 
-            path_fits = None
-            if nome_file_puro:
-                # cerco questo file fits ovunque dentro la cartella del progetto corrente
-                file_trovato_path = cerca_file_nel_progetto(BASE_DIR, nome_file_puro)
-                if file_trovato_path:
-                    path_fits = str(file_trovato_path)
-
-            # Controllo finale: se non l'abbiamo trovato, saltiamo
+            # Se il percorso scritto nel CSV non esiste o è vuoto, proviamo a trovarlo
             if not path_fits or not os.path.exists(path_fits):
-                print(f"Impossibile trovare il FITS originale: {nome_file_puro}")
+
+                # Tentativo 1: Ricostruzione path (metodo vecchio)
+                if path_fits:
+                    p_obj = Path(path_fits)
+                    try:
+                        if "pmc_photometry" in p_obj.parts:
+                            idx = p_obj.parts.index("pmc_photometry")
+                            new_path = BASE_DIR.joinpath(*p_obj.parts[idx + 1:])
+                            if new_path.exists():
+                                path_fits = str(new_path)
+                    except:
+                        pass
+
+                # Tentativo 2: Ricerca brutale per NOME in tutta la cartella BASE_DIR (pmc_photometry)
+                # Questo scatta se il percorso è ancora invalido ma abbiamo il nome del file
+                if (not path_fits or not os.path.exists(path_fits)) and nome_fits:
+                    # rglob('*' + nome_fits) cerca il file ovunque sotto BASE_DIR
+                    # Usiamo il nome esatto per evitare ambiguità
+                    files_trovati = list(BASE_DIR.rglob(str(nome_fits).strip()))
+
+                    if files_trovati:
+                        # Prendiamo il primo trovato (di solito è unico)
+                        path_fits = str(files_trovati[0])
+
+            # Se dopo tutto questo il file non c'è, salto
+            if not path_fits or not os.path.exists(path_fits):
+                # print(f"ATTENZIONE: File FITS originale non trovato per {nome_fits}, salto.")
                 continue
-
-            if not os.path.exists(path_fits):
-                p_obj = Path(path_fits)
-                try:
-                    if "pmc_photometry" in p_obj.parts:
-                        idx = p_obj.parts.index("pmc_photometry")
-                        new_path = BASE_DIR.joinpath(*p_obj.parts[idx + 1:])
-                        if new_path.exists(): path_fits = str(new_path)
-                except:
-                    pass
-
-            if not os.path.exists(path_fits): continue
 
             with fits.open(path_fits, memmap=False) as hdu:
                 data = hdu[0].data
@@ -670,7 +793,7 @@ if __name__ == "__main__":
     stds_sample = grouped[cols_flux_presenti].std()
     stds = stds_sample / np.sqrt(counts_grouped)
 
-    # Per ripetizioni, dobbiamo contare per (ID, Run)
+    # Per repetitioni, dobbiamo contare per (ID, Run)
     # Crea una tabella pivot: Index=ID, Columns=Run, Values=Count
     repetition_pivot = pd.pivot_table(big_df, index='run_unique_id', columns='run_number', aggfunc='size', fill_value=0)
 
@@ -704,31 +827,24 @@ if __name__ == "__main__":
             for k, v in header_dict.items():
                 if k != 'PERCORSO_FILE':  # Scriveremo noi il nome pulito
                     f.write(f"# {k}: {v}\n")
-            f.write(f"# NOME_FILE_CSV: {nome_solo}\n")
+            f.write(f"# NOME_FILE: {nome_solo}\n")
             f.write("#\n")
             df.to_csv(f, index=False)
 
+
+    # Calcolo i conteggi totali (su tutte le run) per ogni ID
+    global_repetition_counts = big_df['run_unique_id'].value_counts()
 
     for file_path, df_file in tqdm(files_groups, desc="Salvataggio file globali aggiornati"):
 
         # Recuperiamo il numero della run da una qualsiasi riga del gruppo (sono tutte dello stesso file)
         current_run_num = df_file['run_number'].iloc[0]
 
-        # Aggiungiamo la colonna specifica "ripetizione_run_X"
-        # Usiamo il pivot table calcolato prima
-        # Mappiamo run_unique_id -> conteggio nella colonna current_run_num
-        col_rip_name = f'ripetizioni_run_{current_run_num}'
+        # MODIFICA: Colonna 'ripetizioni' con conteggio totale su tutte le run
+        col_rip_name = 'ripetizioni'
 
-
-        # Definiamo una funzione sicura per il map (se un ID non esiste nella run X, è 0, ma qui deve esistere se è nel file)
-        def get_rep_count(uid):
-            try:
-                return repetition_pivot.at[uid, current_run_num]
-            except:
-                return 0
-
-
-        df_file[col_rip_name] = df_file['run_unique_id'].map(get_rep_count)
+        # Mappo il conteggio globale sulla colonna
+        df_file[col_rip_name] = df_file['run_unique_id'].map(global_repetition_counts)
 
         # --- FILTRO TRANSIENTI DISATTIVATO (COMMENTATO) ---
         '''

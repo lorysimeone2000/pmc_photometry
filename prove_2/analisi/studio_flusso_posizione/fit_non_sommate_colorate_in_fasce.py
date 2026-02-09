@@ -138,6 +138,7 @@ try:
         image_data = hdu_list[0].data
         image_header_fits = hdu_list[0].header
 
+        H, W = image_data.shape
         mean, median, std = sigma_clipped_stats(image_data, sigma=3.0)
         image_data_sub = image_data - median
         hdu_list.close()
@@ -169,6 +170,23 @@ mask_valid_fit = (
         (df_match[col_count] > 0)
 )
 data_fit = df_match[mask_valid_fit].copy()
+
+# 1. Coordinate valide (non NaN)
+mask_coords_exist = (data_fit['xcentroid'].notna()) & (data_fit['ycentroid'].notna())
+
+# 2. Coordinate dentro i bordi (0 <= x <= W, 0 <= y <= H)
+mask_bounds_inside = (
+    (data_fit['xcentroid'] >= 0) &
+    (data_fit['xcentroid'] <= W) &
+    (data_fit['ycentroid'] >= 0) &
+    (data_fit['ycentroid'] <= H)
+)
+
+# Maschera finale "INSIDE"
+mask_geo_inside = mask_coords_exist & mask_bounds_inside
+
+# Maschera finale "OUTSIDE" (chi ha NaN o è fuori dai bordi)
+mask_geo_outside = ~mask_geo_inside
 
 # --- 5. CALCOLO ZONE (AREE UGUALI) ---
 
@@ -261,14 +279,14 @@ for i, (r_limit, color) in enumerate(zip(radii_limits, colors_zones)):
 
 # Fuori Fascia (Se ci sono stelle oltre l'ultimo raggio calcolato, teoricamente 0 se usiamo il 100 percentile)
 # Ma per sicurezza controlliamo se qualche stella ha coordinate strane
-mask_outside = (data_fit['dist_center'] >= radii_limits[-1]) | (data_fit['dist_center'].isna())
-subset_out = data_fit[mask_outside]
+subset_out = data_fit[mask_geo_outside]
+
 if len(subset_out) > 0:
     ax1.errorbar(
         subset_out[col_mag], subset_out[col_flux],
         yerr=subset_out[col_std] / np.sqrt(subset_out[col_count]),
-        fmt='o', markersize=4, color='gray', markeredgecolor='none', alpha=0.3,
-        label='Fuori Range', zorder=3
+        fmt='o', markersize=4, color='gray', markeredgecolor='none', alpha=0.6, # Alpha più alto per visibilità
+        label='Fuori Range (Geom.)', zorder=3
     )
 
 if len(df_sature) > 0:

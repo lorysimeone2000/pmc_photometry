@@ -5,7 +5,7 @@ from photutils.segmentation import make_2dgaussian_kernel
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from photutils.segmentation import SourceCatalog
-from photutils.aperture import aperture_photometry, CircularAperture
+from photutils.aperture import aper, CircularAperture
 import numpy as np
 import os
 from tqdm import tqdm
@@ -133,7 +133,7 @@ def calcola_flusso_kron_completo(data, xc, yc, valori_pixel, distanze_pixel, k=2
     r_1 = somma_momenti / somma_intensita
     r_kron_finale = max(k * r_1, r_min)
     aper = CircularAperture((xc, yc), r=r_kron_finale)
-    phot = aperture_photometry(data, aper)
+    phot = aper(data, aper)
     return phot['aperture_sum'][0], r_kron_finale
 
 
@@ -177,7 +177,7 @@ def esegui_fotometria_variabile(data, positions, raggi):
     for (xc, yc), r in zip(positions, raggi):
         if r > 0 and not np.isnan(r):
             aper = CircularAperture((xc, yc), r=r)
-            phot = aperture_photometry(data, aper)
+            phot = aper(data, aper)
             flussi.append(phot['aperture_sum'][0])
         else:
             flussi.append(np.nan)
@@ -471,6 +471,7 @@ if __name__ == "__main__":
 
                 # =================================================================
                 # INIZIO BLOCCO: TRACKING GLOBALE OTTIMIZZATO (CORRETTO)
+                # (Dedentato: ora viene eseguito sempre, sia nel caso if che else)
                 # =================================================================
 
                 # Prepara colonna label finale
@@ -478,7 +479,6 @@ if __name__ == "__main__":
 
                 # Per gestire i gruppi, usiamo le coordinate pixel che sono univoche per ogni "pallocchio"
                 # Creiamo un identificativo temporaneo basato su x,y per raggruppare le righe duplicate
-                # (Poiché sono float, li convertiamo in stringa o tupla per il raggruppamento sicuro)
                 df_final['temp_group_id'] = list(zip(df_final['xcentroid'], df_final['ycentroid']))
 
                 grouped = df_final.groupby('temp_group_id')
@@ -535,9 +535,7 @@ if __name__ == "__main__":
                                 assigned_label = global_max_label
 
                                 # Aggiorna il tracker
-                                # Concatenazione sicura di SkyCoord
                                 temp_coords = SkyCoord([global_tracker_coords, coord_obj])
-                                # Nota: SkyCoord concatenato diventa un array appiattito
                                 global_tracker_coords = temp_coords
                                 global_tracker_labels.append(assigned_label)
 
@@ -556,36 +554,34 @@ if __name__ == "__main__":
                 # FINE BLOCCO TRACKING
                 # =================================================================
 
-            if 'label' in df_final.columns: df_final.sort_values('label', inplace=True)
+                if 'label' in df_final.columns: df_final.sort_values('label', inplace=True)
 
-            cols = df_final.columns.tolist()
-            if 'ID' in cols and 'Catalogo' in cols:
-                cols.remove('Catalogo')
-                cols.insert(cols.index('ID'), 'Catalogo')
-                # Riordino finale per mettere run_id e img_index prima di Corrispondenza
-                # Cerchiamo dove sono finiti run_id e img_index (sono in df_trovate, quindi in df_si e df_no)
+                cols = df_final.columns.tolist()
+                if 'ID' in cols and 'Catalogo' in cols:
+                    cols.remove('Catalogo')
+                    cols.insert(cols.index('ID'), 'Catalogo')
 
-            # Logica riordino colonne richiesta
-            final_cols = df_final.columns.tolist()
-            # Rimuoviamo temporaneamente
-            for c in ['run_id', 'img_index']:
-                if c in final_cols: final_cols.remove(c)
+                # Logica riordino colonne richiesta
+                final_cols = df_final.columns.tolist()
+                # Rimuoviamo temporaneamente
+                for c in ['run_id', 'img_index']:
+                    if c in final_cols: final_cols.remove(c)
 
-            # Cerchiamo l'indice di Corrispondenza
-            if 'Corrispondenza' in final_cols:
-                idx_corr = final_cols.index('Corrispondenza')
-                final_cols.insert(idx_corr, 'img_index')
-                final_cols.insert(idx_corr, 'run_id')
-            else:
-                # Fallback se Corrispondenza non c'è
-                final_cols.insert(0, 'run_id')
-                final_cols.insert(1, 'img_index')
+                # Cerchiamo l'indice di Corrispondenza
+                if 'Corrispondenza' in final_cols:
+                    idx_corr = final_cols.index('Corrispondenza')
+                    final_cols.insert(idx_corr, 'img_index')
+                    final_cols.insert(idx_corr, 'run_id')
+                else:
+                    # Fallback se Corrispondenza non c'è
+                    final_cols.insert(0, 'run_id')
+                    final_cols.insert(1, 'img_index')
 
-            df_final = df_final[final_cols]
+                df_final = df_final[final_cols]
 
-            file_out = output_dir / f'run_{run}_stelle_trovate_e_catalogate_immagine_{n:03d}.csv'
-            salva_csv_con_header_fits(df_final, dict(fits.getheader(percorso_file)),
-                                      file_out, str(percorso_file), parametri_caricati)
+                file_out = output_dir / f'run_{run}_stelle_trovate_e_catalogate_immagine_{n:03d}.csv'
+                salva_csv_con_header_fits(df_final, dict(fits.getheader(percorso_file)),
+                                          file_out, str(percorso_file), parametri_caricati)
 
         # =============================================================================
         # FASE 2 & 3: RAGGI MAX E FLUSSO FISSO (PER RUN)
@@ -687,7 +683,7 @@ if __name__ == "__main__":
                 if r_globale > 0 and not np.isnan(r_globale):
                     pos = (df_frame.at[i, 'xcentroid'], df_frame.at[i, 'ycentroid'])
                     aper = CircularAperture(pos, r=r_globale)
-                    phot = aperture_photometry(data_sub, aper)
+                    phot = aper(data_sub, aper)
                     flussi_calcolati.append(phot['aperture_sum'][0])
                 else:
                     flussi_calcolati.append(np.nan)

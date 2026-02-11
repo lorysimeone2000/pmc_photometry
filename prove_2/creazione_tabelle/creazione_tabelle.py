@@ -470,7 +470,39 @@ if __name__ == "__main__":
                 df_final['Corrispondenza'] = 'NO'
 
                 # =================================================================
+                # MATCHING COL CATALOGO
+                # =================================================================
+                if 'RAJ2000' in df_catalogate.columns:
+                    c_cat = SkyCoord(ra=df_catalogate['RAJ2000'].values * u.deg,
+                                     dec=df_catalogate['DEJ2000'].values * u.deg)
+                    idx_t, idx_c, d2d, _ = c_cat.search_around_sky(coords, soglia_correlazione)
+
+                    matches = pd.DataFrame(
+                        {'idx_t': idx_t, 'idx_c': idx_c, 'dist': d2d.deg,
+                         'mag': df_catalogate.iloc[idx_c]['Mag'].values})
+                    matches.sort_values(by=['idx_t', 'mag'], inplace=True)
+                    matches['rank'] = matches.groupby('idx_t').cumcount() + 1
+                    matches['Corrispondenza'] = 'SI (Rank ' + matches['rank'].astype(str) + ')'
+
+                    df_si = pd.concat([
+                        df_trovate.iloc[matches['idx_t']].reset_index(drop=True),
+                        matches[['Corrispondenza']].reset_index(drop=True),
+                        df_catalogate.iloc[matches['idx_c']].reset_index(drop=True)
+                    ], axis=1)
+
+                    unmatched = list(set(range(len(df_trovate))) - set(matches['idx_t']))
+                    df_no = df_trovate.iloc[unmatched].copy()
+                    df_no['Corrispondenza'] = 'NO'
+                    for c in df_catalogate.columns: df_no[c] = np.nan
+
+                    df_final = pd.concat([df_si, df_no], ignore_index=True)
+                else:
+                    df_final = df_trovate.copy()
+                    df_final['Corrispondenza'] = 'NO'
+
+                # =================================================================
                 # INIZIO BLOCCO: TRACKING GLOBALE OTTIMIZZATO (CORRETTO)
+                # (Ora fuori dall'if/else così viene eseguito sempre)
                 # =================================================================
 
                 # Prepara colonna label finale
@@ -478,7 +510,6 @@ if __name__ == "__main__":
 
                 # Per gestire i gruppi, usiamo le coordinate pixel che sono univoche per ogni "pallocchio"
                 # Creiamo un identificativo temporaneo basato su x,y per raggruppare le righe duplicate
-                # (Poiché sono float, li convertiamo in stringa o tupla per il raggruppamento sicuro)
                 df_final['temp_group_id'] = list(zip(df_final['xcentroid'], df_final['ycentroid']))
 
                 grouped = df_final.groupby('temp_group_id')
@@ -535,9 +566,7 @@ if __name__ == "__main__":
                                 assigned_label = global_max_label
 
                                 # Aggiorna il tracker
-                                # Concatenazione sicura di SkyCoord
                                 temp_coords = SkyCoord([global_tracker_coords, coord_obj])
-                                # Nota: SkyCoord concatenato diventa un array appiattito
                                 global_tracker_coords = temp_coords
                                 global_tracker_labels.append(assigned_label)
 
@@ -556,36 +585,34 @@ if __name__ == "__main__":
                 # FINE BLOCCO TRACKING
                 # =================================================================
 
-            if 'label' in df_final.columns: df_final.sort_values('label', inplace=True)
+                if 'label' in df_final.columns: df_final.sort_values('label', inplace=True)
 
-            cols = df_final.columns.tolist()
-            if 'ID' in cols and 'Catalogo' in cols:
-                cols.remove('Catalogo')
-                cols.insert(cols.index('ID'), 'Catalogo')
-                # Riordino finale per mettere run_id e img_index prima di Corrispondenza
-                # Cerchiamo dove sono finiti run_id e img_index (sono in df_trovate, quindi in df_si e df_no)
+                cols = df_final.columns.tolist()
+                if 'ID' in cols and 'Catalogo' in cols:
+                    cols.remove('Catalogo')
+                    cols.insert(cols.index('ID'), 'Catalogo')
 
-            # Logica riordino colonne richiesta
-            final_cols = df_final.columns.tolist()
-            # Rimuoviamo temporaneamente
-            for c in ['run_id', 'img_index']:
-                if c in final_cols: final_cols.remove(c)
+                # Logica riordino colonne richiesta
+                final_cols = df_final.columns.tolist()
+                # Rimuoviamo temporaneamente
+                for c in ['run_id', 'img_index']:
+                    if c in final_cols: final_cols.remove(c)
 
-            # Cerchiamo l'indice di Corrispondenza
-            if 'Corrispondenza' in final_cols:
-                idx_corr = final_cols.index('Corrispondenza')
-                final_cols.insert(idx_corr, 'img_index')
-                final_cols.insert(idx_corr, 'run_id')
-            else:
-                # Fallback se Corrispondenza non c'è
-                final_cols.insert(0, 'run_id')
-                final_cols.insert(1, 'img_index')
+                # Cerchiamo l'indice di Corrispondenza
+                if 'Corrispondenza' in final_cols:
+                    idx_corr = final_cols.index('Corrispondenza')
+                    final_cols.insert(idx_corr, 'img_index')
+                    final_cols.insert(idx_corr, 'run_id')
+                else:
+                    # Fallback se Corrispondenza non c'è
+                    final_cols.insert(0, 'run_id')
+                    final_cols.insert(1, 'img_index')
 
-            df_final = df_final[final_cols]
+                df_final = df_final[final_cols]
 
-            file_out = output_dir / f'run_{run}_stelle_trovate_e_catalogate_immagine_{n:03d}.csv'
-            salva_csv_con_header_fits(df_final, dict(fits.getheader(percorso_file)),
-                                      file_out, str(percorso_file), parametri_caricati)
+                file_out = output_dir / f'run_{run}_stelle_trovate_e_catalogate_immagine_{n:03d}.csv'
+                salva_csv_con_header_fits(df_final, dict(fits.getheader(percorso_file)),
+                                          file_out, str(percorso_file), parametri_caricati)
 
         # =============================================================================
         # FASE 2 & 3: RAGGI MAX E FLUSSO FISSO (PER RUN)

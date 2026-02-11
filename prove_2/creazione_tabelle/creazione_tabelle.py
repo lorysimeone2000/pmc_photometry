@@ -787,26 +787,24 @@ if __name__ == "__main__":
     cols_flux_presenti = [c for c in cols_flux if c in big_df.columns]
     for c in cols_flux_presenti: big_df[c] = pd.to_numeric(big_df[c], errors='coerce')
 
-    # Groupby ID per stats globali
-    grouped = big_df.groupby('run_unique_id')
-    means = grouped[cols_flux_presenti].mean()
+    # Modifico il raggruppamento per calcolare statistiche relative alla SINGOLA run
+    # Raggruppo per ID univoco E numero di run
+    grouped_per_run = big_df.groupby(['run_unique_id', 'run_number'])
 
-    # CORREZIONE DEVIAZIONE STANDARD DELLA MEDIA (SEM)
-    counts_grouped = grouped[cols_flux_presenti].count()
-    stds_sample = grouped[cols_flux_presenti].std()
-    stds = stds_sample / np.sqrt(counts_grouped)
-
-    # Per "ripetizioni", dobbiamo contare per (ID, Run)
-    # Crea una tabella pivot: Index=ID, Columns=Run, Values=Count
-    repetition_pivot = pd.pivot_table(big_df, index='run_unique_id', columns='run_number', aggfunc='size', fill_value=0)
-
-    # Mapping back to big_df
     stat_columns = []
+    # Uso transform per assegnare direttamente i valori alle righe corrispondenti
     for c in cols_flux_presenti:
         col_mean = f'media_{c}'
         col_std = f'std_{c}'
-        big_df[col_mean] = big_df['run_unique_id'].map(means[c])
-        big_df[col_std] = big_df['run_unique_id'].map(stds[c])
+
+        # Calcolo media per run usando transform
+        big_df[col_mean] = grouped_per_run[c].transform('mean')
+
+        # Calcolo SEM per run: std / sqrt(count)
+        stds_sample = grouped_per_run[c].transform('std')
+        counts_grouped = grouped_per_run[c].transform('count')
+        big_df[col_std] = stds_sample / np.sqrt(counts_grouped)
+
         stat_columns.extend([col_mean, col_std])
 
     for c in stat_columns: big_df[c] = big_df[c].map(lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')

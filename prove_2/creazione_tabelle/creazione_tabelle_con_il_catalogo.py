@@ -136,93 +136,81 @@ def salva_csv_con_header_fits(dataframe, header_fits, filename, nome_file_fits):
         dataframe.to_csv(f, index=False)
 
 
-def tabella_catalogo(image_file_,
-                     magnitudine_massima):  # questa funzione restituisce la tabella delle sorgenti catalogate nel riquadro della pmc
+def tabella_catalogo(image_file_, tbl_vizier_in, tbl_hipparco_in):
     """
-    Seleziona le stelle del catalogo che rientrano nel riquadro e che sono sotto una certa magnitudine
-    e che non stanno entro 7 pixel dal bordo
-
-    Parameters:
-    image_file_ (string): percorso del file da cui estrarre l'header e quindi le coordinate dell'astrometria
-    magnitudine_massima (float): magnitudina massima presa dal catalogo
-
-    Returns:
-    astropy.table.Table: Tabella delle stelle del catalogo che rientrano nel riquadro e che sono sotto una certa magnitudine
+    Seleziona le stelle dei cataloghi unificati che rientrano nel riquadro dell'immagine.
+    Ottimizzata geometricamente per evitare rallentamenti.
     """
-    #
-    # This image helps visualize how a FITS file stores the Header (metadata/WCS) separately from the Data (pixel array).
     hdu_list_ = fits.open(image_file_)
-
-    wcs = WCS(hdu_list_[0].header)  # creo un oggetto WCS usando l'header del file FITS,
-    # che contiene le informazioni per le trasformazioni di coordinate
+    wcs = WCS(hdu_list_[0].header)
     data_ = hdu_list_[0].data
 
-    # Definisco il bordo
+    # definisco il bordo
     bordo = 7
     h, w = data_.shape[0], data_.shape[1]
 
-    # tolgo le stelle che non vorrei siano prese da Vizier
-    # mag_limite_tra_hipparco_e_vizier = 7.
-    tbl_catalogo_vizier = tbl_riquadro_esterno_vizier[
-        (tbl_riquadro_esterno_vizier['gmag'] >= mag_limite_tra_hipparco_e_vizier)
-    ]
+    # --- OTTIMIZZAZIONE GEOMETRICA INTERNA ---
+    # calcolo il centro dell'immagine e il raggio di sicurezza
+    center_coord = wcs.pixel_to_world(w / 2, h / 2)
+    ra_center = center_coord.ra.deg
+    dec_center = center_coord.dec.deg
+    fov_radius_deg = 1.2
 
-    '''# Esploro il catalogo
-    print("\n=== INFORMAZIONI DEL CATALOGO ===")
-    print(f"Numero di stelle nel catalogo: {len(tbl_catalogo_hipparco)}")
-    print(f"Nomi delle colonne: {tbl_catalogo_hipparco.colnames}")'''
+    # filtro Vizier usando coordinate sferiche (veloce)
+    mask_viz = (
+            (tbl_vizier_in['RAJ2000'] > ra_center - fov_radius_deg) &
+            (tbl_vizier_in['RAJ2000'] < ra_center + fov_radius_deg) &
+            (tbl_vizier_in['DEJ2000'] > dec_center - fov_radius_deg) &
+            (tbl_vizier_in['DEJ2000'] < dec_center + fov_radius_deg)
+    )
+    subset_vizier = tbl_vizier_in[mask_viz]
 
-    # adesso mi costruisco una mia tabella astropy complessiva
+    # filtro Hipparcos usando coordinate sferiche (veloce)
+    mask_hip = (
+            (tbl_hipparco_in['_RAJ2000'] > ra_center - fov_radius_deg) &
+            (tbl_hipparco_in['_RAJ2000'] < ra_center + fov_radius_deg) &
+            (tbl_hipparco_in['_DEJ2000'] > dec_center - fov_radius_deg) &
+            (tbl_hipparco_in['_DEJ2000'] < dec_center + fov_radius_deg)
+    )
+    subset_hipparco = tbl_hipparco_in[mask_hip]
 
-    # ricreo le colonne dei cataloghi
-
-    nome_catalogo_vizier = []
-    for i in range(len(tbl_catalogo_vizier)): nome_catalogo_vizier.append("II/389/ps1_dr2")
+    # preparo le colonne per il merge
+    nome_catalogo_vizier = ["II/389/ps1_dr2"] * len(subset_vizier)
     colonne_vizier = {
-        'ID': tbl_catalogo_vizier['objID'],
-        'RAJ2000': tbl_catalogo_vizier['RAJ2000'],
-        'DEJ2000': tbl_catalogo_vizier['DEJ2000'],
-        'Mag': tbl_catalogo_vizier['gmag'],
+        'ID': subset_vizier['objID'],
+        'RAJ2000': subset_vizier['RAJ2000'],
+        'DEJ2000': subset_vizier['DEJ2000'],
+        'Mag': subset_vizier['gmag'],
         'Catalogo': nome_catalogo_vizier
     }
 
-    nome_catalogo_hipparco = []
-    for i in range(len(tbl_catalogo_hipparco)): nome_catalogo_hipparco.append("I/239/hip_main")
+    nome_catalogo_hipparco = ["I/239/hip_main"] * len(subset_hipparco)
     colonne_hipparco = {
         'Catalogo': nome_catalogo_hipparco,
-        'ID': tbl_catalogo_hipparco['HIP'],
-        'RAJ2000': tbl_catalogo_hipparco['_RAJ2000'],
-        'DEJ2000': tbl_catalogo_hipparco['_DEJ2000'],
-        'Mag': tbl_catalogo_hipparco['Vmag'],
+        'ID': subset_hipparco['HIP'],
+        'RAJ2000': subset_hipparco['_RAJ2000'],
+        'DEJ2000': subset_hipparco['_DEJ2000'],
+        'Mag': subset_hipparco['Vmag'],
     }
 
     t1 = Table(colonne_vizier)
     t2 = Table(colonne_hipparco)
 
+    # mi costruisco la tabella astropy complessiva
     tbl_unita_estesa = vstack([t1, t2])
-    tbl_unita_estesa['Mag'].description = 'Magnitudine AB nel filtro g di Pan-STARRS'
-    # print("Tabella estesa:\n", tbl_unita_estesa)
 
-    # --- MODIFICA QUI ---
+    if len(tbl_unita_estesa) > 0:
+        tbl_unita_estesa['Mag'].description = 'Magnitudine AB nel filtro g di Pan-STARRS'
 
-    # Invece di proiettare gli angoli sul cielo, proiettiamo il catalogo sui pixel
+    if len(tbl_unita_estesa) == 0:
+        hdu_list_.close()
+        return tbl_unita_estesa
 
-    # 1. Creiamo un oggetto SkyCoord per tutte le stelle della tabella unita
-    coords_catalogo = SkyCoord(
-        ra=tbl_unita_estesa['RAJ2000'],
-        dec=tbl_unita_estesa['DEJ2000'],
-        unit=u.deg
-    )
-
-    #
-    # This diagram illustrates how WCS maps the curved celestial sphere (RA/Dec) onto a flat 2D pixel grid.
-    # 2. Convertiamo tutte le coordinate celesti in coordinate pixel (x, y)
+    # converto le coordinate celesti del subset in coordinate pixel (x, y)
+    coords_catalogo = SkyCoord(ra=tbl_unita_estesa['RAJ2000'], dec=tbl_unita_estesa['DEJ2000'], unit=u.deg)
     x_pix, y_pix = wcs.world_to_pixel(coords_catalogo)
 
-    # 3. Creiamo la maschera usando le coordinate pixel
-    # Vogliamo le stelle che sono DENTRO i bordi:
-    # x deve essere > bordo E < (larghezza - bordo)
-    # y deve essere > bordo E < (altezza - bordo)
+    # creo la maschera per scartare il bordo usando le coordinate pixel
     mask_bordo = (
             (x_pix >= bordo) &
             (x_pix < (w - bordo)) &
@@ -230,14 +218,10 @@ def tabella_catalogo(image_file_,
             (y_pix < (h - bordo))
     )
 
-    # 4. Applichiamo la maschera alla tabella
+    # applico la maschera alla tabella
     tbl_cataloghi_ = tbl_unita_estesa[mask_bordo]
 
-    # Opzionale: Se vuoi salvare anche le coordinate pixel nella tabella risultante
-    # tbl_cataloghi_['x_pix'] = x_pix[mask_bordo]
-    # tbl_cataloghi_['y_pix'] = y_pix[mask_bordo]
-
-    hdu_list_.close()  # È buona norma chiudere il file fits
+    hdu_list_.close()
 
     return tbl_cataloghi_
 
@@ -296,8 +280,6 @@ def calcolo_distanze(tbl_trovate, tbl_catalogate, image_file):
     corrispondenze = []
     righe_tabella_combinata = []  # lista per la tabella combinata
 
-    #
-    # Useful to understand that 'separation' calculates the Great Circle distance, not linear Euclidean distance.
     for i, coord_trovata in enumerate(coords_trovate):
         # calcolo la distanza da tutte le stelle catalogate
         distanze_singola = coord_trovata.separation(
@@ -426,6 +408,11 @@ posizioni_lista = []  # lista che dovrà essere riempita con tutte le poszioni d
 distanze = []
 numero_stelle_catalogate = []
 tempo = []
+
+# inizializzo le variabili dei cataloghi puliti fuori dal ciclo
+tbl_vizier_cut = None
+tbl_hipparco_run_clean = None
+
 # Itera su tutti i file fits
 for percorso_file_fits in file_list:
     i += 1
@@ -437,12 +424,7 @@ for percorso_file_fits in file_list:
     hdu_list = fits.open(percorso_file_fits)
     image_header = hdu_list[0].header
 
-    # tbl_trovate = Table.from_pandas(dataframe)
     if i == 1:  # chiamo il sito una volta sola su un'immagine più grande per non mandarlo in down
-
-        # header = leggi_header_da_csv(filename)
-
-        # prendo un riquadro globale leggermente più grande del riquadro della pmc
 
         # coordinate centro
         ra_centro = image_header["RA"]
@@ -452,25 +434,20 @@ for percorso_file_fits in file_list:
         w = WCS(hdu_list[0].header)  # creo un oggetto WCS usando l'header del file FITS
         alto_destra = w.pixel_to_world(3071, 2047)
         alto_sinistra = w.pixel_to_world(3071, 0)
-        # print(f"Coordinate in alto a destra: {alto_destra}")
         basso_sinistra = w.pixel_to_world(0, 0)
         basso_destra = w.pixel_to_world(0, 2047)
 
         centro = SkyCoord(ra_centro, dec_centro, unit=u.deg)
 
-        #
-        # Illustrates the "query_region" operation: selecting stars within a specific angular radius around a central coordinate.
-        # creo un riquadro esterno leggermente più grande per assicurarmi che anche gli elementi successivi della run
-        # rientrino nella query, poi farò il taglio preciso nella tabella astropy
+        # creo un riquadro esterno leggermente più grande
+        raggio_ricerca = Angle(centro.separation(alto_destra) * 1.5, "deg")
         riquadro_esterno_vizier = vizier.query_region(coord.SkyCoord(ra=ra_centro, dec=dec_centro,
                                                                      unit=(u.deg, u.deg),
                                                                      frame='icrs'),
-                                                      radius=Angle(centro.separation(alto_destra) * 1.5, "deg"),
+                                                      radius=raggio_ricerca,
                                                       column_filters={'gmag': f'<{15}'},
                                                       )  # ho messo un limite di magnitudine per non scaricare milioni di stelle
         tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
-
-        # aggiungo il catalogo Hipparco per le magnitudini inferiori a 7
 
         # --- RICERCA DINAMICA HIPPARCO ---
         file_hipparco_path = cerca_file_nel_progetto(BASE_DIR, "hipparco.fit")
@@ -480,25 +457,81 @@ for percorso_file_fits in file_list:
         file_hipparco = str(file_hipparco_path)
 
         # Apro il catalogo in formato fit, lo faccio solo una volta
-
         hdu_list_hipparco = fits.open(file_hipparco)
-        # print("Info catalogo Hipparco: \n", hdu_list_hipparco)
 
         # I dati sono nella seconda estensione (V_SO_catalog), non nella prima
         table_data = Table(hdu_list_hipparco[1].data)  # Uso l'indice 1 per la seconda estensione
-        # tolgo le stelle che non vorrei siano prese da Hipparco
-        mag_limite_tra_hipparco_e_vizier = 7.
-        tbl_catalogo_hipparco = table_data[(table_data['Vmag']) < mag_limite_tra_hipparco_e_vizier]
+
+        # non taglio preventivamente le stelle di Hipparco
+        tbl_catalogo_hipparco = table_data
+
+        hdu_list_hipparco.close()
+
+        # calcolo gli errori 3-SIGMA sommati (Hipparcos + Vizier)
+        dt = 2000.0 - 1991.25
+        sigma_ra_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco['e_RAICRS']) ** 2 + (
+                dt * np.nan_to_num(tbl_catalogo_hipparco['e_pmRA'])) ** 2) / 3600000.0
+        sigma_dec_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco['e_DEICRS']) ** 2 + (
+                dt * np.nan_to_num(tbl_catalogo_hipparco['e_pmDE'])) ** 2) / 3600000.0
+
+        sigma_hip_deg = np.sqrt(sigma_ra_deg ** 2 + sigma_dec_deg ** 2)
+        sigma_vizier_deg = 0.1 / 3600.0
+        sigma_totale_deg = np.sqrt(sigma_hip_deg ** 2 + sigma_vizier_deg ** 2)
+
+        exclusion_radii_deg = 3.0 * sigma_totale_deg
+        min_radius_deg = 1.0 / 3600.0
+        exclusion_radii_deg = np.maximum(exclusion_radii_deg, min_radius_deg)
+
+        # creo l'oggetto SkyCoord globale per Hipparcos
+        coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],
+                                          dec=tbl_catalogo_hipparco['_DEJ2000'],
+                                          unit=u.deg)
+
+        # filtro spazialmente Hipparcos per la run corrente
+        distanze_hip = centro.separation(coords_hipparco_global)
+        mask_hip_fov = distanze_hip < raggio_ricerca
+
+        tbl_hipparco_run_subset = tbl_catalogo_hipparco[mask_hip_fov]
+        coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
+        exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
+
+        # eseguo il filtraggio competitivo Vizier vs Hipparcos
+        print("Filtraggio competitivo Vizier vs Hipparcos...")
+        coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
+                                 dec=tbl_riquadro_esterno_vizier['DEJ2000'],
+                                 unit=u.deg)
+
+        idx_hip, d2d, _ = coords_vizier.match_to_catalog_sky(coords_hipparco_run_subset)
+        thresholds = exclusion_radii_run_subset[idx_hip]
+
+        mag_vizier = np.nan_to_num(tbl_riquadro_esterno_vizier['gmag'], nan=99.0)
+        mag_hipparco_match = np.nan_to_num(tbl_hipparco_run_subset['Vmag'][idx_hip], nan=99.0)
+
+        is_spatial_match = d2d.deg <= thresholds
+        is_vizier_brighter = mag_vizier < mag_hipparco_match
+
+        # tengo Vizier se non c'è match o se Vizier è più luminosa
+        mask_keep_vizier = (~is_spatial_match) | (is_spatial_match & is_vizier_brighter)
+        tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
+
+        # rimuovo da Hipparcos le stelle battute
+        indices_hipparco_lost = idx_hip[is_spatial_match & is_vizier_brighter]
+        mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
+        mask_keep_hipparco[indices_hipparco_lost] = False
+        tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco]
+
+        # filtro per magnitudine massima il catalogo Vizier pulito
+        mag_max = 15
+        tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[
+            tbl_riquadro_esterno_vizier_CLEAN['gmag'] < mag_max]
 
         print("-----------------------------")
 
     print(f"Elaborando {percorso_file_fits}")
     print("\n")
 
-    mag_max = 15
+    tbl_catalogate = tabella_catalogo(percorso_file_fits, tbl_vizier_cut, tbl_hipparco_run_clean)
 
-    tbl_catalogate = tabella_catalogo(percorso_file_fits,
-                                      mag_max)  # tabelle del catalogo all'interno della specifica run
     numero_stelle_catalogate.append(len(tbl_catalogate))
     print(f"Trovate {len(tbl_catalogate)} stelle dei cataloghi nel riquadro {i}")
 

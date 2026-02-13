@@ -191,7 +191,7 @@ def salva_csv_con_header_fits(dataframe, header_fits, filename, nome_file_fits, 
         for key, value in header_fits.items():
             clean_val = str(value).replace('\n', ' ')
             f.write(f"# {key}: {clean_val}\n")
-        f.write(f"# NOME_FILE: {nome_solo}\n")
+        f.write(f"# NOME_FILE_FITS: {nome_solo}\n")
         f.write("#\n# PARAMETRI SEGMENTAZIONE:\n")
         if parametri_seg:
             for key, value in parametri_seg.items():
@@ -337,7 +337,10 @@ if __name__ == "__main__":
 
     nome_params = 'parametri_image_segmentation.txt'
     file_parametri = cerca_file_nel_progetto(BASE_DIR, nome_params)
-    if file_parametri is None: exit()
+    if file_parametri is None:
+
+        print("File dei parametri non trovato")
+        exit()
     parametri_caricati = leggi_file_parametri(file_parametri)
 
     # Accumulatore per tutti i file CSV generati in tutte le run
@@ -378,6 +381,8 @@ if __name__ == "__main__":
         output_dir.mkdir(parents=True, exist_ok=True)
         output_dir_str = str(output_dir)
 
+        print(f"Cartella di output: {output_dir_str}")
+
         # --- FASE 1: CREAZIONE TABELLE UNITE ---
         print(f"--- FASE 1: Segmentazione & Unione ({len(file_list)} files) ---")
 
@@ -404,12 +409,9 @@ if __name__ == "__main__":
                 hdu_list.close()
 
             tbl_catalogate = tabella_catalogo(percorso_file, 15)
-            try:
-                tbl, _ = analisi_image_segmentation(percorso_file, parametri_caricati)
-            except Exception:
-                continue
+            tbl_trovate, _ = analisi_image_segmentation(percorso_file, parametri_caricati)
 
-            df_trovate = tbl.to_pandas()
+            df_trovate = tbl_trovate.to_pandas()
             df_catalogate = tbl_catalogate.to_pandas()
 
             all_cols = df_trovate.columns.tolist()
@@ -469,150 +471,156 @@ if __name__ == "__main__":
                 df_final = df_trovate.copy()
                 df_final['Corrispondenza'] = 'NO'
 
-                # =================================================================
-                # MATCHING COL CATALOGO
-                # =================================================================
-                if 'RAJ2000' in df_catalogate.columns:
-                    c_cat = SkyCoord(ra=df_catalogate['RAJ2000'].values * u.deg,
-                                     dec=df_catalogate['DEJ2000'].values * u.deg)
-                    idx_t, idx_c, d2d, _ = c_cat.search_around_sky(coords, soglia_correlazione)
+            # =================================================================
+            # MATCHING COL CATALOGO
+            # =================================================================
+            if 'RAJ2000' in df_catalogate.columns:
+                c_cat = SkyCoord(ra=df_catalogate['RAJ2000'].values * u.deg,
+                                 dec=df_catalogate['DEJ2000'].values * u.deg)
+                idx_t, idx_c, d2d, _ = c_cat.search_around_sky(coords, soglia_correlazione)
 
-                    matches = pd.DataFrame(
-                        {'idx_t': idx_t, 'idx_c': idx_c, 'dist': d2d.deg,
-                         'mag': df_catalogate.iloc[idx_c]['Mag'].values})
-                    matches.sort_values(by=['idx_t', 'mag'], inplace=True)
-                    matches['rank'] = matches.groupby('idx_t').cumcount() + 1
-                    matches['Corrispondenza'] = 'SI (Rank ' + matches['rank'].astype(str) + ')'
+                matches = pd.DataFrame(
+                    {'idx_t': idx_t, 'idx_c': idx_c, 'dist': d2d.deg,
+                     'mag': df_catalogate.iloc[idx_c]['Mag'].values})
+                matches.sort_values(by=['idx_t', 'mag'], inplace=True)
+                matches['rank'] = matches.groupby('idx_t').cumcount() + 1
+                matches['Corrispondenza'] = 'SI (Rank ' + matches['rank'].astype(str) + ')'
 
-                    df_si = pd.concat([
-                        df_trovate.iloc[matches['idx_t']].reset_index(drop=True),
-                        matches[['Corrispondenza']].reset_index(drop=True),
-                        df_catalogate.iloc[matches['idx_c']].reset_index(drop=True)
-                    ], axis=1)
+                df_si = pd.concat([
+                    df_trovate.iloc[matches['idx_t']].reset_index(drop=True),
+                    matches[['Corrispondenza']].reset_index(drop=True),
+                    df_catalogate.iloc[matches['idx_c']].reset_index(drop=True)
+                ], axis=1)
 
-                    unmatched = list(set(range(len(df_trovate))) - set(matches['idx_t']))
-                    df_no = df_trovate.iloc[unmatched].copy()
-                    df_no['Corrispondenza'] = 'NO'
-                    for c in df_catalogate.columns: df_no[c] = np.nan
+                unmatched = list(set(range(len(df_trovate))) - set(matches['idx_t']))
+                df_no = df_trovate.iloc[unmatched].copy()
+                df_no['Corrispondenza'] = 'NO'
+                for c in df_catalogate.columns: df_no[c] = np.nan
 
-                    df_final = pd.concat([df_si, df_no], ignore_index=True)
-                else:
-                    df_final = df_trovate.copy()
-                    df_final['Corrispondenza'] = 'NO'
+                df_final = pd.concat([df_si, df_no], ignore_index=True)
+            else:
+                df_final = df_trovate.copy()
+                df_final['Corrispondenza'] = 'NO'
 
-                # =================================================================
-                # INIZIO BLOCCO: TRACKING GLOBALE OTTIMIZZATO (CORRETTO)
-                # (Ora fuori dall'if/else così viene eseguito sempre)
-                # =================================================================
+            # =================================================================
+            # INIZIO BLOCCO: TRACKING GLOBALE OTTIMIZZATO (CORRETTO)
+            # (Ora fuori dall'if/else così viene eseguito sempre)
+            # =================================================================
 
-                # Prepara colonna label finale
-                final_labels = np.zeros(len(df_final), dtype=int)
+            # Prepara colonna label finale
+            final_labels = np.zeros(len(df_final), dtype=int)
 
-                # Per gestire i gruppi, usiamo le coordinate pixel che sono univoche per ogni "pallocchio"
-                # Creiamo un identificativo temporaneo basato su x,y per raggruppare le righe duplicate
-                df_final['temp_group_id'] = list(zip(df_final['xcentroid'], df_final['ycentroid']))
+            # Per gestire i gruppi, usiamo le coordinate pixel che sono univoche per ogni "pallocchio"
+            # Creiamo un identificativo temporaneo basato su x,y per raggruppare le righe duplicate
+            df_final['temp_group_id'] = list(zip(df_final['xcentroid'], df_final['ycentroid']))
 
-                grouped = df_final.groupby('temp_group_id')
+            grouped = df_final.groupby('temp_group_id')
 
-                for _, group in grouped:
-                    indices = group.index.values
+            for _, group in grouped:
+                indices = group.index.values
 
-                    # Caso 1: Il gruppo contiene almeno un match a catalogo (SI)
-                    # Cerchiamo se c'è un Rank 1, che comanda su tutti
-                    mask_rank1 = group['Corrispondenza'] == 'SI (Rank 1)'
-                    mask_any_cat = group['Corrispondenza'] != 'NO'
+                # Caso 1: Il gruppo contiene almeno un match a catalogo (SI)
+                # Cerchiamo se c'è un Rank 1, che comanda su tutti
+                mask_rank1 = group['Corrispondenza'] == 'SI (Rank 1)'
+                mask_any_cat = group['Corrispondenza'] != 'NO'
 
-                    assigned_label = 0
+                assigned_label = 0
 
-                    if mask_any_cat.any():
-                        # Prendiamo l'ID del Rank 1 se esiste, altrimenti il primo disponibile (caso raro)
-                        if mask_rank1.any():
-                            ref_row = group.loc[mask_rank1].iloc[0]
-                        else:
-                            ref_row = group.loc[mask_any_cat].iloc[0]
-
-                        cat_id = ref_row['ID']
-
-                        # Logica standard: se l'ID (del Rank 1) esiste già, usalo. Se no, crealo.
-                        if cat_id in global_catalog_label_map:
-                            assigned_label = global_catalog_label_map[cat_id]
-                        else:
-                            global_max_label += 1
-                            global_catalog_label_map[cat_id] = global_max_label
-                            assigned_label = global_max_label
-
-                    # Caso 2: Il gruppo è tutto "NO" (non catalogato)
+                if mask_any_cat.any():
+                    # Prendiamo l'ID del Rank 1 se esiste, altrimenti il primo disponibile (caso raro)
+                    if mask_rank1.any():
+                        ref_row = group.loc[mask_rank1].iloc[0]
                     else:
-                        # Usiamo le coordinate del primo elemento del gruppo (sono tutte uguali)
-                        ra_obj = group.iloc[0]['RA_centroid']
-                        dec_obj = group.iloc[0]['DEC_centroid']
-                        coord_obj = SkyCoord(ra=ra_obj * u.deg, dec=dec_obj * u.deg)
+                        ref_row = group.loc[mask_any_cat].iloc[0]
 
-                        if global_tracker_coords is None:
-                            # Primo oggetto NO in assoluto
+                    cat_id = ref_row['ID']
+
+                    # Logica standard: se l'ID (del Rank 1) esiste già, usalo. Se no, crealo.
+                    if cat_id in global_catalog_label_map:
+                        assigned_label = global_catalog_label_map[cat_id]
+                    else:
+                        global_max_label += 1
+                        global_catalog_label_map[cat_id] = global_max_label
+                        assigned_label = global_max_label
+
+                # Caso 2: Il gruppo è tutto "NO" (non catalogato)
+                else:
+                    # Usiamo le coordinate del primo elemento del gruppo (sono tutte uguali)
+                    ra_obj = group.iloc[0]['RA_centroid']
+                    dec_obj = group.iloc[0]['DEC_centroid']
+                    coord_obj = SkyCoord(ra=ra_obj * u.deg, dec=dec_obj * u.deg)
+
+                    if global_tracker_coords is None:
+                        # Primo oggetto NO in assoluto
+                        global_max_label += 1
+                        assigned_label = global_max_label
+
+                        # CORREZIONE: Creiamo un vettore SkyCoord di lunghezza 1
+                        # Mettiamo coord_obj dentro una lista [] per farlo diventare un vettore
+                        global_tracker_coords = SkyCoord([coord_obj])
+
+                        global_tracker_labels = [assigned_label]
+                    else:
+                        # Cerca nel tracker esistente
+                        idx, d2d, _ = coord_obj.match_to_catalog_sky(global_tracker_coords)
+                        if d2d < soglia_correlazione:
+                            # Trovato: usa il label storico
+                            assigned_label = global_tracker_labels[idx]
+                        else:
+                            # Nuovo: crea label
                             global_max_label += 1
                             assigned_label = global_max_label
-                            global_tracker_coords = coord_obj
-                            global_tracker_labels = [assigned_label]
-                        else:
-                            # Cerca nel tracker esistente
-                            idx, d2d, _ = coord_obj.match_to_catalog_sky(global_tracker_coords)
-                            if d2d < soglia_correlazione:
-                                # Trovato: usa il label storico
-                                assigned_label = global_tracker_labels[idx]
-                            else:
-                                # Nuovo: crea label
-                                global_max_label += 1
-                                assigned_label = global_max_label
 
-                                # Aggiorna il tracker
-                                temp_coords = SkyCoord([global_tracker_coords, coord_obj])
-                                global_tracker_coords = temp_coords
-                                global_tracker_labels.append(assigned_label)
+                            # Aggiorna il tracker concatenando il vecchio (vettore) col nuovo (vettore di 1)
+                            # Nota: SkyCoord supporta la concatenazione passando una lista
+                            temp_coords = SkyCoord([global_tracker_coords, SkyCoord([coord_obj])])
 
-                    # ASSEGNAZIONE FINALE: Lo stesso label va a TUTTE le righe del gruppo
-                    final_labels[indices] = assigned_label
+                            global_tracker_coords = temp_coords
+                            global_tracker_labels.append(assigned_label)
 
-                df_final['label'] = final_labels
-                if 'temp_group_id' in df_final.columns:
-                    df_final.drop(columns=['temp_group_id'], inplace=True)
+                # ASSEGNAZIONE FINALE: Lo stesso label va a TUTTE le righe del gruppo
+                final_labels[indices] = assigned_label
 
-                # Aggiunta colonne identificative Run e Immagine
-                df_final['run_id'] = run
-                df_final['img_index'] = n
+            df_final['label'] = final_labels
+            if 'temp_group_id' in df_final.columns:
+                df_final.drop(columns=['temp_group_id'], inplace=True)
 
-                # =================================================================
-                # FINE BLOCCO TRACKING
-                # =================================================================
+            # Aggiunta colonne identificative Run e Immagine
+            df_final['run_id'] = run
+            df_final['img_index'] = n
 
-                if 'label' in df_final.columns: df_final.sort_values('label', inplace=True)
+            # =================================================================
+            # FINE BLOCCO TRACKING
+            # =================================================================
 
-                cols = df_final.columns.tolist()
-                if 'ID' in cols and 'Catalogo' in cols:
-                    cols.remove('Catalogo')
-                    cols.insert(cols.index('ID'), 'Catalogo')
+            if 'label' in df_final.columns: df_final.sort_values('label', inplace=True)
 
-                # Logica riordino colonne richiesta
-                final_cols = df_final.columns.tolist()
-                # Rimuoviamo temporaneamente
-                for c in ['run_id', 'img_index']:
-                    if c in final_cols: final_cols.remove(c)
+            cols = df_final.columns.tolist()
+            if 'ID' in cols and 'Catalogo' in cols:
+                cols.remove('Catalogo')
+                cols.insert(cols.index('ID'), 'Catalogo')
 
-                # Cerchiamo l'indice di Corrispondenza
-                if 'Corrispondenza' in final_cols:
-                    idx_corr = final_cols.index('Corrispondenza')
-                    final_cols.insert(idx_corr, 'img_index')
-                    final_cols.insert(idx_corr, 'run_id')
-                else:
-                    # Fallback se Corrispondenza non c'è
-                    final_cols.insert(0, 'run_id')
-                    final_cols.insert(1, 'img_index')
+            # Logica riordino colonne richiesta
+            final_cols = df_final.columns.tolist()
+            # Rimuoviamo temporaneamente
+            for c in ['run_id', 'img_index']:
+                if c in final_cols: final_cols.remove(c)
 
-                df_final = df_final[final_cols]
+            # Cerchiamo l'indice di Corrispondenza
+            if 'Corrispondenza' in final_cols:
+                idx_corr = final_cols.index('Corrispondenza')
+                final_cols.insert(idx_corr, 'img_index')
+                final_cols.insert(idx_corr, 'run_id')
+            else:
+                # Fallback se Corrispondenza non c'è
+                final_cols.insert(0, 'run_id')
+                final_cols.insert(1, 'img_index')
 
-                file_out = output_dir / f'run_{run}_stelle_trovate_e_catalogate_immagine_{n:03d}.csv'
-                salva_csv_con_header_fits(df_final, dict(fits.getheader(percorso_file)),
-                                          file_out, str(percorso_file), parametri_caricati)
+            df_final = df_final[final_cols]
+
+            file_out = output_dir / f'run_{run}_stelle_trovate_e_catalogate_immagine_{n:03d}.csv'
+            salva_csv_con_header_fits(df_final, dict(fits.getheader(percorso_file)),
+                                      file_out, str(percorso_file), parametri_caricati)
 
         # =============================================================================
         # FASE 2 & 3: RAGGI MAX E FLUSSO FISSO (PER RUN)
@@ -660,7 +668,7 @@ if __name__ == "__main__":
 
             # Recuperiamo percorso e nome file dall'header del CSV
             path_fits = header_info.get('PERCORSO_FILE', '')
-            nome_fits = header_info.get('NOME_FILE', '')
+            nome_fits = header_info.get('NOME_FILE_FITS', '')
 
             # Se il percorso scritto nel CSV non esiste o è vuoto, proviamo a trovarlo
             if not path_fits or not os.path.exists(path_fits):
@@ -682,16 +690,16 @@ if __name__ == "__main__":
                 if (not path_fits or not os.path.exists(path_fits)) and nome_fits:
                     # rglob('*' + nome_fits) cerca il file ovunque sotto BASE_DIR
                     # Usiamo il nome esatto per evitare ambiguità
-                    files_trovati = list(BASE_DIR.rglob(str(nome_fits).strip()))
-
-                    if files_trovati:
-                        # Prendiamo il primo trovato (di solito è unico)
-                        path_fits = str(files_trovati[0])
+                    found = cerca_file_nel_progetto(BASE_DIR, str(nome_fits).strip())
+                    if found:
+                        path_fits = str(found)
 
             # Se dopo tutto questo il file non c'è, salto
             if not path_fits or not os.path.exists(path_fits):
-                # print(f"ATTENZIONE: File FITS originale non trovato per {nome_fits}, salto.")
+                print(f"ATTENZIONE: File FITS {path_fits} originale non trovato per {nome_fits}, salto.")
                 continue
+
+            print(f"Il file fits analizzato ora è {path_fits}")
 
             with fits.open(path_fits, memmap=False) as hdu:
                 data = hdu[0].data

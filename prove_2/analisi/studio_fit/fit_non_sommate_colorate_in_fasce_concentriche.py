@@ -81,7 +81,7 @@ print(f"--- CONFIGURAZIONE SISTEMA ---")
 print(f"Cartella Base rilevata: {BASE_DIR}")
 
 # Parametri Analisi - MODIFICATO PER UNA SOLA RUN
-RUN_DA_ANALIZZARE = 3  # Imposto la Run 1 come target unico
+RUN_DA_ANALIZZARE = 1  # Imposto la Run 1 come target unico
 INDICE_IMMAGINE_RIFERIMENTO = 35  # Uso l'immagine 35 di questa run come riferimento geometrico
 NUM_FASCE = 3
 

@@ -44,6 +44,24 @@ warnings.filterwarnings('ignore', category=FITSFixedWarning)
 
 from pathlib import Path
 
+# =============================================================================
+# FUNZIONI DI GESTIONE PERCORSI E UTILITÀ
+# =============================================================================
+
+def trova_cartella_base(nome_target="pmc_photometry"):
+    path_corrente = Path(__file__).resolve()
+    for parent in [path_corrente] + list(path_corrente.parents):
+        if parent.name == nome_target:
+            return parent
+    print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
+    return path_corrente.parent
+
+def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
+    cartelle_trovate = [p for p in base_dir.rglob(nome_cartella_esatto) if p.is_dir()]
+    if not cartelle_trovate: return None
+    cartelle_trovate.sort(key=lambda p: len(str(p)))
+    return cartelle_trovate[0]
+
 def converti_valore(valore):
     valore = valore.strip()
     if not valore: return valore
@@ -79,14 +97,25 @@ def freedman_diaconis_bins(data):
     return max(bins, 1)
 
 # --- INIZIO CODICE ---
-run = 1
-cartella_csv = f"/home/lorysimeone/tesi_magistrale/prove_2/tabelle/tabelle_unite/tabelle_unite_run_{run}"
-file_csv = sorted([f for f in os.listdir(cartella_csv) if f.endswith('.csv')])
-lista_percorsi_csv = [os.path.join(cartella_csv, file) for file in file_csv]
+BASE_DIR = trova_cartella_base("pmc_photometry")
 
-cartella_csv_cat = f"/home/lorysimeone/tesi_magistrale/prove_2/tabelle/sorgenti_catalogate_run/sorgenti_catalogate_run_{run}"
-file_csv_cat = sorted([f for f in os.listdir(cartella_csv_cat) if f.endswith('.csv')])
-lista_percorsi_csv_cat = [os.path.join(cartella_csv_cat, file) for file in file_csv_cat]
+run = 1
+
+# Ricerca dinamica cartella tabelle_unite_run_X
+nome_cartella_csv = f"tabelle_unite_run_{run}"
+cartella_csv_path = cerca_cartella_nel_progetto(BASE_DIR, nome_cartella_csv)
+if cartella_csv_path is None:
+    print(f"ERRORE CRITICO: Cartella '{nome_cartella_csv}' non trovata.")
+    exit()
+lista_percorsi_csv = sorted([str(f) for f in cartella_csv_path.glob('*.csv')])
+
+# Ricerca dinamica cartella sorgenti_catalogate_run_X
+nome_cartella_csv_cat = f"sorgenti_catalogate_run_{run}"
+cartella_csv_cat_path = cerca_cartella_nel_progetto(BASE_DIR, nome_cartella_csv_cat)
+if cartella_csv_cat_path is None:
+    print(f"ERRORE CRITICO: Cartella '{nome_cartella_csv_cat}' non trovata.")
+    exit()
+lista_percorsi_csv_cat = sorted([str(f) for f in cartella_csv_cat_path.glob('*.csv')])
 
 n_immagine = 36
 
@@ -103,13 +132,13 @@ print("Tabella completa:\n", tbl)
 header_dal_csv = leggi_header_da_csv(percorso_file_csv)
 
 parametri = {
-    'fwhm': header_dal_csv.get('seg_fwhm', header_dal_csv.get('SEG_FWHM')),
-    'size': header_dal_csv.get('seg_size', header_dal_csv.get('SEG_SIZE')),
-    'threshold_sigma': header_dal_csv.get('seg_threshold_sigma', header_dal_csv.get('SEG_THRESHOLD_SIGMA')),
-    'threshold_assoluta': header_dal_csv.get('seg_threshold_assoluta', header_dal_csv.get('SEG_THRESHOLD_ASSOLUTA')),
-    'pixel': header_dal_csv.get('seg_pixel', header_dal_csv.get('SEG_PIXEL')),
-    'soglia_filtro_ass': header_dal_csv.get('seg_soglia_filtro_ass', header_dal_csv.get('SEG_SOGLIA_FILTRO_ASS')),
-    'soglia_filtro_rel': header_dal_csv.get('seg_soglia_filtro_rel', header_dal_csv.get('SEG_SOGLIA_FILTRO_REL')),
+    'fwhm': header_dal_csv.get('fwhm', header_dal_csv.get('FWHM')),
+    'size': header_dal_csv.get('size', header_dal_csv.get('SIZE')),
+    'threshold_sigma': header_dal_csv.get('threshold_sigma', header_dal_csv.get('THRESHOLD_SIGMA')),
+    'threshold_assoluta': header_dal_csv.get('threshold_assoluta', header_dal_csv.get('THRESHOLD_ASSOLUTA')),
+    'pixel': header_dal_csv.get('pixel', header_dal_csv.get('PIXEL')),
+    'soglia_filtro_ass': header_dal_csv.get('soglia_filtro_ass', header_dal_csv.get('SOGLIA_FILTRO_ASS')),
+    'soglia_filtro_rel': header_dal_csv.get('soglia_filtro_rel', header_dal_csv.get('SOGLIA_FILTRO_REL')),
 }
 
 fwhm = parametri['fwhm']
@@ -119,13 +148,9 @@ size = parametri['size']
 mask_si = np.char.startswith(tbl['Corrispondenza'].astype(str), 'SI')
 ids_trovati_e_correlati = set(tbl[mask_si]['ID'])
 
-# 2. Prendiamo dal catalogo completo tutte le stelle brillanti (Mag < 10)
-mask_bright_cat = tbl_cat['Mag'] < 10
-stelle_catalogo_brillanti = tbl_cat[mask_bright_cat]
-
-# 3. Contiamo quante di queste NON sono nella lista delle trovate
+# . Contiamo quante di queste NON sono nella lista delle trovate
 num_perse_brillanti = 0
-for star_id in stelle_catalogo_brillanti['ID']:
+for star_id in tbl_cat['ID']:
     if star_id not in ids_trovati_e_correlati:
         num_perse_brillanti += 1
 

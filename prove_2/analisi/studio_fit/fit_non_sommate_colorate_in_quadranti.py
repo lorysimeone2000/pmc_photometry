@@ -81,7 +81,7 @@ print(f"--- CONFIGURAZIONE SISTEMA ---")
 print(f"Cartella Base rilevata: {BASE_DIR}")
 
 # Parametri Analisi
-RUN_DA_ANALIZZARE = 3
+RUN_DA_ANALIZZARE = 1
 INDICE_IMMAGINE_RIFERIMENTO = 35
 
 # Nomi colonne fondamentali

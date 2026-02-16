@@ -41,11 +41,71 @@ from astropy.utils.exceptions import AstropyUserWarning
 # --- IMPORT FONDAMENTALE PER LA PORTABILITÀ ---
 from pathlib import Path
 
+# catalogo satelliti
+from skyfield.api import load, wgs84
+from astropy.time import Time
+
+
 # --- GESTIONE WARNING ---
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', message='.*failed to converge.*', category=UserWarning)
 warnings.simplefilter('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', category=VerifyWarning)
+
+import requests
+from datetime import timedelta
+
+
+def scarica_tle_storici(tempo_astropy, username, password, cartella_output):
+    # converto il tempo astropy in un oggetto datetime standard di python
+    data_osservazione = tempo_astropy.datetime
+
+    # creo una finestra temporale di sicurezza: il giorno prima e il giorno dopo lo scatto
+    data_inizio = (data_osservazione - timedelta(days=1)).strftime('%Y-%m-%d')
+    data_fine = (data_osservazione + timedelta(days=1)).strftime('%Y-%m-%d')
+
+    nome_file = f"tle_storico_{data_inizio}_to_{data_fine}.txt"
+    percorso_output = cartella_output / nome_file
+
+    # controllo se l'ho già scaricato per questa run, per non intasare i server
+    if percorso_output.exists():
+        print(f"TLE storici già presenti: {nome_file}")
+        return str(percorso_output)
+
+    print(f"Scaricando i TLE storici da Space-Track per le date {data_inizio} -> {data_fine}...")
+
+    # URL per le API di Space-Track
+    login_url = "https://www.space-track.org/ajaxauth/login"
+    query_url = f"https://www.space-track.org/basicspacedata/query/class/tle/EPOCH/{data_inizio}--{data_fine}/orderby/EPOCH desc/format/tle"
+
+    # apro una sessione per mantenere i cookie del login
+    with requests.Session() as session:
+        # eseguo l'autenticazione
+        risposta_login = session.post(login_url, data={'identity': username, 'password': password})
+
+        if risposta_login.status_code != 200:
+            print("ERRORE: Login su Space-Track fallito. Controlla le credenziali.")
+            return None
+
+        # chiedo i dati
+        risposta_tle = session.get(query_url, stream=True)
+
+        if risposta_tle.status_code == 200:
+            with open(percorso_output, 'w') as f:
+                f.write(risposta_tle.text)
+            print("Download TLE storici completato con successo!")
+            return str(percorso_output)
+        else:
+            print(f"ERRORE: Download TLE fallito con codice {risposta_tle.status_code}")
+            return None
+
+# 1. Inizializzazione Skyfield e download database satelliti attivi (Celestrak)
+ts = load.timescale()
+url_satelliti = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle'
+satelliti_attivi = load.tle_file(url_satelliti)
+
+# 2. Coordinate del tuo telescopio (sostituisci con Latitudine, Longitudine e Altitudine reali)
+osservatorio = wgs84.latlon(28.3000, -16.505830555555555, elevation_m=2370)
 
 
 # =============================================================================
@@ -66,7 +126,6 @@ def cerca_file_nel_progetto(base_dir, nome_file_esatto):
     if not files_trovati: return None
     if len(files_trovati) > 1:
         files_trovati.sort(key=lambda p: len(str(p)))
-        # print(f"INFO: Trovati {len(files_trovati)} file '{nome_file_esatto}'. Uso il primo: {files_trovati[0].relative_to(base_dir)}")
     return files_trovati[0]
 
 
@@ -137,21 +196,24 @@ def calcola_flusso_kron_completo(data, xc, yc, valori_pixel, distanze_pixel, k=2
 
 
 def tabella_catalogo(image_file_):
-
     hdu_list_ = fits.open(image_file_)
     wcs = WCS(hdu_list_[0].header)
     data_ = hdu_list_[0].data
     h, w = data_.shape
     bordo = 7
 
-    # Preparo le colonne per il merge
+    nome_catalogo_vizier = np.array(["II/389/ps1_dr2"] * len(tbl_vizier_cut), dtype=object)
     colonne_vizier = {
-        'ID': tbl_vizier_cut['objID'], 'RAJ2000': tbl_vizier_cut['RAJ2000'],
-        'DEJ2000': tbl_vizier_cut['DEJ2000'], 'Mag': tbl_vizier_cut['gmag'],
-        'Catalogo': ["II/389/ps1_dr2"] * len(tbl_vizier_cut)
+        'Catalogo': nome_catalogo_vizier,
+        'ID': tbl_vizier_cut['objID'],
+        'RAJ2000': tbl_vizier_cut['RAJ2000'],
+        'DEJ2000': tbl_vizier_cut['DEJ2000'],
+        'Mag': tbl_vizier_cut['gmag'],
     }
+
+    nome_catalogo_hipparco = np.array(["I/239/hip_main"] * len(tbl_hipparco_run_clean), dtype=object)
     colonne_hipparco = {
-        'Catalogo': ["I/239/hip_main"] * len(tbl_hipparco_run_clean),
+        'Catalogo': nome_catalogo_hipparco,
         'ID': tbl_hipparco_run_clean['HIP'],
         'RAJ2000': tbl_hipparco_run_clean['_RAJ2000'],
         'DEJ2000': tbl_hipparco_run_clean['_DEJ2000'],
@@ -160,10 +222,9 @@ def tabella_catalogo(image_file_):
 
     t1 = Table(colonne_vizier)
     t2 = Table(colonne_hipparco)
+
     tbl_unita = vstack([t1, t2])
 
-    # Solo ora faccio il taglio geometrico (veloce)
-    # Convertire tutto il catalogo unito in pixel è veloce se WCS è istanziato bene
     coords = SkyCoord(ra=tbl_unita['RAJ2000'], dec=tbl_unita['DEJ2000'], unit=u.deg)
     x_pix, y_pix = wcs.world_to_pixel(coords)
 
@@ -171,6 +232,7 @@ def tabella_catalogo(image_file_):
 
     hdu_list_.close()
     return tbl_unita[mask_bordo]
+
 
 def esegui_fotometria_variabile(data, positions, raggi):
     flussi = []
@@ -339,7 +401,6 @@ if __name__ == "__main__":
     nome_params = 'parametri_image_segmentation.txt'
     file_parametri = cerca_file_nel_progetto(BASE_DIR, nome_params)
     if file_parametri is None:
-
         print("File dei parametri non trovato")
         exit()
     parametri_caricati = leggi_file_parametri(file_parametri)
@@ -348,17 +409,15 @@ if __name__ == "__main__":
     file_hipparco = cerca_file_nel_progetto(BASE_DIR, "hipparco.fit")
     hdu_list_hipparco = fits.open(file_hipparco)
     tbl_catalogo_hipparco = Table(hdu_list_hipparco[1].data)
-    # tbl_catalogo_hipparco = tbl_catalogo_hipparco[tbl_catalogo_hipparco['Vmag'] < 7.]  # O il tuo filtro
     hdu_list_hipparco.close()
 
     # Calcolo errori propagati al J2000
     dt = 2000.0 - 1991.25
     sigma_ra_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco['e_RAICRS']) ** 2 + (
-                dt * np.nan_to_num(tbl_catalogo_hipparco['e_pmRA'])) ** 2) / 3600000.0
+            dt * np.nan_to_num(tbl_catalogo_hipparco['e_pmRA'])) ** 2) / 3600000.0
     sigma_dec_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco['e_DEICRS']) ** 2 + (
-                dt * np.nan_to_num(tbl_catalogo_hipparco['e_pmDE'])) ** 2) / 3600000.0
+            dt * np.nan_to_num(tbl_catalogo_hipparco['e_pmDE'])) ** 2) / 3600000.0
 
-    # --- MODIFICA RICHIESTA: CALCOLO ERRORE SOMMATO 3-SIGMA ---
     # Errore radiale totale Hipparcos
     sigma_hip_deg = np.sqrt(sigma_ra_deg ** 2 + sigma_dec_deg ** 2)
 
@@ -368,10 +427,10 @@ if __name__ == "__main__":
     # Somma in quadratura dei due cataloghi
     sigma_totale_deg = np.sqrt(sigma_hip_deg ** 2 + sigma_vizier_deg ** 2)
 
-    # 3-SIGMA + Minimo di sicurezza (1 arcsec)
-    exclusion_radii_deg = 3.0 * sigma_totale_deg
-    min_radius_deg = 1.0 / 3600.0
-    exclusion_radii_deg = np.maximum(exclusion_radii_deg, min_radius_deg)
+    # 3-SIGMA
+    exclusion_radii_deg_ = 3.0 * sigma_totale_deg
+    exclusion_radii_deg = np.full(len(exclusion_radii_deg_), 2.5 / 3600.0)
+
 
     print(f"Raggio di merging tra i cataloghi: {np.mean(exclusion_radii_deg)}")
 
@@ -380,16 +439,14 @@ if __name__ == "__main__":
                                       dec=tbl_catalogo_hipparco['_DEJ2000'],
                                       unit=u.deg)
 
-    # Accumulatore per tutti i file CSV generati in tutte le run
     tutti_i_file_csv_generati = []
 
-    # --- STRUTTURE PER IL TRACKING GLOBALE DEGLI OGGETTI (LABEL PERSISTENTI) ---
-    # MODIFICA: Ottimizzazione Tracking
-    # global_tracker_coords: contiene SOLO le coordinate degli oggetti NON CATALOGATI (NO)
     global_tracker_coords = None
-    global_tracker_labels = []  # Label corrispondenti per gli oggetti NO
-    global_max_label = 0  # Contatore globale
-    global_catalog_label_map = {}  # Dizionario {ID_CATALOGO: LABEL_ASSEGNATO} per gli oggetti SI
+    global_tracker_labels = []
+    global_max_label = 0
+    global_catalog_label_map = {}
+    contatore_satelliti = 0
+    contatore_satelliti_presenti = 0
 
     # --- CICLO PER OGNI RUN ---
     for run in RUN:
@@ -432,7 +489,6 @@ if __name__ == "__main__":
                 alto_destra = w.pixel_to_world(3071, 2047)
                 centro = SkyCoord(ra_c, dec_c, unit=u.deg)
 
-                # Calcolo il raggio di ricerca (lo stesso per entrambi i cataloghi)
                 raggio_ricerca = Angle(centro.separation(alto_destra) * 1.5, "deg")
 
                 riquadro_esterno_vizier = vizier.query_region(
@@ -442,74 +498,93 @@ if __name__ == "__main__":
                 )
                 tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
 
-                # filtro fov della PMC su hipparco
-
                 distanze_hip = centro.separation(coords_hipparco_global)
 
-                # Maschera: tengo solo le stelle entro il raggio di ricerca
                 mask_hip_fov = distanze_hip < raggio_ricerca
 
-                # Creo i sottoinsiemi LOCALI per questa run
                 tbl_hipparco_run_subset = tbl_catalogo_hipparco[mask_hip_fov]
                 coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
                 exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
 
-                # --- FILTRAGGIO VIZIER COMPETITIVO ---
-                print("Filtraggio competitivo Vizier vs Hipparcos...")
+                # =================================================================
+                # --- FILTRAGGIO COMPETITIVO A SINGOLA FASE ---
+                # =================================================================
+                print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
 
-                # 1. Preparo le coordinate Vizier
+                # preparo le coordinate Vizier
                 coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
                                          dec=tbl_riquadro_esterno_vizier['DEJ2000'],
                                          unit=u.deg)
 
-                # 2. Match contro l'oggetto Hipparcos globale
-                idx_hip, d2d, _ = coords_vizier.match_to_catalog_sky(coords_hipparco_run_subset)
+                # ricavo il limite massimo di ricerca per coprire tutte le tolleranze
+                max_threshold_deg = np.max(exclusion_radii_run_subset)
+                seplimit = max_threshold_deg * u.deg
 
-                # 3. Recupero i dati per il confronto
-                # Soglie di distanza (raggio di errore Hipparcos)
-                thresholds = exclusion_radii_run_subset[idx_hip]
+                # cerco tutte le stelle Vizier attorno a ogni stella Hipparcos
+                idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
 
-                # Magnitudini a confronto (gestisco eventuali NaN mettendoli a infinito così perdono il confronto)
-                mag_vizier = np.nan_to_num(tbl_riquadro_esterno_vizier['gmag'], nan=99.0)
-                mag_hipparco_match = np.nan_to_num(tbl_hipparco_run_subset['Vmag'][idx_hip], nan=99.0)
+                # implemento un controllo di sicurezza per aggirare l'inversione degli indici di astropy
+                # se l'indice massimo trovato supera la grandezza del mio catalogo Hipparcos,
+                # significa che astropy mi ha restituito il catalogo Vizier come primo elemento
+                if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
+                    idx_viz_1, idx_hip_1 = idx_A, idx_B
+                else:
+                    idx_hip_1, idx_viz_1 = idx_A, idx_B
 
-                # 4. Definisco le condizioni logiche
-                # C'è match spaziale?
-                is_spatial_match = d2d.deg <= thresholds
+                # applico la mia tolleranza dinamica esatta
+                mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
 
-                # Vizier è più luminosa (valore minore) di Hipparcos?
-                is_vizier_brighter = mag_vizier < mag_hipparco_match
+                # filtro gli indici per tenere solo quelli entro la tolleranza
+                idx_hip_valid = idx_hip_1[mask_threshold]
+                idx_viz_valid = idx_viz_1[mask_threshold]
 
-                # --- LOGICA 1: CHI TENIAMO DI VIZIER? ---
-                # Tengo Vizier se:
-                # A) NON c'è match spaziale (è una stella nuova)
-                # B) C'è match, MA Vizier è più luminosa di Hipparcos
-                mask_keep_vizier = (~is_spatial_match) | (is_spatial_match & is_vizier_brighter)
+                # genero le maschere di mantenimento inizializzate a True
+                mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
+                mask_keep_vizier = np.ones(len(tbl_riquadro_esterno_vizier), dtype=bool)
 
+                # estraggo gli indici univoci di Hipparcos che hanno almeno un match
+                unique_hip_idx = np.unique(idx_hip_valid)
+
+                # itero su ogni stella Hipparcos coinvolta
+                for i_hip in unique_hip_idx:
+                    # trovo gli indici delle stelle Vizier associate a questa specifica stella Hipparcos
+                    viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
+
+                    if len(viz_matches) > 0:
+                        # estraggo le magnitudini delle stelle Vizier associate
+                        mag_viz_matches = np.nan_to_num(tbl_riquadro_esterno_vizier['gmag'][viz_matches], nan=99.0)
+
+                        # individuo la stella Vizier più luminosa (valore di magnitudine minore)
+                        idx_min_mag = np.argmin(mag_viz_matches)
+                        best_viz_idx = viz_matches[idx_min_mag]
+                        best_viz_mag = mag_viz_matches[idx_min_mag]
+
+                        # estraggo la magnitudine della stella Hipparcos in esame
+                        hip_mag = np.nan_to_num(tbl_hipparco_run_subset['Vmag'][i_hip], nan=99.0)
+
+                        # confronto e scarto solo la seconda più luminosa tra le due
+                        if best_viz_mag <= hip_mag:
+                            # Vizier è più luminosa (o uguale), scarto la stella Hipparcos
+                            mask_keep_hipparco[i_hip] = False
+                        else:
+                            # Hipparcos è più luminosa, scarto la Vizier più luminosa
+                            mask_keep_vizier[best_viz_idx] = False
+
+                hipparco_escluse = np.sum(~mask_keep_hipparco)
+                vizier_escluse = np.sum(~mask_keep_vizier)
+                print(f"Risolti {len(unique_hip_idx)} conflitti spaziali:")
+                print(f" -> Escluse {hipparco_escluse} stelle Hipparco (tenute Vizier perché più brillanti)")
+                print(f" -> Escluse {vizier_escluse} stelle Vizier (tenute Hipparco perché più brillanti)")
+
+                mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
+
+                tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco]
                 tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
 
-                print(
-                    f"Vizier pulito: rimosse {len(tbl_riquadro_esterno_vizier) - len(tbl_riquadro_esterno_vizier_CLEAN)} stelle (più deboli di Hipparcos).")
-
-                # --- LOGICA 2: CHI TENIAMO DI HIPPARCOS? ---
-                # Devo rimuovere da Hipparcos le stelle che sono state "battute" da una stella Vizier.
-                # Identifico gli indici di Hipparcos che hanno perso (Match SI + Vizier Più Luminosa)
-                indices_hipparco_lost = idx_hip[is_spatial_match & is_vizier_brighter]
-
-                # Creo una maschera per Hipparcos (tutto True all'inizio)
-                mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
-                # Metto a False le stelle sconfitte
-                mask_keep_hipparco[indices_hipparco_lost] = False
-
-                # Creo la tabella Hipparcos "locale" per questa run, senza le stelle sconfitte
-                tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco]
-
-                print(
-                    f"Hipparcos pulito: rimosse {len(tbl_hipparco_run_subset) - len(tbl_hipparco_run_clean)} stelle (più deboli di Vizier).")
-
-                # Applica il filtro magnitudine massima a Vizier
+                # applico il filtro magnitudine massima
                 tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[
                     tbl_riquadro_esterno_vizier_CLEAN['gmag'] < magnitudine_massima]
+                # =================================================================
 
             tbl_catalogate = tabella_catalogo(percorso_file)
             tbl_trovate, _ = analisi_image_segmentation(percorso_file, parametri_caricati)
@@ -527,14 +602,12 @@ if __name__ == "__main__":
 
             df_trovate = df_trovate[[c for c in cols_keep if c in df_trovate.columns]].copy()
 
-            # Calcolo coordinate astronomiche per le sorgenti trovate
             with fits.open(percorso_file, memmap=False) as hdu:
                 w = WCS(hdu[0].header)
             coords = w.pixel_to_world(df_trovate['xcentroid'], df_trovate['ycentroid'])
             df_trovate['RA_centroid'] = coords.ra.deg
             df_trovate['DEC_centroid'] = coords.dec.deg
 
-            # Spostamento colonne RA/DEC per ordine visuale
             cols_order = df_trovate.columns.tolist()
             if 'ycentroid' in cols_order:
                 for c in ['RA_centroid', 'DEC_centroid']:
@@ -544,77 +617,72 @@ if __name__ == "__main__":
                 cols_order.insert(idx_y + 2, 'DEC_centroid')
                 df_trovate = df_trovate[cols_order]
 
-            # =================================================================
-            # MATCHING COL CATALOGO (Spostato PRIMA del Tracking)
-            # =================================================================
-            if 'RAJ2000' in df_catalogate.columns:
-                c_cat = SkyCoord(ra=df_catalogate['RAJ2000'].values * u.deg,
-                                 dec=df_catalogate['DEJ2000'].values * u.deg)
-                idx_t, idx_c, d2d, _ = c_cat.search_around_sky(coords, soglia_correlazione)
+                if 'RAJ2000' in df_catalogate.columns:
+                    c_cat = SkyCoord(ra=df_catalogate['RAJ2000'].values * u.deg,
+                                     dec=df_catalogate['DEJ2000'].values * u.deg)
+                    idx_t, idx_c, d2d, _ = c_cat.search_around_sky(coords, soglia_correlazione)
 
-                matches = pd.DataFrame(
-                    {'idx_t': idx_t, 'idx_c': idx_c, 'dist': d2d.deg, 'mag': df_catalogate.iloc[idx_c]['Mag'].values})
-                matches.sort_values(by=['idx_t', 'mag'], inplace=True)
-                matches['rank'] = matches.groupby('idx_t').cumcount() + 1
-                matches['Corrispondenza'] = 'SI (Rank ' + matches['rank'].astype(str) + ')'
+                    matches = pd.DataFrame(
+                        {'idx_t': idx_t, 'idx_c': idx_c, 'dist': d2d.deg,
+                         'mag': df_catalogate.iloc[idx_c]['Mag'].values})
+                    matches.sort_values(by=['idx_t', 'mag'], inplace=True)
+                    matches['rank'] = matches.groupby('idx_t').cumcount() + 1
+                    matches['Corrispondenza'] = 'SI (Rank ' + matches['rank'].astype(str) + ')'
 
-                df_si = pd.concat([
-                    df_trovate.iloc[matches['idx_t']].reset_index(drop=True),
-                    matches[['Corrispondenza']].reset_index(drop=True),
-                    df_catalogate.iloc[matches['idx_c']].reset_index(drop=True)
-                ], axis=1)
+                    df_si = pd.concat([
+                        df_trovate.iloc[matches['idx_t']].reset_index(drop=True),
+                        matches[['Corrispondenza']].reset_index(drop=True),
+                        df_catalogate.iloc[matches['idx_c']].reset_index(drop=True)
+                    ], axis=1)
 
-                unmatched = list(set(range(len(df_trovate))) - set(matches['idx_t']))
-                df_no = df_trovate.iloc[unmatched].copy()
-                df_no['Corrispondenza'] = 'NO'
-                for c in df_catalogate.columns: df_no[c] = np.nan
+                    unmatched = list(set(range(len(df_trovate))) - set(matches['idx_t']))
+                    df_no = df_trovate.iloc[unmatched].copy()
+                    df_no['Corrispondenza'] = 'NO'
+                    for c in df_catalogate.columns: df_no[c] = np.nan
 
-                df_final = pd.concat([df_si, df_no], ignore_index=True)
-            else:
-                df_final = df_trovate.copy()
-                df_final['Corrispondenza'] = 'NO'
+                    '''# 3. Ottengo l'orario esatto dello scatto dall'header FITS (usando DATE-OBS in formato ISO UTC)
+                    # NOTA: assicurati che 'DATE-OBS' sia la keyword giusta nel tuo FITS per la data/ora UTC
+                    tempo_scatto_astropy = Time(hdu_list[0].header['DATE-OBS'], format='isot', scale='utc')
+                    tempo_skyfield = ts.from_astropy(tempo_scatto_astropy)
 
-            # =================================================================
-            # MATCHING COL CATALOGO
-            # =================================================================
-            if 'RAJ2000' in df_catalogate.columns:
-                c_cat = SkyCoord(ra=df_catalogate['RAJ2000'].values * u.deg,
-                                 dec=df_catalogate['DEJ2000'].values * u.deg)
-                idx_t, idx_c, d2d, _ = c_cat.search_around_sky(coords, soglia_correlazione)
+                    # 4. Calcolo le coordinate RA/DEC di tutti i satelliti visti dal telescopio in quel millisecondo
+                    ra_sat_list, dec_sat_list = [], []
+                    for sat in satelliti_attivi:
+                        topocentrica = (sat - osservatorio).at(tempo_skyfield)
+                        ra_sat, dec_sat, _ = topocentrica.radec()
 
-                matches = pd.DataFrame(
-                    {'idx_t': idx_t, 'idx_c': idx_c, 'dist': d2d.deg,
-                     'mag': df_catalogate.iloc[idx_c]['Mag'].values})
-                matches.sort_values(by=['idx_t', 'mag'], inplace=True)
-                matches['rank'] = matches.groupby('idx_t').cumcount() + 1
-                matches['Corrispondenza'] = 'SI (Rank ' + matches['rank'].astype(str) + ')'
+                        # controllo che il calcolo dell'orbita sia valido e non restituisca dei NaN
+                        if np.isnan(ra_sat.hours) or np.isnan(dec_sat.degrees):
+                            continue
 
-                df_si = pd.concat([
-                    df_trovate.iloc[matches['idx_t']].reset_index(drop=True),
-                    matches[['Corrispondenza']].reset_index(drop=True),
-                    df_catalogate.iloc[matches['idx_c']].reset_index(drop=True)
-                ], axis=1)
+                        # Skyfield restituisce RA in ore, lo moltiplico per 15 per averlo in gradi
+                        ra_sat_list.append(ra_sat.hours * 15)
+                        dec_sat_list.append(dec_sat.degrees)
 
-                unmatched = list(set(range(len(df_trovate))) - set(matches['idx_t']))
-                df_no = df_trovate.iloc[unmatched].copy()
-                df_no['Corrispondenza'] = 'NO'
-                for c in df_catalogate.columns: df_no[c] = np.nan
+                    catalogo_satelliti = SkyCoord(ra=ra_sat_list * u.deg, dec=dec_sat_list * u.deg)
 
-                df_final = pd.concat([df_si, df_no], ignore_index=True)
-            else:
-                df_final = df_trovate.copy()
-                df_final['Corrispondenza'] = 'NO'
+                    # 5. Eseguo il match tra gli oggetti 'NO' (non a catalogo) e i satelliti
+                    coords_oggetti_no = SkyCoord(ra=df_no['RA_centroid'].values * u.deg,
+                                                 dec=df_no['DEC_centroid'].values * u.deg)
+                    idx_sat, d2d_sat, _ = coords_oggetti_no.match_to_catalog_sky(catalogo_satelliti)
 
-            # =================================================================
-            # INIZIO BLOCCO: TRACKING GLOBALE OTTIMIZZATO (CORRETTO)
-            # (Ora fuori dall'if/else così viene eseguito sempre)
-            # =================================================================
+                    # 6. Escludo gli oggetti vicini alla traiettoria di un satellite (tolleranza larga, es. 2-3 arcminuti per via della scia)
+                    tolleranza_satellite = 1/60 * u.deg
+                    mask_is_satellite = d2d_sat < tolleranza_satellite
 
-            # Prepara colonna label finale
+                    # Elimino i falsi positivi causati dai satelliti
+                    # df_no.loc[mask_is_satellite, 'Corrispondenza'] = 'SCARTO_SATELLITE'
+                    df_no = df_no[~mask_is_satellite]
+                    contatore_satelliti = contatore_satelliti + np.sum(mask_is_satellite)'''
+
+                    df_final = pd.concat([df_si, df_no], ignore_index=True)
+
+                else:
+                    df_final = df_trovate.copy()
+                    df_final['Corrispondenza'] = 'NO'
+
             final_labels = np.zeros(len(df_final), dtype=int)
 
-            # Per gestire i gruppi, usiamo le coordinate pixel che sono univoche per ogni "pallocchio"
-            # Creiamo un identificativo temporaneo basato su x,y per raggruppare le righe duplicate
             df_final['temp_group_id'] = list(zip(df_final['xcentroid'], df_final['ycentroid']))
 
             grouped = df_final.groupby('temp_group_id')
@@ -622,73 +690,70 @@ if __name__ == "__main__":
             for _, group in grouped:
                 indices = group.index.values
 
-                # Caso 1: Il gruppo contiene almeno un match a catalogo (SI)
-                # Cerchiamo se c'è un Rank 1, che comanda su tutti
                 mask_rank1 = group['Corrispondenza'] == 'SI (Rank 1)'
                 mask_any_cat = group['Corrispondenza'] != 'NO'
 
-                assigned_label = 0
+            # =================================================================
+            # INIZIO BLOCCO: TRACKING GLOBALE OTTIMIZZATO (BASATO SU COORDINATE)
+            # =================================================================
 
-                if mask_any_cat.any():
-                    # Prendiamo l'ID del Rank 1 se esiste, altrimenti il primo disponibile (caso raro)
-                    if mask_rank1.any():
-                        ref_row = group.loc[mask_rank1].iloc[0]
-                    else:
-                        ref_row = group.loc[mask_any_cat].iloc[0]
+            # preparo la colonna label finale come array di stringhe
+            final_labels = np.empty(len(df_final), dtype=object)
 
-                    cat_id = ref_row['ID']
+            # analizzo riga per riga per garantire l'assoluta indipendenza di ogni stella
+            for i in range(len(df_final)):
+                row = df_final.iloc[i]
 
-                    # Logica standard: se l'ID (del Rank 1) esiste già, usalo. Se no, crealo.
+                # Caso 1: Oggetto catalogato
+                if row['Corrispondenza'] != 'NO':
+                    cat_id = row['ID']
+                    catalogo_nome = str(row['Catalogo']).lower()
+                    ra_cat = row['RAJ2000']
+                    dec_cat = row['DEJ2000']
+
+                    # verifico se ho già generato l'ID testuale per questa specifica stella
                     if cat_id in global_catalog_label_map:
                         assigned_label = global_catalog_label_map[cat_id]
                     else:
-                        global_max_label += 1
-                        global_catalog_label_map[cat_id] = global_max_label
-                        assigned_label = global_max_label
+                        # distinguo la precisione di arrotondamento in base all'errore del catalogo
+                        if "hip" in catalogo_nome:
+                            # Hipparcos: errore ~0.0002 deg -> 4 cifre decimali
+                            assigned_label = f"RA_{ra_cat:.4f}DEC{dec_cat:.4f}"
+                        else:
+                            # Vizier: errore ~0.00003 deg -> 5 cifre decimali
+                            assigned_label = f"RA_{ra_cat:.5f}DEC{dec_cat:.5f}"
 
-                # Caso 2: Il gruppo è tutto "NO" (non catalogato)
+                        global_catalog_label_map[cat_id] = assigned_label
+
+                # Caso 2: Oggetto senza corrispondenza (NO)
                 else:
-                    # Usiamo le coordinate del primo elemento del gruppo (sono tutte uguali)
-                    ra_obj = group.iloc[0]['RA_centroid']
-                    dec_obj = group.iloc[0]['DEC_centroid']
+                    ra_obj = row['RA_centroid']
+                    dec_obj = row['DEC_centroid']
                     coord_obj = SkyCoord(ra=ra_obj * u.deg, dec=dec_obj * u.deg)
 
                     if global_tracker_coords is None:
-                        # Primo oggetto NO in assoluto
-                        global_max_label += 1
-                        assigned_label = global_max_label
+                        # Tracking soglia = dist_ripetizione (0.0011 deg) -> 3 cifre decimali
+                        assigned_label = f"RA_{ra_obj:.3f}DEC{dec_obj:.3f}"
 
-                        # CORREZIONE: Creiamo un vettore SkyCoord di lunghezza 1
-                        # Mettiamo coord_obj dentro una lista [] per farlo diventare un vettore
                         global_tracker_coords = SkyCoord([coord_obj])
-
                         global_tracker_labels = [assigned_label]
                     else:
-                        # Cerca nel tracker esistente
                         idx, d2d, _ = coord_obj.match_to_catalog_sky(global_tracker_coords)
-                        if d2d < soglia_correlazione:
-                            # Trovato: usa il label storico
+                        if d2d < dist_ripetizione:
+                            # uso il label testuale precedentemente memorizzato per questo falso positivo
                             assigned_label = global_tracker_labels[idx]
                         else:
-                            # Nuovo: crea label
-                            global_max_label += 1
-                            assigned_label = global_max_label
+                            assigned_label = f"RA_{ra_obj:.3f}DEC{dec_obj:.3f}"
 
-                            # Aggiorna il tracker concatenando il vecchio (vettore) col nuovo (vettore di 1)
-                            # Nota: SkyCoord supporta la concatenazione passando una lista
                             temp_coords = SkyCoord([global_tracker_coords, SkyCoord([coord_obj])])
-
                             global_tracker_coords = temp_coords
                             global_tracker_labels.append(assigned_label)
 
-                # ASSEGNAZIONE FINALE: Lo stesso label va a TUTTE le righe del gruppo
-                final_labels[indices] = assigned_label
+                final_labels[i] = assigned_label
 
             df_final['label'] = final_labels
-            if 'temp_group_id' in df_final.columns:
-                df_final.drop(columns=['temp_group_id'], inplace=True)
 
-            # Aggiunta colonne identificative Run e Immagine
+            # aggiungo colonne identificative Run e Immagine
             df_final['run_id'] = run
             df_final['img_index'] = n
 
@@ -703,19 +768,17 @@ if __name__ == "__main__":
                 cols.remove('Catalogo')
                 cols.insert(cols.index('ID'), 'Catalogo')
 
-            # Logica riordino colonne richiesta
             final_cols = df_final.columns.tolist()
-            # Rimuoviamo temporaneamente
+            # rimuovo temporaneamente
             for c in ['run_id', 'img_index']:
                 if c in final_cols: final_cols.remove(c)
 
-            # Cerchiamo l'indice di Corrispondenza
+            # cerco l'indice
             if 'Corrispondenza' in final_cols:
                 idx_corr = final_cols.index('Corrispondenza')
                 final_cols.insert(idx_corr, 'img_index')
                 final_cols.insert(idx_corr, 'run_id')
             else:
-                # Fallback se Corrispondenza non c'è
                 final_cols.insert(0, 'run_id')
                 final_cols.insert(1, 'img_index')
 
@@ -725,6 +788,8 @@ if __name__ == "__main__":
             salva_csv_con_header_fits(df_final, dict(fits.getheader(percorso_file)),
                                       file_out, str(percorso_file), parametri_caricati)
 
+        print(f"Contati {contatore_satelliti} oggetti senza corrispondenza matchati con i satelliti nella run {run}")
+
         # =============================================================================
         # FASE 2 & 3: RAGGI MAX E FLUSSO FISSO (PER RUN)
         # =============================================================================
@@ -732,7 +797,7 @@ if __name__ == "__main__":
 
         file_csv_list = sorted([f for f in output_dir.glob('*.csv')])
 
-        # Salviamo la tupla (percorso_file, numero_run) per uso futuro
+        # salvo la tupla
         for f in file_csv_list:
             tutti_i_file_csv_generati.append((f, run))
 
@@ -769,14 +834,12 @@ if __name__ == "__main__":
             df_frame = pd.read_csv(file_csv, comment='#')
             header_info = leggi_header_da_csv(file_csv)
 
-            # Recuperiamo percorso e nome file dall'header del CSV
+            # recupero percorso
             path_fits = header_info.get('PERCORSO_FILE', '')
             nome_fits = header_info.get('NOME_FILE_FITS', '')
 
-            # Se il percorso scritto nel CSV non esiste o è vuoto, proviamo a trovarlo
             if not path_fits or not os.path.exists(path_fits):
 
-                # Tentativo 1: Ricostruzione path (metodo vecchio)
                 if path_fits:
                     p_obj = Path(path_fits)
                     try:
@@ -788,21 +851,15 @@ if __name__ == "__main__":
                     except:
                         pass
 
-                # Tentativo 2: Ricerca brutale per NOME in tutta la cartella BASE_DIR (pmc_photometry)
-                # Questo scatta se il percorso è ancora invalido ma abbiamo il nome del file
+                # uso il nome esatto
                 if (not path_fits or not os.path.exists(path_fits)) and nome_fits:
-                    # rglob('*' + nome_fits) cerca il file ovunque sotto BASE_DIR
-                    # Usiamo il nome esatto per evitare ambiguità
                     found = cerca_file_nel_progetto(BASE_DIR, str(nome_fits).strip())
                     if found:
                         path_fits = str(found)
 
-            # Se dopo tutto questo il file non c'è, salto
             if not path_fits or not os.path.exists(path_fits):
                 print(f"ATTENZIONE: File FITS {path_fits} originale non trovato per {nome_fits}, salto.")
                 continue
-
-            # print(f"Il file fits analizzato ora è {path_fits}")
 
             with fits.open(path_fits, memmap=False) as hdu:
                 data = hdu[0].data
@@ -851,23 +908,20 @@ if __name__ == "__main__":
         print("Nessun file generato. Esco.")
         exit()
 
-    # 1. Caricamento Dati Globale
     lista_df = []
-    # Ordiniamo per percorso per avere ordine cronologico
+    # ordino per percorso
     tutti_i_file_csv_generati = sorted(tutti_i_file_csv_generati, key=lambda x: str(x[0]))
 
     for idx_file, (file_csv, run_number) in enumerate(tqdm(tutti_i_file_csv_generati, desc="Lettura Dati Globali")):
         df_temp = pd.read_csv(file_csv, comment='#')
         df_temp['file_index'] = idx_file
-        df_temp['run_number'] = run_number  # Salviamo a che run appartiene
+        df_temp['run_number'] = run_number
         df_temp['original_file_path'] = str(file_csv)
         df_temp['original_idx'] = df_temp.index
         lista_df.append(df_temp)
 
     big_df = pd.concat(lista_df, ignore_index=True)
 
-    # 2. Assegnazione ID Univoco (run_unique_id) SU TUTTO IL DATASET
-    # CORREZIONE TIPO: Inizializza come object per evitare errori di tipo
     big_df['run_unique_id'] = np.nan
     big_df['run_unique_id'] = big_df['run_unique_id'].astype(object)
 
@@ -877,7 +931,6 @@ if __name__ == "__main__":
     mask_no = big_df['Corrispondenza'] == 'NO'
     df_no = big_df[mask_no].copy()
 
-    # Ordiniamo per file_index per rispettare la cronologia assoluta
     df_no.sort_values('file_index', inplace=True)
 
     known_clusters_coords = []
@@ -885,7 +938,7 @@ if __name__ == "__main__":
     threshold_deg = 0.0011
     unique_files = df_no['file_index'].unique()
     next_internal_id = 1
-    no_mapping = {}  # Mappa globale (file_index, original_idx) -> ID
+    no_mapping = {}
 
     for f_idx in tqdm(unique_files, desc="Matching oggetti NO (Multi-Run)"):
         subset = df_no[df_no['file_index'] == f_idx]
@@ -919,26 +972,20 @@ if __name__ == "__main__":
 
     for idx, uid in no_mapping.items(): big_df.at[idx, 'run_unique_id'] = uid
 
-    # 3. Calcolo Statistiche Globali (Su tutte le run) e Repetition per Run
     print("Calcolo statistiche globali e riorganizzazione colonne...")
     cols_flux = ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper', 'flusso_fisso_max_run']
     cols_flux_presenti = [c for c in cols_flux if c in big_df.columns]
     for c in cols_flux_presenti: big_df[c] = pd.to_numeric(big_df[c], errors='coerce')
 
-    # Modifico il raggruppamento per calcolare statistiche relative alla SINGOLA run
-    # Raggruppo per ID univoco E numero di run
     grouped_per_run = big_df.groupby(['run_unique_id', 'run_number'])
 
     stat_columns = []
-    # Uso transform per assegnare direttamente i valori alle righe corrispondenti
     for c in cols_flux_presenti:
         col_mean = f'media_{c}'
         col_std = f'std_{c}'
 
-        # Calcolo media per run usando transform
         big_df[col_mean] = grouped_per_run[c].transform('mean')
 
-        # Calcolo SEM per run: std / sqrt(count)
         stds_sample = grouped_per_run[c].transform('std')
         counts_grouped = grouped_per_run[c].transform('count')
         big_df[col_std] = stds_sample / np.sqrt(counts_grouped)
@@ -947,55 +994,41 @@ if __name__ == "__main__":
 
     for c in stat_columns: big_df[c] = big_df[c].map(lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
 
-    # CORREZIONE: Convertiamo ID in object per poter ospitare stringhe "INT_X"
+    # converto ID in object
     big_df['ID'] = big_df['ID'].astype(object)
 
     mask_no_match = big_df['Corrispondenza'] == 'NO'
     big_df.loc[mask_no_match, 'ID'] = big_df.loc[mask_no_match, 'run_unique_id']
 
-    # 4. Salvataggio su File
     files_groups = big_df.groupby('original_file_path')
 
 
     def salva_finale_global(df, header_dict, output_file, fp_count):
-        # Estrae solo il nome del file dal percorso
+        # estraggo solo il nome
         nome_solo = os.path.basename(str(output_file))
         with open(output_file, 'w') as f:
             f.write("# Header FITS:\n")
             f.write(f"# Numero di falsi positivi esclusi sicuramente: {fp_count}\n")
             for k, v in header_dict.items():
-                if k != 'PERCORSO_FILE':  # Scriveremo noi il nome pulito
+                if k != 'PERCORSO_FILE':
                     f.write(f"# {k}: {v}\n")
             f.write(f"# NOME_FILE: {nome_solo}\n")
             f.write("#\n")
             df.to_csv(f, index=False)
 
 
-    # Calcolo i conteggi totali (su tutte le run) per ogni ID
     global_repetition_counts = big_df['run_unique_id'].value_counts()
 
     for file_path, df_file in tqdm(files_groups, desc="Salvataggio file globali aggiornati"):
 
-        # Recuperiamo il numero della run da una qualsiasi riga del gruppo (sono tutte dello stesso file)
         current_run_num = df_file['run_number'].iloc[0]
 
-        # MODIFICA: Colonna 'ripetizioni' con conteggio totale su tutte le run
         col_rip_name = 'ripetizioni'
 
-        # Mappo il conteggio globale sulla colonna
         df_file[col_rip_name] = df_file['run_unique_id'].map(global_repetition_counts)
 
-        # --- FILTRO TRANSIENTI DISATTIVATO (COMMENTATO) ---
-        '''
-        # Nota: qui "ripetizioni" deve riferirsi a cosa? Alla run corrente o globale?
-
-        mask_trash = (df_file['Corrispondenza'] == 'NO') & (df_file[col_rip_name] <= 1)
-        num_falsi_positivi = mask_trash.sum()
-        df_final_save = df_file[~mask_trash].copy()
-        '''
         df_final_save = df_file.copy()
         num_falsi_positivi = 0
-        # --------------------------------------------------
 
         header_orig = leggi_header_da_csv(file_path)
 

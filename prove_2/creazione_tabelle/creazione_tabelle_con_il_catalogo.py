@@ -149,33 +149,14 @@ def tabella_catalogo(image_file_, tbl_vizier_in, tbl_hipparco_in):
     bordo = 7
     h, w = data_.shape[0], data_.shape[1]
 
-    # --- OTTIMIZZAZIONE GEOMETRICA INTERNA ---
-    # calcolo il centro dell'immagine e il raggio di sicurezza
+    # calcolo il centro dell'immagine
     center_coord = wcs.pixel_to_world(w / 2, h / 2)
-    ra_center = center_coord.ra.deg
-    dec_center = center_coord.dec.deg
-    fov_radius_deg = 1.2
 
-    # filtro Vizier usando coordinate sferiche (veloce)
-    mask_viz = (
-            (tbl_vizier_in['RAJ2000'] > ra_center - fov_radius_deg) &
-            (tbl_vizier_in['RAJ2000'] < ra_center + fov_radius_deg) &
-            (tbl_vizier_in['DEJ2000'] > dec_center - fov_radius_deg) &
-            (tbl_vizier_in['DEJ2000'] < dec_center + fov_radius_deg)
-    )
-    subset_vizier = tbl_vizier_in[mask_viz]
-
-    # filtro Hipparcos usando coordinate sferiche (veloce)
-    mask_hip = (
-            (tbl_hipparco_in['_RAJ2000'] > ra_center - fov_radius_deg) &
-            (tbl_hipparco_in['_RAJ2000'] < ra_center + fov_radius_deg) &
-            (tbl_hipparco_in['_DEJ2000'] > dec_center - fov_radius_deg) &
-            (tbl_hipparco_in['_DEJ2000'] < dec_center + fov_radius_deg)
-    )
-    subset_hipparco = tbl_hipparco_in[mask_hip]
+    subset_vizier = tbl_vizier_in
+    subset_hipparco = tbl_hipparco_in
 
     # preparo le colonne per il merge
-    nome_catalogo_vizier = ["II/389/ps1_dr2"] * len(subset_vizier)
+    nome_catalogo_vizier = np.array(["II/389/ps1_dr2"] * len(subset_vizier), dtype=object)
     colonne_vizier = {
         'ID': subset_vizier['objID'],
         'RAJ2000': subset_vizier['RAJ2000'],
@@ -184,7 +165,7 @@ def tabella_catalogo(image_file_, tbl_vizier_in, tbl_hipparco_in):
         'Catalogo': nome_catalogo_vizier
     }
 
-    nome_catalogo_hipparco = ["I/239/hip_main"] * len(subset_hipparco)
+    nome_catalogo_hipparco = np.array(["I/239/hip_main"] * len(subset_hipparco), dtype=object)
     colonne_hipparco = {
         'Catalogo': nome_catalogo_hipparco,
         'ID': subset_hipparco['HIP'],
@@ -495,32 +476,79 @@ for percorso_file_fits in file_list:
         coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
         exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
 
-        # eseguo il filtraggio competitivo Vizier vs Hipparcos
-        print("Filtraggio competitivo Vizier vs Hipparcos...")
+        # =================================================================
+        # --- FILTRAGGIO COMPETITIVO A SINGOLA FASE ---
+        # =================================================================
+        print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
+
+        # preparo le coordinate Vizier
         coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
                                  dec=tbl_riquadro_esterno_vizier['DEJ2000'],
                                  unit=u.deg)
 
-        idx_hip, d2d, _ = coords_vizier.match_to_catalog_sky(coords_hipparco_run_subset)
-        thresholds = exclusion_radii_run_subset[idx_hip]
+        # ricavo il limite massimo di ricerca per coprire tutte le tolleranze
+        max_threshold_deg = np.max(exclusion_radii_run_subset)
+        seplimit = max_threshold_deg * u.deg
 
-        mag_vizier = np.nan_to_num(tbl_riquadro_esterno_vizier['gmag'], nan=99.0)
-        mag_hipparco_match = np.nan_to_num(tbl_hipparco_run_subset['Vmag'][idx_hip], nan=99.0)
+        # cerco tutte le stelle Vizier attorno a ogni stella Hipparcos
+        idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
 
-        is_spatial_match = d2d.deg <= thresholds
-        is_vizier_brighter = mag_vizier < mag_hipparco_match
+        # implemento un controllo di sicurezza per aggirare l'inversione degli indici di astropy
+        if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
+            idx_viz_1, idx_hip_1 = idx_A, idx_B
+        else:
+            idx_hip_1, idx_viz_1 = idx_A, idx_B
 
-        # tengo Vizier se non c'è match o se Vizier è più luminosa
-        mask_keep_vizier = (~is_spatial_match) | (is_spatial_match & is_vizier_brighter)
+        # applico la mia tolleranza dinamica esatta
+        mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
+
+        # filtro gli indici per tenere solo quelli entro la tolleranza
+        idx_hip_valid = idx_hip_1[mask_threshold]
+        idx_viz_valid = idx_viz_1[mask_threshold]
+
+        # genero le maschere di mantenimento inizializzate a True
+        mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
+        mask_keep_vizier = np.ones(len(tbl_riquadro_esterno_vizier), dtype=bool)
+
+        # estraggo gli indici univoci di Hipparcos che hanno almeno un match
+        unique_hip_idx = np.unique(idx_hip_valid)
+
+        # --- TRUCCO DI VELOCIZZAZIONE ---
+        # estraggo le magnitudini in array numpy puri prima del ciclo per evitare l'overhead di Astropy
+        array_mag_vizier = np.nan_to_num(tbl_riquadro_esterno_vizier['gmag'].data, nan=99.0)
+        array_mag_hipparco = np.nan_to_num(tbl_hipparco_run_subset['Vmag'].data, nan=99.0)
+
+        # itero su ogni stella Hipparcos coinvolta
+        for i_hip in unique_hip_idx:
+            # trovo gli indici delle stelle Vizier associate a questa specifica stella Hipparcos
+            viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
+
+            if len(viz_matches) > 0:
+                # pesco le magnitudini in modo ultra-rapido dall'array numpy
+                mag_viz_matches = array_mag_vizier[viz_matches]
+
+                # individuo la stella Vizier più luminosa (valore di magnitudine minore)
+                idx_min_mag = np.argmin(mag_viz_matches)
+                best_viz_idx = viz_matches[idx_min_mag]
+                best_viz_mag = mag_viz_matches[idx_min_mag]
+
+                # pesco la magnitudine della stella Hipparcos in esame dall'array
+                hip_mag = array_mag_hipparco[i_hip]
+
+                # confronto e scarto solo la seconda più luminosa tra le due
+                if best_viz_mag <= hip_mag:
+                    # Vizier è più luminosa (o uguale), scarto la stella Hipparcos
+                    mask_keep_hipparco[i_hip] = False
+                else:
+                    # Hipparcos è più luminosa, scarto la Vizier più luminosa
+                    mask_keep_vizier[best_viz_idx] = False
+
+        mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
+
+        tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco]
         tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
 
-        # rimuovo da Hipparcos le stelle battute
-        indices_hipparco_lost = idx_hip[is_spatial_match & is_vizier_brighter]
-        mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
-        mask_keep_hipparco[indices_hipparco_lost] = False
-        tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco]
-
-        # filtro per magnitudine massima il catalogo Vizier pulito
+        # applico il filtro magnitudine massima
         mag_max = 15
         tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[
             tbl_riquadro_esterno_vizier_CLEAN['gmag'] < mag_max]

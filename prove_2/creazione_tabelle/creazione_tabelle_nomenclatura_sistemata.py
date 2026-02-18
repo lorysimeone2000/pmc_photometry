@@ -506,7 +506,7 @@ if __name__ == "__main__":
         tuo_user = "lorenzo.simeone@studenti.unipg.it"
         tua_password = "Cazzata_2002348"
 
-        cartella_tabelle = BASE_DIR / "tabelle"
+        cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR,'tabelle')
         cartella_tabelle.mkdir(exist_ok=True)
 
         percorso_tle = scarica_tle_storici(tempo_ref_astropy, tuo_user, tua_password, cartella_tabelle)
@@ -785,7 +785,7 @@ if __name__ == "__main__":
                         # uso il label testuale precedentemente memorizzato per questo oggetto
                         assigned_label = global_tracker_labels[idx]
                     else:
-                        assigned_label = f"RA_{ra_obj:.3f}DEC{dec_obj:.3f}"
+                        assigned_label = f"RA_{ra_obj:.3f}__DEC_{dec_obj:.3f}"
 
                         temp_coords = SkyCoord([global_tracker_coords, SkyCoord([coord_obj])])
                         global_tracker_coords = temp_coords

@@ -9,12 +9,14 @@ import time
 import sys
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
-from astropy.table import Table
+from astropy.table import Table, vstack
 from astropy.wcs import WCS
-from astropy.coordinates import SkyCoord
+from astropy.coordinates import SkyCoord, Angle
+import astropy.coordinates as coord
 import astropy.units as u
 import warnings
 from astropy.wcs import FITSFixedWarning
+from astroquery.vizier import Vizier
 import matplotlib.ticker as ticker
 from tqdm import tqdm
 
@@ -29,7 +31,7 @@ from datetime import timedelta
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', message='Units from inserted quantities will be ignored.')
 
-# Salvo il tempo di inizio globale
+# salvo il tempo di inizio globale
 start_time_global = time.time()
 
 
@@ -100,11 +102,11 @@ osservatorio = wgs84.latlon(28.3000, -16.505830555555555, elevation_m=2370)
 
 
 # =============================================================================
-# 0. GESTIONE PERCORSI DINAMICA (PORTABILITÀ TOTALE)
+# 0. GESTIONE PERCORSI DINAMICA E CATALOGHI
 # =============================================================================
 
 def trova_cartella_base(nome_target="pmc_photometry"):
-    # Risalgo la directory partendo dalla posizione dello script fino a trovare la cartella target
+    # risalgo la directory partendo dalla posizione dello script fino a trovare la cartella target
     path_corrente = Path(__file__).resolve()
 
     for parent in [path_corrente] + list(path_corrente.parents):
@@ -115,25 +117,39 @@ def trova_cartella_base(nome_target="pmc_photometry"):
     return path_corrente.parent
 
 
+def cerca_file_nel_progetto(base_dir, nome_file_esatto):
+    # cerco un file specifico in tutte le sottocartelle
+    files_trovati = list(base_dir.rglob(nome_file_esatto))
+    if not files_trovati: return None
+    if len(files_trovati) > 1:
+        files_trovati.sort(key=lambda p: len(str(p)))
+    return files_trovati[0]
+
+
 def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
-    # Cerco una CARTELLA ricorsivamente in tutte le sottocartelle
+    # cerco una CARTELLA ricorsivamente in tutte le sottocartelle
     cartelle_trovate = [p for p in base_dir.rglob(nome_cartella_esatto) if p.is_dir()]
 
     if not cartelle_trovate:
         return None
 
     cartelle_trovate.sort(key=lambda p: len(str(p)))
-
-    # Preferisco quella più vicina alla root se ce ne sono multiple
     return cartelle_trovate[0]
 
 
-# Definisco la BASE_DIR dinamicamente
+# definisco la BASE_DIR dinamicamente
 BASE_DIR = trova_cartella_base("pmc_photometry")
 
 print(f"--- CONFIGURAZIONE SISTEMA ---")
 print(f"Cartella Base rilevata: {BASE_DIR}")
 print(f"------------------------------")
+
+# Inizializzo Vizier per l'estrazione dinamica (senza limiti di righe)
+vizier = Vizier(
+    catalog="II/389/ps1_dr2",
+    columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag'],
+    row_limit=-1
+)
 
 
 # --- FUNZIONI DI UTILITÀ ---
@@ -196,7 +212,7 @@ def esegui_segmentazione_dinamica(data, fwhm, size, params):
     cat = SourceCatalog(data, segment_map, convolved_data=convolved_data)
     tbl = cat.to_table()
 
-    # Filtro rapido vettorializzato che applico
+    # filtro rapido vettorializzato che applico
     soglia_ass = params['soglia_filtro_ass']
     soglia_rel = params['soglia_filtro_rel']
     bordo = 7
@@ -247,8 +263,43 @@ def filtra_vicini_saturi(tbl, median_bg, dist_limit=30, val_sat=254):
     return tbl
 
 
+def genera_tabella_catalogo_immagine(wcs, shape, bordo, tbl_vizier, tbl_hipparco):
+    # genero dinamicamente la tabella unita di catalogo proiettata sul piano di questa specifica immagine
+    h, w = shape
+
+    nome_catalogo_vizier = np.array(["II/389/ps1_dr2"] * len(tbl_vizier), dtype=object)
+    colonne_vizier = {
+        'Catalogo': nome_catalogo_vizier,
+        'ID': tbl_vizier['objID'],
+        'RAJ2000': tbl_vizier['RAJ2000'],
+        'DEJ2000': tbl_vizier['DEJ2000'],
+        'Mag': tbl_vizier['gmag'],
+    }
+
+    nome_catalogo_hipparco = np.array(["I/239/hip_main"] * len(tbl_hipparco), dtype=object)
+    colonne_hipparco = {
+        'Catalogo': nome_catalogo_hipparco,
+        'ID': tbl_hipparco['HIP'],
+        'RAJ2000': tbl_hipparco['_RAJ2000'],
+        'DEJ2000': tbl_hipparco['_DEJ2000'],
+        'Mag': tbl_hipparco['Vmag'],
+    }
+
+    t1 = Table(colonne_vizier)
+    t2 = Table(colonne_hipparco)
+
+    tbl_unita = vstack([t1, t2])
+
+    coords = SkyCoord(ra=tbl_unita['RAJ2000'], dec=tbl_unita['DEJ2000'], unit=u.deg)
+    x_pix, y_pix = wcs.world_to_pixel(coords)
+
+    mask_bordo = ((x_pix >= bordo) & (x_pix < (w - bordo)) & (y_pix >= bordo) & (y_pix < (h - bordo)))
+
+    return tbl_unita[mask_bordo], coords[mask_bordo]
+
+
 def unione_tabelle_ottimizzata(tbl_seg, tbl_cat, wcs, coords_catalogate, soglia_correlazione, mag_limit=10.0):
-    # Eseguo il matching e restituisco la tabella unita e il numero di stelle UNICHE
+    # eseguo il matching e restituisco la tabella unita e il numero di stelle UNICHE
     coords_trovate = wcs.pixel_to_world(tbl_seg['xcentroid'], tbl_seg['ycentroid'])
 
     # --- MATCHING CON SEARCH_AROUND_SKY ---
@@ -297,7 +348,7 @@ def unione_tabelle_ottimizzata(tbl_seg, tbl_cat, wcs, coords_catalogate, soglia_
             else:
                 df_no[col] = 'N/A'
 
-        # Allineo le colonne
+        # allineo le colonne
         df_no = df_no.reindex(columns=df_si.columns, fill_value=np.nan)
 
     else:
@@ -321,26 +372,25 @@ def unione_tabelle_ottimizzata(tbl_seg, tbl_cat, wcs, coords_catalogate, soglia_
 
     # --- CONTEGGIO STELLE BRILLANTI TROVATE ---
 
-    # 1. Identifico gli ID trovati
+    # 1. identifico gli ID trovati
     mask_si = np.char.startswith(tbl_unite['Corrispondenza'].astype(str), 'SI')
     ids_trovati_e_correlati = set(tbl_unite[mask_si]['ID'])
 
-    # 2. Filtro il catalogo per le brillanti
+    # 2. filtro il catalogo per le brillanti
     mask_bright_cat = tbl_cat['Mag'] < mag_limit
     stelle_catalogo_brillanti = tbl_cat[mask_bright_cat]
 
-    # 3. Conto quante brillanti sono state trovate (intersezione)
+    # 3. conto quante brillanti sono state trovate (intersezione)
     num_brillanti = 0
     for star_id in stelle_catalogo_brillanti['ID']:
         if star_id in ids_trovati_e_correlati:
             num_brillanti += 1
 
-    # --- RITORNO COORDINATE E TABELLA PER LOGICA FP ---
-    # Restituisco coordinate per facilitare il calcolo FP
+    # restituisco coordinate per facilitare il calcolo FP
     return tbl_unite, num_brillanti
 
 
-# --- CONFIGURAZIONE GLOBALE ---
+# --- CONFIGURAZIONE GLOBALE SCAN ---
 PARAMETRI_FISSI = {
     'threshold_assoluta': 3.61,
     'pixel': 3,
@@ -348,11 +398,10 @@ PARAMETRI_FISSI = {
     'soglia_filtro_rel': 0.05
 }
 
-# Parametri Scan
 FWHM_RANGE = np.linspace(2.2, 3.0, 150)
 SIZES_TO_TEST = [3, 5]
 soglia_correlazione = 0.003349 * u.deg
-MAG_LIMIT_ANALYSIS = 10.0  # Soglia per definire le stelle "importanti" (Stelle Perse < 10)
+MAG_LIMIT_ANALYSIS = 10.0  # soglia per definire le stelle "importanti" (Stelle Perse < 10)
 
 
 def analizza_singola_run(run_id, satelliti_attivi):
@@ -375,20 +424,125 @@ def analizza_singola_run(run_id, satelliti_attivi):
         print(f"ATTENZIONE: Nessun file CSV trovato in {cartella_csv_path}")
         return
 
-    # --- RESET STRUTTURE DATI PER QUESTA RUN ---
+    # =========================================================================
+    # --- FASE 0: MERGE E PREPARAZIONE CATALOGO GLOBALE PER LA RUN ---
+    # =========================================================================
+    print("--- FASE 0: PREPARAZIONE CATALOGO MERGIATO PER LA RUN ---")
+    primo_fits_valido = None
+
+    # estraggo il primo file FITS disponibile per definire il Field of View
+    for p_csv in file_csv_cat:
+        header_info = leggi_header_da_csv(p_csv)
+        p_fits = header_info.get('PERCORSO_FILE', '')
+        p_obj = Path(p_fits)
+        try:
+            if "pmc_photometry" in p_obj.parts:
+                idx = p_obj.parts.index("pmc_photometry")
+                new_path = BASE_DIR.joinpath(*p_obj.parts[idx + 1:])
+                if new_path.exists(): p_fits = str(new_path)
+            elif "prove_2" in p_obj.parts:
+                idx = p_obj.parts.index("prove_2")
+                new_path = BASE_DIR.joinpath(*p_obj.parts[idx + 1:])
+                if new_path.exists(): p_fits = str(new_path)
+        except:
+            pass
+
+        if os.path.exists(p_fits):
+            primo_fits_valido = p_fits
+            break
+
+    if primo_fits_valido is None:
+        print(f"ERRORE: Nessun FITS valido trovato per la Run {run_id} per calcolare il merge.")
+        return
+
+    # calcolo centro e raggio di ricerca
+    with fits.open(primo_fits_valido, memmap=False) as hdu_list:
+        w_ref = WCS(hdu_list[0].header)
+        ra_c = hdu_list[0].header["RA"]
+        dec_c = hdu_list[0].header["DEC"]
+        alto_destra = w_ref.pixel_to_world(hdu_list[0].header['NAXIS1'] - 1, hdu_list[0].header['NAXIS2'] - 1)
+        centro = SkyCoord(ra_c, dec_c, unit=u.deg)
+        raggio_ricerca = Angle(centro.separation(alto_destra) * 1.5, "deg")
+
+    print(f"Esecuzione query Vizier per la Run {run_id}...")
+    riquadro_esterno_vizier = vizier.query_region(
+        coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
+        radius=raggio_ricerca,
+        column_filters={'gmag': f'<{15}'}
+    )
+    tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+
+    # filtro Hipparcos per il FoV
+    distanze_hip = centro.separation(coords_hipparco_global)
+    mask_hip_fov = distanze_hip < raggio_ricerca
+
+    tbl_hipparco_run_subset = tbl_catalogo_hipparco_globale[mask_hip_fov]
+    coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
+    exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
+
+    # --- FILTRAGGIO COMPETITIVO A SINGOLA FASE ---
+    print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
+    coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
+                             dec=tbl_riquadro_esterno_vizier['DEJ2000'],
+                             unit=u.deg)
+
+    max_threshold_deg = np.max(exclusion_radii_run_subset) if len(exclusion_radii_run_subset) > 0 else 0
+    seplimit = max_threshold_deg * u.deg
+
+    idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
+
+    # aggiramento indice inverso di astropy
+    if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
+        idx_viz_1, idx_hip_1 = idx_A, idx_B
+    else:
+        idx_hip_1, idx_viz_1 = idx_A, idx_B
+
+    mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
+    idx_hip_valid = idx_hip_1[mask_threshold]
+    idx_viz_valid = idx_viz_1[mask_threshold]
+
+    mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
+    mask_keep_vizier = np.ones(len(tbl_riquadro_esterno_vizier), dtype=bool)
+
+    unique_hip_idx = np.unique(idx_hip_valid)
+
+    # risolvo i conflitti
+    for i_hip in unique_hip_idx:
+        viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
+        if len(viz_matches) > 0:
+            mag_viz_matches = np.nan_to_num(tbl_riquadro_esterno_vizier['gmag'][viz_matches], nan=99.0)
+            idx_min_mag = np.argmin(mag_viz_matches)
+            best_viz_idx = viz_matches[idx_min_mag]
+            best_viz_mag = mag_viz_matches[idx_min_mag]
+            hip_mag = np.nan_to_num(tbl_hipparco_run_subset['Vmag'][i_hip], nan=99.0)
+
+            if best_viz_mag <= hip_mag:
+                mask_keep_hipparco[i_hip] = False
+            else:
+                mask_keep_vizier[best_viz_idx] = False
+
+    hipparco_escluse = np.sum(~mask_keep_hipparco)
+    vizier_escluse = np.sum(~mask_keep_vizier)
+    print(f"Risolti {len(unique_hip_idx)} conflitti spaziali:")
+    print(f" -> Escluse {hipparco_escluse} stelle Hipparco (tenute Vizier perché più brillanti)")
+    print(f" -> Escluse {vizier_escluse} stelle Vizier (tenute Hipparco perché più brillanti)")
+
+    # applico taglio mag limite
+    mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
+    tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco]
+    tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
+    tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[tbl_riquadro_esterno_vizier_CLEAN['gmag'] < 15]
+
+    # --- RESET STRUTTURE DATI PER LO SCAN DEL PARAMETRO ---
     raw_corr = {size: [[] for _ in range(len(FWHM_RANGE))] for size in SIZES_TO_TEST}
     raw_fp = {size: [[] for _ in range(len(FWHM_RANGE))] for size in SIZES_TO_TEST}
-
-    # Storage per le coordinate dei Falsi Positivi
     fp_coords_storage = {size: [[] for _ in range(len(FWHM_RANGE))] for size in SIZES_TO_TEST}
 
-    # Contatore per le immagini effettivamente processate
     immagini_processate_correttamente = 0
     totale_immagini = len(file_csv_cat)
-
     total_steps = totale_immagini * len(SIZES_TO_TEST) * len(FWHM_RANGE)
 
-    print(f"Analisi focalizzata su stelle perse con Mag < {MAG_LIMIT_ANALYSIS}")
+    print(f"\nAnalisi focalizzata su stelle perse con Mag < {MAG_LIMIT_ANALYSIS}")
     print(f"Totale immagini: {totale_immagini}")
     print(f"Totale iterazioni previste: {total_steps}")
     print("-" * 60)
@@ -419,16 +573,13 @@ def analizza_singola_run(run_id, satelliti_attivi):
                     pass
 
             if os.path.exists(percorso_fits_str):
-                dataframe = pd.read_csv(percorso_csv, comment='#')
-                tbl_catalogate = Table.from_pandas(dataframe)
-
-                if hasattr(tbl_catalogate['RAJ2000'], 'value'):
-                    ra_vals, dec_vals = tbl_catalogate['RAJ2000'].value, tbl_catalogate['DEJ2000'].value
-                else:
-                    ra_vals, dec_vals = np.array(tbl_catalogate['RAJ2000']), np.array(tbl_catalogate['DEJ2000'])
-                coords_catalogate = SkyCoord(ra=ra_vals * u.deg, dec=dec_vals * u.deg)
-
                 data_sub, wcs, median_val = elabora_file_fits(percorso_fits_str)
+
+                # Sostituisco la lettura statica dal file con la generazione in tempo reale del mio catalogo pulito
+                tbl_catalogate, coords_catalogate = genera_tabella_catalogo_immagine(
+                    wcs, data_sub.shape, 7, tbl_vizier_cut, tbl_hipparco_run_clean
+                )
+
                 success = True
 
         except Exception:
@@ -436,12 +587,10 @@ def analizza_singola_run(run_id, satelliti_attivi):
 
         if success:
             immagini_processate_correttamente += 1
-
             num_target_stars = np.sum(tbl_catalogate['Mag'] < MAG_LIMIT_ANALYSIS)
 
             # =========================================================
             # PRE-CALCOLO POSIZIONE SATELLITI PER LA SINGOLA IMMAGINE
-            # (Lo eseguo una sola volta prima del ciclo dei 300 test)
             # =========================================================
             catalogo_satelliti_img = None
 
@@ -481,7 +630,7 @@ def analizza_singola_run(run_id, satelliti_attivi):
                     if tbl_trovate is not None and len(tbl_trovate) > 0:
                         tbl_trovate = filtra_vicini_saturi(tbl_trovate, median_bg=median_val)
 
-                        # Match con il catalogo
+                        # eseguo il merge spaziale
                         tbl_matched, num_found_bright = unione_tabelle_ottimizzata(
                             tbl_trovate,
                             tbl_catalogate,
@@ -493,21 +642,21 @@ def analizza_singola_run(run_id, satelliti_attivi):
 
                         val_perse = max(0, num_target_stars - num_found_bright)
 
-                        # --- IDENTIFICAZIONE E FILTRO FP ---
+                        # identificazione e filtro FP
                         mask_no = tbl_matched['Corrispondenza'] == 'NO'
                         tbl_fp = tbl_matched[mask_no]
 
                         if len(tbl_fp) > 0:
-                            # Trasformo in coordinate solo le stelle non catalogate
+                            # trasformo in coordinate solo le stelle non catalogate
                             coords_fp = wcs.pixel_to_world(tbl_fp['xcentroid'], tbl_fp['ycentroid'])
 
-                            # Applico il filtro satelliti in un istante
+                            # applico il filtro satelliti
                             if catalogo_satelliti_img is not None:
                                 idx_sat, d2d_sat, _ = coords_fp.match_to_catalog_sky(catalogo_satelliti_img)
                                 tolleranza_satellite = 3 / 60 * u.deg
                                 mask_is_satellite = d2d_sat < tolleranza_satellite
 
-                                # Escludo i falsi positivi causati dai satelliti
+                                # escludo i falsi positivi causati dai satelliti
                                 coords_fp = coords_fp[~mask_is_satellite]
 
                             val_fp_raw = len(coords_fp)
@@ -515,16 +664,12 @@ def analizza_singola_run(run_id, satelliti_attivi):
                                 current_fp_ra = coords_fp.ra.deg
                                 current_fp_dec = coords_fp.dec.deg
 
-                    # Aggiungo i risultati
+                    # salvo i risultati
                     raw_corr[size_val][i_fwhm].append(val_perse)
-
-                    # Salvo il conto raw
                     raw_fp[size_val][i_fwhm].append(val_fp_raw)
-
-                    # Salvo le coordinate
                     fp_coords_storage[size_val][i_fwhm].append((current_fp_ra, current_fp_dec))
 
-                    # Aggiorno la barra
+                    # aggiorno la barra
                     pbar.update(1)
 
             pbar.set_postfix_str(f"Img {idx_img + 1}/{totale_immagini}")
@@ -534,7 +679,7 @@ def analizza_singola_run(run_id, satelliti_attivi):
             pbar.update(step_saltati)
             pbar.set_postfix_str(f"Img {idx_img + 1} SKIPPED (File not found)")
 
-    pbar.close()  # Chiudo la barra
+    pbar.close()
 
     print(f"\nRun {run_id} terminata (Scan Immagini). Avvio Filtraggio Transienti...")
 
@@ -548,7 +693,7 @@ def analizza_singola_run(run_id, satelliti_attivi):
 
                 list_of_img_coords = fp_coords_storage[size_val][i_fwhm]
 
-                # Appiattisco tutto per il cross-match globale
+                # appiattisco tutto per il cross-match globale
                 all_ra = []
                 all_dec = []
                 map_idx_to_img = {}
@@ -577,7 +722,7 @@ def analizza_singola_run(run_id, satelliti_attivi):
                         i2 = idx2[k]
                         if i1 == i2: continue
 
-                        # Verifico se il vicino è in un'immagine diversa
+                        # verifico se il vicino è in un'immagine diversa
                         img1 = map_idx_to_img[i1]
                         img2 = map_idx_to_img[i2]
 
@@ -588,7 +733,7 @@ def analizza_singola_run(run_id, satelliti_attivi):
                         img_origin = map_idx_to_img[idx_globale]
                         filtered_fp_counts[img_origin] += 1
 
-                # Sostituisco i conti raw con quelli filtrati
+                # sostituisco i conti raw con quelli filtrati
                 raw_fp[size_val][i_fwhm] = filtered_fp_counts
 
     print(f"Filtraggio Transienti completato.")
@@ -678,12 +823,40 @@ if __name__ == "__main__":
     runs_to_process = [1, 2, 3]
 
     # =================================================================
+    # PRE-CALCOLO HIPPARCOS GLOBALE (UNA SOLA VOLTA)
+    # =================================================================
+    print("\nPreparo il catalogo globale di Hipparcos...")
+    file_hipparco = cerca_file_nel_progetto(BASE_DIR, "hipparco.fit")
+    with fits.open(file_hipparco) as hdu_list_hipparco:
+        tbl_catalogo_hipparco_globale = Table(hdu_list_hipparco[1].data)
+
+    # calcolo errori propagati al J2000
+    dt = 2000.0 - 1991.25
+    sigma_ra_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco_globale['e_RAICRS']) ** 2 + (
+            dt * np.nan_to_num(tbl_catalogo_hipparco_globale['e_pmRA'])) ** 2) / 3600000.0
+    sigma_dec_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco_globale['e_DEICRS']) ** 2 + (
+            dt * np.nan_to_num(tbl_catalogo_hipparco_globale['e_pmDE'])) ** 2) / 3600000.0
+
+    sigma_hip_deg = np.sqrt(sigma_ra_deg ** 2 + sigma_dec_deg ** 2)
+    sigma_vizier_deg = 0.1 / 3600.0
+    sigma_totale_deg = np.sqrt(sigma_hip_deg ** 2 + sigma_vizier_deg ** 2)
+
+    # 3-SIGMA
+    exclusion_radii_deg_ = 3.0 * sigma_totale_deg
+    exclusion_radii_deg = np.full(len(exclusion_radii_deg_), 2.5 / 3600.0)
+
+    # pre-calcolo SkyCoord globale
+    coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco_globale['_RAJ2000'],
+                                      dec=tbl_catalogo_hipparco_globale['_DEJ2000'],
+                                      unit=u.deg)
+
+    # =================================================================
     # --- PRE-CALCOLO SATELLITI GLOBALE (UNA SOLA VOLTA) ---
     # =================================================================
     print("\nPreparo il catalogo satelliti storici globale...")
     file_fits_riferimento = None
 
-    # Cerco un FITS qualsiasi tra tutte le run per estrarre la data per il download
+    # cerco un FITS qualsiasi tra tutte le run per estrarre la data per il download
     for r in runs_to_process:
         nome_cartella_csv = f"sorgenti_catalogate_run_{r}"
         cartella_csv_path = cerca_cartella_nel_progetto(BASE_DIR, nome_cartella_csv)
@@ -737,7 +910,7 @@ if __name__ == "__main__":
         print("ATTENZIONE: Nessun FITS di riferimento trovato per la data. Disabilito il filtro satelliti.")
     # =================================================================
 
-    # Faccio partire l'elaborazione ciclica passando il catalogo scaricato
+    # faccio partire l'elaborazione ciclica
     for r in runs_to_process:
         analizza_singola_run(r, satelliti_attivi_globali)
 

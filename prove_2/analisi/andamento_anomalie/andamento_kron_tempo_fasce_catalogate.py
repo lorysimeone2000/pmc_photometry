@@ -43,7 +43,8 @@ def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
     if not cartelle_trovate: return None
     cartelle_trovate.sort(key=lambda p: len(str(p)))
     if len(cartelle_trovate) > 1:
-        print(f"INFO: Trovate {len(cartelle_trovate)} cartelle '{nome_cartella_esatto}'. Uso la prima: {cartelle_trovate[0].relative_to(base_dir)}")
+        print(
+            f"INFO: Trovate {len(cartelle_trovate)} cartelle '{nome_cartella_esatto}'. Uso la prima: {cartelle_trovate[0].relative_to(base_dir)}")
     return cartelle_trovate[0]
 
 
@@ -101,19 +102,13 @@ if not os.path.exists(base_path):
     print(f"ERRORE: La cartella {base_path} non esiste.")
     exit()
 
-# cerco dinamicamente il file dei risultati della run 1 (fondamentale per la Fase 1)
-file_stats = cerca_file_nel_progetto(BASE_DIR, "risultati_analisi_run_1.csv")
-if file_stats is None:
-    print("ERRORE: File 'risultati_analisi_run_1.csv' non trovato.")
-    exit()
-path_stats_run1 = str(file_stats)
-
 # --- parametri configurazione ---
 
 # imposto la lista delle run da analizzare
 run_list = [1, 2, 3]
 
-KRON_TARGET = 700  # imposto il flusso target per la selezione
+KRON_TARGET = 115  # imposto il flusso target per la selezione
+RUN_REF = 0
 INDICE_IMMAGINE_RIFERIMENTO = 35  # imposto l'indice del file da usare per la selezione
 MIN_COUNT_RUN1 = 75  # imposto il minimo numero di ripetizioni per essere selezionata
 
@@ -121,16 +116,18 @@ MIN_COUNT_RUN1 = 75  # imposto il minimo numero di ripetizioni per essere selezi
 H, W = 2048, 3072
 CENTER_X, CENTER_Y = W / 2, H / 2
 # uso il raggio circoscritto (ipotenusa) per coprire anche gli angoli
-MAX_RADIUS = W/2
+MAX_RADIUS = W / 2
 
 # --- configurazione automatica fasce ---
 NUM_FASCE = 5  # imposto il numero di suddivisioni del raggio totale
-PERC_RIDUZIONE = 1/NUM_FASCE  # imposto il 5% del RAGGIO TOTALE come spessore costante
+PERC_RIDUZIONE = 1 / NUM_FASCE  # imposto il 5% del RAGGIO TOTALE come spessore costante
 
 # genero i colori dinamici (uno per fascia)
 colors_map = plt.cm.jet(np.linspace(0, 1, NUM_FASCE))
 
-regions_info = []
+# Creo due liste separate per le regioni di sinistra (SI) e destra (NO)
+regions_info_si = []
+regions_info_no = []
 
 print(f"--- ANALISI MULTI-ZONA (Target: {KRON_TARGET} ADU) ---")
 print(f"Configurazione: {NUM_FASCE} zone (Anelli spessi {int(PERC_RIDUZIONE * 100)}% del raggio max).")
@@ -148,7 +145,18 @@ for i in range(NUM_FASCE):
 
     name = f"Anello {i + 1} ({int(r_inner)}-{int(r_outer)} px)"
 
-    regions_info.append({
+    # Aggiungo la regione per la colonna di sinistra (SI)
+    regions_info_si.append({
+        'name': name,
+        'r_min': r_inner,
+        'r_max': r_outer,
+        'color': colors_map[i],
+        'star_id': None,
+        'star_flux': 0
+    })
+
+    # Aggiungo la regione per la colonna di destra (NO)
+    regions_info_no.append({
         'name': name,
         'r_min': r_inner,
         'r_max': r_outer,
@@ -160,7 +168,7 @@ for i in range(NUM_FASCE):
 
 # --- FASE 1: SELEZIONE STELLE NELL'IMMAGINE DI RIFERIMENTO ---
 
-cartella_ref = os.path.join(base_path, f"tabelle_unite_run_{run_list[0]}")
+cartella_ref = os.path.join(base_path, f"tabelle_unite_run_{run_list[RUN_REF]}")
 # cerco i file CSV
 files_ref = sorted([f for f in os.listdir(cartella_ref) if f.endswith('.csv')])
 if len(files_ref) <= INDICE_IMMAGINE_RIFERIMENTO:
@@ -171,53 +179,67 @@ print(f"File riferimento per coordinate: {os.path.basename(path_ref)}")
 df_ref = pd.read_csv(path_ref, comment='#')
 tbl_ref = Table.from_pandas(df_ref)
 
-# recupero il path FITS originale dall'header del CSV
-header_ref_csv = leggi_header_da_csv(path_ref)
+# divido subito la tabella in base alla Corrispondenza
+mask_si = np.char.startswith(tbl_ref['Corrispondenza'].astype(str), 'SI')
+mask_no = tbl_ref['Corrispondenza'].astype(str) == 'NO'
 
+tbl_si = tbl_ref[mask_si]
+tbl_no = tbl_ref[mask_no]
 
-nome_fits = header_ref_csv.get('NOME_FILE_FITS', '')
-path_fits_originale = cerca_file_nel_progetto(BASE_DIR, nome_fits)
+# calcolo le distanze dal centro per entrambi i gruppi
+dists_from_center_si = np.hypot(tbl_si['xcentroid'] - CENTER_X, tbl_si['ycentroid'] - CENTER_Y)
+dists_from_center_no = np.hypot(tbl_no['xcentroid'] - CENTER_X, tbl_no['ycentroid'] - CENTER_Y)
 
-# filtro mantenendo solo le stelle catalogate
-mask_cat = np.char.startswith(tbl_ref['Corrispondenza'].astype(str), 'SI')
-tbl_valid = tbl_ref[mask_cat]
+found_stars_si = []
+found_stars_no = []
 
-# calcolo le distanze dal centro
-dists_from_center = np.hypot(tbl_valid['xcentroid'] - CENTER_X, tbl_valid['ycentroid'] - CENTER_Y)
+print("\nCerco le stelle catalogate (Corrispondenza = SI) per la colonna di sinistra:")
+for region in regions_info_si:
+    mask_region = (dists_from_center_si >= region['r_min']) & (dists_from_center_si < region['r_max'])
+    candidates = tbl_si[mask_region]
 
-found_stars = []
-
-for region in regions_info:
-    # 1. applico il filtro spaziale (Anello)
-    mask_region = (dists_from_center >= region['r_min']) & (dists_from_center < region['r_max'])
-    candidates = tbl_valid[mask_region]
-
-    # 2. applico il filtro sulle ripetizioni usando la colonna già presente
     if len(candidates) > 0:
         mask_count = candidates['ripetizioni'] >= MIN_COUNT_RUN1
         candidates = candidates[mask_count]
 
     if len(candidates) > 0:
-        # trovo la stella più vicina al target di flusso
         diffs = np.abs(candidates['flusso_fisso_max_run'] - KRON_TARGET)
         idx_best = np.argmin(diffs)
         best_star = candidates[idx_best]
-
         region['star_id'] = best_star['ID']
         region['star_flux'] = best_star['flusso_fisso_max_run']
-        # salvo le coordinate per plottarle sull'immagine
-        region['coords'] = (best_star['xcentroid'], best_star['ycentroid'])
-        found_stars.append(region)
+        found_stars_si.append(region)
         print(f"  > {region['name']}: Trovata ID {best_star['ID']} (Flux: {best_star['flusso_fisso_max_run']:.1f})")
     else:
-        print(f"  > {region['name']}: NESSUNA stella trovata con count >= {MIN_COUNT_RUN1}.")
+        print(f"  > {region['name']}: NESSUNA stella SI trovata con count >= {MIN_COUNT_RUN1}.")
 
-if not found_stars:
-    print("Nessuna stella trovata in nessuna fascia. Esco.")
-    exit()
+MIN_COUNT_RUN1_NO = 25
+
+print("\nCerco i falsi positivi stabili (Corrispondenza = NO) per la colonna di destra:")
+for region in regions_info_no:
+    mask_region = (dists_from_center_no >= region['r_min']) & (dists_from_center_no < region['r_max'])
+    candidates = tbl_no[mask_region]
+
+    if len(candidates) > 0:
+        mask_count_no = candidates['ripetizioni'] >= MIN_COUNT_RUN1_NO
+        candidates = candidates[mask_count_no]
+
+    if len(candidates) > 0:
+        diffs = np.abs(candidates['flusso_fisso_max_run'] - KRON_TARGET)
+        idx_best = np.argmin(diffs)
+        best_star = candidates[idx_best]
+        region['star_id'] = best_star['ID']
+        region['star_flux'] = best_star['flusso_fisso_max_run']
+        found_stars_no.append(region)
+        print(f"  > {region['name']}: Trovata ID {best_star['ID']} (Flux: {best_star['flusso_fisso_max_run']:.1f})")
+    else:
+        print(f"  > {region['name']}: NESSUNA stella NO trovata con count >= {MIN_COUNT_RUN1_NO}.")
 
 # --- FASE 2: ESTRAZIONE CURVE DI LUCE ---
-stars_data = {reg['star_id']: {'times': [], 'flux': []} for reg in found_stars}
+# Unisco tutti gli ID trovati per estrarre i dati in un colpo solo
+tutti_gli_id = [reg['star_id'] for reg in found_stars_si] + [reg['star_id'] for reg in found_stars_no]
+stars_data = {sid: {'times': [], 'flux': []} for sid in tutti_gli_id if sid is not None}
+
 run_boundaries = []
 t0_global = None
 total_times = []
@@ -235,9 +257,7 @@ for run in run_list:
     file_paths = run_files_map.get(run, [])
     if not file_paths: continue
 
-    start_idx = len(total_times)
-
-    for n, p_csv in enumerate(file_paths):
+    for p_csv in file_paths:
         try:
             df = pd.read_csv(p_csv, comment='#')
             header = leggi_header_da_csv(p_csv)
@@ -245,7 +265,8 @@ for run in run_list:
             if t0_global is None: t0_global = t_curr
             t_rel = (t_curr - t0_global) / 1000.0
 
-            if len(stars_data[found_stars[0]['star_id']]['times']) == len(total_times):
+            # Aggiorno il tempo globale solo la prima volta
+            if len(stars_data[list(stars_data.keys())[0]]['times']) == len(total_times):
                 total_times.append(t_rel)
 
             for star_id in stars_data.keys():
@@ -261,20 +282,17 @@ for run in run_list:
     if total_times:
         run_boundaries.append((run, total_times[-1]))
 
-# --- FASE 3: PLOTTING COMPLESSO (Curve + Immagine) ---
+# --- FASE 3: PLOTTING COMPLESSO (Curve SI + Curve NO) ---
 
-# configuro il layout dinamico
-n_plots = len(found_stars)
+# configuro il layout dinamico con due colonne della stessa dimensione
+n_plots = max(len(found_stars_si), len(found_stars_no), 1)
 fig_height = max(8, n_plots * 2.5)
 fig = plt.figure(figsize=(18, fig_height))
-gs = GridSpec(n_plots, 2, width_ratios=[2, 1.2], figure=fig)
+gs = GridSpec(n_plots, 2, figure=fig)
 
-# --- COLONNA SINISTRA: Curve di Luce ---
-axs_curves = []
-
-for i, region in enumerate(found_stars):
-    ax = fig.add_subplot(gs[i, 0])
-    axs_curves.append(ax)
+# --- COLONNA SINISTRA: Curve di Luce Catalogate (SI) ---
+for i, region in enumerate(found_stars_si):
+    ax_left = fig.add_subplot(gs[i, 0])
 
     sid = region['star_id']
     data = stars_data[sid]
@@ -289,78 +307,76 @@ for i, region in enumerate(found_stars):
         perc_err = (std_val / mean_val) * 100
 
     col = region['color']
-    ax.plot(t_arr[mask], f_arr[mask], marker='o', linestyle='-', linewidth=0.8, markersize=3,
-            color=col, alpha=0.8, label=rf"Avg: {mean_val:.0f}, $\sigma$: {perc_err:.2f}%")
+    ax_left.plot(t_arr[mask], f_arr[mask], marker='o', linestyle='-', linewidth=0.8, markersize=3,
+                 color=col, alpha=0.8, label=rf"Avg: {mean_val:.0f}, $\sigma$: {perc_err:.2f}%")
 
-    ax.set_title(f"{region['name']} - ID: {sid}", fontsize=10, loc='left', fontweight='bold', color=col)
+    ax_left.set_title(f"SI - {region['name']} - ID: {sid}", fontsize=10, loc='left', fontweight='bold', color=col)
 
     # aggiungo le linee per delimitare le run
     for r_idx, (r_num, t_end) in enumerate(run_boundaries):
         if r_idx < len(run_boundaries):
-            ax.axvline(x=t_end, color='gray', linestyle='--', alpha=0.5)
-            y_min, y_max = ax.get_ylim()
-            ax.text(t_end, y_max, f"Fine Run {r_num}", rotation=90, ha='right', va='top', color='#333333', fontsize=7)
+            ax_left.axvline(x=t_end, color='gray', linestyle='--', alpha=0.5)
+            y_min, y_max = ax_left.get_ylim()
+            ax_left.text(t_end, y_max, f"Fine Run {r_num}", rotation=90, ha='right', va='top', color='#333333',
+                         fontsize=7)
 
-    ax.set_ylabel("Flusso Fisso")
-    ax.grid(True, linestyle=':', alpha=0.6)
-    ax.legend(loc='upper right', fontsize=8)
+    ax_left.set_ylabel("Flusso Fisso")
+    ax_left.grid(True, linestyle=':', alpha=0.6)
+    ax_left.legend(loc='upper right', fontsize=8)
 
-    if i < n_plots - 1:
-        ax.set_xticklabels([])
+    if i < len(found_stars_si) - 1:
+        ax_left.set_xticklabels([])
     else:
-        ax.set_xlabel("Tempo dall'inizio Run 1 (s)")
+        ax_left.set_xlabel("Tempo dall'inizio Run 1 (s)")
 
-# --- COLONNA DESTRA: Immagine FITS con Regioni ---
-ax_img = fig.add_subplot(gs[:, 1])
+# --- COLONNA DESTRA: Curve di Luce Falsi Positivi (NO) ---
+for i, region in enumerate(found_stars_no):
+    ax_right = fig.add_subplot(gs[i, 1])
 
-try:
-    if os.path.exists(path_fits_originale):
-        # cerco dinamicamente anche il path FITS in caso la directory originale sia cambiata
-        nome_fits_cercato = os.path.basename(path_fits_originale)
-        path_fits_dinamico = cerca_file_nel_progetto(BASE_DIR, nome_fits_cercato)
+    sid = region['star_id']
+    data = stars_data[sid]
+    t_arr = np.array(data['times'])
+    f_arr = np.array(data['flux'])
+    mask = (f_arr > 0) & (~np.isnan(f_arr))
 
-        if path_fits_dinamico:
-            with fits.open(str(path_fits_dinamico)) as hdu_list:
-                image_data = hdu_list[0].data
-                mean, median, std = sigma_clipped_stats(image_data, sigma=3.0)
-                data_sub = image_data - median
+    mean_val, perc_err = 0, 0
+    if np.sum(mask) > 0:
+        mean_val = np.mean(f_arr[mask])
+        std_val = np.std(f_arr[mask])
+        perc_err = (std_val / mean_val) * 100
 
-                im = ax_img.imshow(data_sub, cmap="gray_r", norm=LogNorm(), interpolation='nearest', origin='lower')
+    col = region['color']
+    ax_right.plot(t_arr[mask], f_arr[mask], marker='o', linestyle='-', linewidth=0.8, markersize=3,
+                  color=col, alpha=0.8, label=rf"Avg: {mean_val:.0f}, $\sigma$: {perc_err:.2f}%")
 
-                for i, region in enumerate(found_stars):
-                    col = region['color']
-                    r_in = region['r_min']
-                    r_out = region['r_max']
-                    width = r_out - r_in
+    ax_right.set_title(f"NO - {region['name']} - ID: {sid}", fontsize=10, loc='left', fontweight='bold', color=col)
 
-                    annulus = Wedge((CENTER_X, CENTER_Y), r_out, 0, 360, width=width,
-                                    facecolor=col, alpha=0.3, edgecolor=col, linewidth=1)
-                    ax_img.add_patch(annulus)
+    # aggiungo le linee per delimitare le run
+    for r_idx, (r_num, t_end) in enumerate(run_boundaries):
+        if r_idx < len(run_boundaries):
+            ax_right.axvline(x=t_end, color='gray', linestyle='--', alpha=0.5)
+            y_min, y_max = ax_right.get_ylim()
+            ax_right.text(t_end, y_max, f"Fine Run {r_num}", rotation=90, ha='right', va='top', color='#333333',
+                          fontsize=7)
 
-                    sx, sy = region['coords']
-                    circle_star = Circle((sx, sy), radius=40, edgecolor=col, facecolor='none', linewidth=2, linestyle='-')
-                    ax_img.add_patch(circle_star)
-                    ax_img.text(sx + 50, sy + 50, f"Star {i + 1}", color=col, fontsize=9, fontweight='bold')
+    ax_right.set_ylabel("Flusso Fisso")
+    ax_right.grid(True, linestyle=':', alpha=0.6)
+    ax_right.legend(loc='upper right', fontsize=8)
 
-                ax_img.plot(CENTER_X, CENTER_Y, 'rx', markersize=10)
-
-                ax_img.set_title(
-                    f"Zone Monitoraggio ({NUM_FASCE} anelli costanti)\nsull'immagine {INDICE_IMMAGINE_RIFERIMENTO}, run {run_list[0]}",
-                    fontsize=12)
-                ax_img.set_xlim(0, W)
-                ax_img.set_ylim(0, H)
-        else:
-            ax_img.text(0.5, 0.5, f"File FITS '{nome_fits_cercato}' non trovato", ha='center', va='center')
+    if i < len(found_stars_no) - 1:
+        ax_right.set_xticklabels([])
     else:
-        ax_img.text(0.5, 0.5, "Percorso FITS originale mancante", ha='center', va='center')
-
-except Exception as e:
-    ax_img.text(0.5, 0.5, f"Errore FITS: {e}", ha='center', va='center')
+        ax_right.set_xlabel("Tempo dall'inizio Run 1 (s)")
 
 fig.suptitle(f'Analisi Stabilità Flusso per {NUM_FASCE} Anelli (kron di riferimento: {KRON_TARGET})',
              fontsize=16, y=0.98)
 
 plt.tight_layout(rect=[0, 0, 1, 0.97])
 plt.subplots_adjust(wspace=0.15, hspace=0.15)
-plt.savefig()
+
+# salvo la figura impostando il nome dinamicamente in base al kron di riferimento
+nome_figura = f"andamento_kron_tempo_fasce_{KRON_TARGET}_run_{RUN_REF+1}.png"
+plt.savefig(nome_figura, dpi=300, bbox_inches='tight')
+print(f"\nSalvataggio completato: {nome_figura}")
+
 plt.show()

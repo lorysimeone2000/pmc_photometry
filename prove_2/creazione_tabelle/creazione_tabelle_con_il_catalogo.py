@@ -460,8 +460,8 @@ for percorso_file_fits in file_list:
         sigma_totale_deg = np.sqrt(sigma_hip_deg ** 2 + sigma_vizier_deg ** 2)
 
         exclusion_radii_deg = 3.0 * sigma_totale_deg
-        min_radius_deg = 1.0 / 3600.0
-        exclusion_radii_deg = np.maximum(exclusion_radii_deg, min_radius_deg)
+        max_radius_deg = 1.2 / 3600.0
+        exclusion_radii_deg = np.maximum(exclusion_radii_deg, max_radius_deg)
 
         # creo l'oggetto SkyCoord globale per Hipparcos
         coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],

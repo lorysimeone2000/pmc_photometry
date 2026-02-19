@@ -26,10 +26,13 @@ from skyfield.api import load, wgs84
 from astropy.time import Time
 import requests
 from datetime import timedelta
+from astropy.io.fits.verify import VerifyWarning
+import traceback
 
 # --- GESTIONE WARNING ---
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', message='Units from inserted quantities will be ignored.')
+warnings.filterwarnings('ignore', category=VerifyWarning)
 
 # salvo il tempo di inizio globale
 start_time_global = time.time()
@@ -94,10 +97,10 @@ def scarica_tle_storici(tempo_astropy, username, password, cartella_output):
             return None
 
 
-# 1. Inizializzo Skyfield
+# 1. inizializzo Skyfield
 ts = load.timescale()
 
-# 2. Imposto le coordinate del mio telescopio
+# 2. imposto le coordinate del mio telescopio
 osservatorio = wgs84.latlon(28.3000, -16.505830555555555, elevation_m=2370)
 
 
@@ -108,11 +111,9 @@ osservatorio = wgs84.latlon(28.3000, -16.505830555555555, elevation_m=2370)
 def trova_cartella_base(nome_target="pmc_photometry"):
     # risalgo la directory partendo dalla posizione dello script fino a trovare la cartella target
     path_corrente = Path(__file__).resolve()
-
     for parent in [path_corrente] + list(path_corrente.parents):
         if parent.name == nome_target:
             return parent
-
     print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
     return path_corrente.parent
 
@@ -129,10 +130,8 @@ def cerca_file_nel_progetto(base_dir, nome_file_esatto):
 def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
     # cerco una CARTELLA ricorsivamente in tutte le sottocartelle
     cartelle_trovate = [p for p in base_dir.rglob(nome_cartella_esatto) if p.is_dir()]
-
     if not cartelle_trovate:
         return None
-
     cartelle_trovate.sort(key=lambda p: len(str(p)))
     return cartelle_trovate[0]
 
@@ -186,6 +185,25 @@ def leggi_header_da_csv(filename):
     return header_dict
 
 
+def leggi_file_parametri(percorso):
+    # leggo i parametri dell'image segmentation per fissarli
+    parametri = {}
+    if not percorso or not os.path.exists(percorso): return {}
+    with open(percorso, 'r') as file:
+        next(file, None)  # salto l'intestazione
+        for riga in file:
+            riga = riga.split('#')[0].strip()
+            if riga:
+                parts = riga.split()
+                if len(parts) >= 2:
+                    try:
+                        valore = float(parts[1]) if '.' in parts[1] else int(parts[1])
+                        parametri[parts[0]] = valore
+                    except ValueError:
+                        pass
+    return parametri
+
+
 def elabora_file_fits(percorso_file):
     # memmap=False per mia sicurezza su file network/condivisi
     with fits.open(percorso_file, memmap=False) as hdu:
@@ -204,8 +222,8 @@ def esegui_segmentazione_dinamica(data, fwhm, size, params):
     except Exception:
         return None
 
-    finder = SourceFinder(npixels=params['pixel'], progress_bar=False)
-    segment_map = finder(convolved_data, params['threshold_assoluta'])
+    finder = SourceFinder(npixels=int(params.get('pixel', 3)), progress_bar=False)
+    segment_map = finder(convolved_data, params.get('threshold_assoluta', 3.61))
 
     if segment_map is None: return None
 
@@ -213,8 +231,8 @@ def esegui_segmentazione_dinamica(data, fwhm, size, params):
     tbl = cat.to_table()
 
     # filtro rapido vettorializzato che applico
-    soglia_ass = params['soglia_filtro_ass']
-    soglia_rel = params['soglia_filtro_rel']
+    soglia_ass = params.get('soglia_filtro_ass', 2.5)
+    soglia_rel = params.get('soglia_filtro_rel', 0.05)
     bordo = 7
     ny, nx = data.shape
 
@@ -302,7 +320,7 @@ def unione_tabelle_ottimizzata(tbl_seg, tbl_cat, wcs, coords_catalogate, soglia_
     # eseguo il matching e restituisco la tabella unita e il numero di stelle UNICHE
     coords_trovate = wcs.pixel_to_world(tbl_seg['xcentroid'], tbl_seg['ycentroid'])
 
-    # --- MATCHING CON SEARCH_AROUND_SKY ---
+    # --- MATCHING CON SEARCH_AROUND_SKY BASATO SULLA SOGLIA DELLO SCAN ---
     idx_trovate, idx_catalogate, d2d, _ = coords_catalogate.search_around_sky(coords_trovate, soglia_correlazione)
 
     df_catalogate = tbl_cat.to_pandas()
@@ -371,40 +389,30 @@ def unione_tabelle_ottimizzata(tbl_seg, tbl_cat, wcs, coords_catalogate, soglia_
     tbl_unite = Table.from_pandas(df_finale)
 
     # --- CONTEGGIO STELLE BRILLANTI TROVATE ---
-
-    # 1. identifico gli ID trovati
     mask_si = np.char.startswith(tbl_unite['Corrispondenza'].astype(str), 'SI')
     ids_trovati_e_correlati = set(tbl_unite[mask_si]['ID'])
 
-    # 2. filtro il catalogo per le brillanti
     mask_bright_cat = tbl_cat['Mag'] < mag_limit
     stelle_catalogo_brillanti = tbl_cat[mask_bright_cat]
 
-    # 3. conto quante brillanti sono state trovate (intersezione)
-    num_brillanti = 0
-    for star_id in stelle_catalogo_brillanti['ID']:
-        if star_id in ids_trovati_e_correlati:
-            num_brillanti += 1
+    num_brillanti = sum(1 for star_id in stelle_catalogo_brillanti['ID'] if star_id in ids_trovati_e_correlati)
 
-    # restituisco coordinate per facilitare il calcolo FP
     return tbl_unite, num_brillanti
 
 
-# --- CONFIGURAZIONE GLOBALE SCAN ---
-PARAMETRI_FISSI = {
-    'threshold_assoluta': 3.61,
-    'pixel': 3,
-    'soglia_filtro_ass': 2.5,
-    'soglia_filtro_rel': 0.05
-}
+# --- CONFIGURAZIONE SCAN DEL RAGGIO DI CORRELAZIONE ---
 
-FWHM_RANGE = np.linspace(2.2, 3.0, 150)
-SIZES_TO_TEST = [3, 5]
-soglia_correlazione = 0.003349 * u.deg
 MAG_LIMIT_ANALYSIS = 10.0  # soglia per definire le stelle "importanti" (Stelle Perse < 10)
+MERGE_CATALOG_RADIUS = 1.1 * u.arcsec  # Fisso il raggio di merge Vizier/Hipparcos
+
+# Definisco l'array per lo scan del parametro di correlazione
+start_corr_deg = 0.003349 / 2.0
+end_corr_deg = 36 / 3600 # converto 1.5 arcosecondi in gradi
+CORRELATION_RADII = np.linspace(start_corr_deg, end_corr_deg, 3000) * u.deg
 
 
-def analizza_singola_run(run_id, satelliti_attivi):
+def analizza_singola_run(run_id, satelliti_attivi, parametri_seg, coords_hipparco_global,
+                         tbl_catalogo_hipparco_globale):
     print(f"\n{'=' * 60}")
     print(f"AVVIO ANALISI PER RUN {run_id}")
     print(f"{'=' * 60}")
@@ -478,28 +486,20 @@ def analizza_singola_run(run_id, satelliti_attivi):
 
     tbl_hipparco_run_subset = tbl_catalogo_hipparco_globale[mask_hip_fov]
     coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
-    exclusion_radii_run_subset = [mask_hip_fov]
 
-    # --- FILTRAGGIO COMPETITIVO A SINGOLA FASE ---
-    print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
+    # --- FILTRAGGIO COMPETITIVO A SINGOLA FASE (CON SOGLIA FISSA A 1.1") ---
+    print(f"Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos (Soglia: {MERGE_CATALOG_RADIUS})...")
     coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
                              dec=tbl_riquadro_esterno_vizier['DEJ2000'],
                              unit=u.deg)
 
-    max_threshold_deg = np.max(exclusion_radii_run_subset) if len(exclusion_radii_run_subset) > 0 else 0
-    seplimit = max_threshold_deg * u.deg
-
-    idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
+    idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, MERGE_CATALOG_RADIUS)
 
     # aggiramento indice inverso di astropy
     if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
-        idx_viz_1, idx_hip_1 = idx_A, idx_B
+        idx_viz_valid, idx_hip_valid = idx_A, idx_B
     else:
-        idx_hip_1, idx_viz_1 = idx_A, idx_B
-
-    mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
-    idx_hip_valid = idx_hip_1[mask_threshold]
-    idx_viz_valid = idx_viz_1[mask_threshold]
+        idx_hip_valid, idx_viz_valid = idx_A, idx_B
 
     mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
     mask_keep_vizier = np.ones(len(tbl_riquadro_esterno_vizier), dtype=bool)
@@ -533,18 +533,18 @@ def analizza_singola_run(run_id, satelliti_attivi):
     tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
     tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[tbl_riquadro_esterno_vizier_CLEAN['gmag'] < 15]
 
-    # --- RESET STRUTTURE DATI PER LO SCAN DEL PARAMETRO ---
-    raw_corr = {size: [[] for _ in range(len(FWHM_RANGE))] for size in SIZES_TO_TEST}
-    raw_fp = {size: [[] for _ in range(len(FWHM_RANGE))] for size in SIZES_TO_TEST}
-    fp_coords_storage = {size: [[] for _ in range(len(FWHM_RANGE))] for size in SIZES_TO_TEST}
+    # --- RESET STRUTTURE DATI PER LO SCAN DEL RAGGIO DI CORRELAZIONE ---
+    raw_corr = [[] for _ in range(len(CORRELATION_RADII))]
+    raw_fp = [[] for _ in range(len(CORRELATION_RADII))]
+    fp_coords_storage = [[] for _ in range(len(CORRELATION_RADII))]
 
     immagini_processate_correttamente = 0
     totale_immagini = len(file_csv_cat)
-    total_steps = totale_immagini * len(SIZES_TO_TEST) * len(FWHM_RANGE)
+    total_steps = totale_immagini * len(CORRELATION_RADII)
 
     print(f"\nAnalisi focalizzata su stelle perse con Mag < {MAG_LIMIT_ANALYSIS}")
     print(f"Totale immagini: {totale_immagini}")
-    print(f"Totale iterazioni previste: {total_steps}")
+    print(f"Totale iterazioni previste (scan sui raggi): {total_steps}")
     print("-" * 60)
 
     pbar = tqdm(total=total_steps, desc=f"Run {run_id} Progress", unit="step")
@@ -575,7 +575,7 @@ def analizza_singola_run(run_id, satelliti_attivi):
             if os.path.exists(percorso_fits_str):
                 data_sub, wcs, median_val = elabora_file_fits(percorso_fits_str)
 
-                # Sostituisco la lettura statica dal file con la generazione in tempo reale del mio catalogo pulito
+                # genero il catalogo unito dinamicamente per l'immagine corrente
                 tbl_catalogate, coords_catalogate = genera_tabella_catalogo_immagine(
                     wcs, data_sub.shape, 7, tbl_vizier_cut, tbl_hipparco_run_clean
                 )
@@ -614,198 +614,192 @@ def analizza_singola_run(run_id, satelliti_attivi):
                 if ra_sat_list:
                     catalogo_satelliti_img = SkyCoord(ra=ra_sat_list * u.deg, dec=dec_sat_list * u.deg)
 
-            # --- CICLO SUI PARAMETRI (INTERNO ALL'IMMAGINE) ---
-            for size_val in SIZES_TO_TEST:
-                for i_fwhm, fwhm_val in enumerate(FWHM_RANGE):
+            # --- ESECUZIONE IMAGE SEGMENTATION (UNA SOLA VOLTA PER IMMAGINE CON PARAMETRI FISSI) ---
+            fwhm_fisso = parametri_seg.get('fwhm', 3.0)
+            size_fisso = int(parametri_seg.get('size', 5))
 
-                    tbl_trovate = esegui_segmentazione_dinamica(data_sub, fwhm=fwhm_val, size=size_val,
-                                                                params=PARAMETRI_FISSI)
+            tbl_trovate = esegui_segmentazione_dinamica(data_sub, fwhm=fwhm_fisso, size=size_fisso,
+                                                        params=parametri_seg)
 
-                    val_perse = num_target_stars
-                    val_fp_raw = 0
+            if tbl_trovate is not None and len(tbl_trovate) > 0:
+                tbl_trovate = filtra_vicini_saturi(tbl_trovate, median_bg=median_val)
+            else:
+                tbl_trovate = None
 
-                    current_fp_ra = np.array([])
-                    current_fp_dec = np.array([])
+            # --- CICLO SULLO SCAN DEL RAGGIO DI CORRELAZIONE ---
+            for i_corr, soglia_correlazione_val in enumerate(CORRELATION_RADII):
 
-                    if tbl_trovate is not None and len(tbl_trovate) > 0:
-                        tbl_trovate = filtra_vicini_saturi(tbl_trovate, median_bg=median_val)
+                val_perse = num_target_stars
+                val_fp_raw = 0
+                current_fp_ra = np.array([])
+                current_fp_dec = np.array([])
 
-                        # eseguo il merge spaziale
-                        tbl_matched, num_found_bright = unione_tabelle_ottimizzata(
-                            tbl_trovate,
-                            tbl_catalogate,
-                            wcs,
-                            coords_catalogate,
-                            soglia_correlazione,
-                            mag_limit=MAG_LIMIT_ANALYSIS
-                        )
+                if tbl_trovate is not None and len(tbl_trovate) > 0:
+                    # eseguo il merge spaziale per la soglia corrente
+                    tbl_matched, num_found_bright = unione_tabelle_ottimizzata(
+                        tbl_trovate,
+                        tbl_catalogate,
+                        wcs,
+                        coords_catalogate,
+                        soglia_correlazione_val,
+                        mag_limit=MAG_LIMIT_ANALYSIS
+                    )
 
-                        val_perse = max(0, num_target_stars - num_found_bright)
+                    val_perse = max(0, num_target_stars - num_found_bright)
 
-                        # identificazione e filtro FP
-                        mask_no = tbl_matched['Corrispondenza'] == 'NO'
-                        tbl_fp = tbl_matched[mask_no]
+                    # identificazione e filtro FP
+                    mask_no = tbl_matched['Corrispondenza'] == 'NO'
+                    tbl_fp = tbl_matched[mask_no]
 
-                        if len(tbl_fp) > 0:
-                            # trasformo in coordinate solo le stelle non catalogate
-                            coords_fp = wcs.pixel_to_world(tbl_fp['xcentroid'], tbl_fp['ycentroid'])
+                    if len(tbl_fp) > 0:
+                        # trasformo in coordinate solo le stelle non catalogate
+                        coords_fp = wcs.pixel_to_world(tbl_fp['xcentroid'], tbl_fp['ycentroid'])
 
-                            # applico il filtro satelliti
-                            if catalogo_satelliti_img is not None:
-                                idx_sat, d2d_sat, _ = coords_fp.match_to_catalog_sky(catalogo_satelliti_img)
-                                tolleranza_satellite = 3 / 60 * u.deg
-                                mask_is_satellite = d2d_sat < tolleranza_satellite
+                        # applico il filtro satelliti
+                        if catalogo_satelliti_img is not None:
+                            idx_sat, d2d_sat, _ = coords_fp.match_to_catalog_sky(catalogo_satelliti_img)
+                            tolleranza_satellite = 3 / 60 * u.deg
+                            mask_is_satellite = d2d_sat < tolleranza_satellite
 
-                                # escludo i falsi positivi causati dai satelliti
-                                coords_fp = coords_fp[~mask_is_satellite]
+                            # escludo i falsi positivi causati dai satelliti
+                            coords_fp = coords_fp[~mask_is_satellite]
 
-                            val_fp_raw = len(coords_fp)
-                            if val_fp_raw > 0:
-                                current_fp_ra = coords_fp.ra.deg
-                                current_fp_dec = coords_fp.dec.deg
+                        val_fp_raw = len(coords_fp)
+                        if val_fp_raw > 0:
+                            current_fp_ra = coords_fp.ra.deg
+                            current_fp_dec = coords_fp.dec.deg
 
-                    # salvo i risultati
-                    raw_corr[size_val][i_fwhm].append(val_perse)
-                    raw_fp[size_val][i_fwhm].append(val_fp_raw)
-                    fp_coords_storage[size_val][i_fwhm].append((current_fp_ra, current_fp_dec))
+                # salvo i risultati per questo raggio di correlazione
+                raw_corr[i_corr].append(val_perse)
+                raw_fp[i_corr].append(val_fp_raw)
+                fp_coords_storage[i_corr].append((current_fp_ra, current_fp_dec))
 
-                    # aggiorno la barra
-                    pbar.update(1)
+                # aggiorno la barra
+                pbar.update(1)
 
             pbar.set_postfix_str(f"Img {idx_img + 1}/{totale_immagini}")
 
         else:
-            step_saltati = len(SIZES_TO_TEST) * len(FWHM_RANGE)
+            step_saltati = len(CORRELATION_RADII)
             pbar.update(step_saltati)
             pbar.set_postfix_str(f"Img {idx_img + 1} SKIPPED (File not found)")
 
     pbar.close()
 
-    print(f"\nRun {run_id} terminata (Scan Immagini). Avvio Filtraggio Transienti...")
+    print(f"\nRun {run_id} terminata (Scan Raggio Correlazione). Avvio Filtraggio Transienti...")
 
     # =========================================================================
     # --- FASE DI POST-PROCESSING: FILTRAGGIO Falsi Positivi ---
     # =========================================================================
 
     if immagini_processate_correttamente > 0:
-        for size_val in SIZES_TO_TEST:
-            for i_fwhm in range(len(FWHM_RANGE)):
+        for i_corr in range(len(CORRELATION_RADII)):
 
-                list_of_img_coords = fp_coords_storage[size_val][i_fwhm]
+            list_of_img_coords = fp_coords_storage[i_corr]
 
-                # appiattisco tutto per il cross-match globale
-                all_ra = []
-                all_dec = []
-                map_idx_to_img = {}
+            # appiattisco tutto per il cross-match globale
+            all_ra = []
+            all_dec = []
+            map_idx_to_img = {}
 
-                global_counter = 0
-                for img_idx, (ra_arr, dec_arr) in enumerate(list_of_img_coords):
-                    if len(ra_arr) > 0:
-                        all_ra.extend(ra_arr)
-                        all_dec.extend(dec_arr)
-                        for _ in range(len(ra_arr)):
-                            map_idx_to_img[global_counter] = img_idx
-                            global_counter += 1
+            global_counter = 0
+            for img_idx, (ra_arr, dec_arr) in enumerate(list_of_img_coords):
+                if len(ra_arr) > 0:
+                    all_ra.extend(ra_arr)
+                    all_dec.extend(dec_arr)
+                    for _ in range(len(ra_arr)):
+                        map_idx_to_img[global_counter] = img_idx
+                        global_counter += 1
 
-                filtered_fp_counts = [0] * len(list_of_img_coords)
+            filtered_fp_counts = [0] * len(list_of_img_coords)
 
-                if len(all_ra) > 0:
-                    c_tot = SkyCoord(ra=all_ra * u.deg, dec=all_dec * u.deg)
-                    dist_limit = 0.0011 * u.deg
+            if len(all_ra) > 0:
+                c_tot = SkyCoord(ra=all_ra * u.deg, dec=all_dec * u.deg)
+                dist_limit = 0.0011 * u.deg
 
-                    idx1, idx2, _, _ = c_tot.search_around_sky(c_tot, dist_limit)
+                idx1, idx2, _, _ = c_tot.search_around_sky(c_tot, dist_limit)
 
-                    indices_with_valid_neighbor = set()
+                indices_with_valid_neighbor = set()
 
-                    for k in range(len(idx1)):
-                        i1 = idx1[k]
-                        i2 = idx2[k]
-                        if i1 == i2: continue
+                for k in range(len(idx1)):
+                    i1 = idx1[k]
+                    i2 = idx2[k]
+                    if i1 == i2: continue
 
-                        # verifico se il vicino è in un'immagine diversa
-                        img1 = map_idx_to_img[i1]
-                        img2 = map_idx_to_img[i2]
+                    # verifico se il vicino è in un'immagine diversa
+                    img1 = map_idx_to_img[i1]
+                    img2 = map_idx_to_img[i2]
 
-                        if img1 != img2:
-                            indices_with_valid_neighbor.add(i1)
+                    if img1 != img2:
+                        indices_with_valid_neighbor.add(i1)
 
-                    for idx_globale in indices_with_valid_neighbor:
-                        img_origin = map_idx_to_img[idx_globale]
-                        filtered_fp_counts[img_origin] += 1
+                for idx_globale in indices_with_valid_neighbor:
+                    img_origin = map_idx_to_img[idx_globale]
+                    filtered_fp_counts[img_origin] += 1
 
-                # sostituisco i conti raw con quelli filtrati
-                raw_fp[size_val][i_fwhm] = filtered_fp_counts
+            # sostituisco i conti raw con quelli filtrati
+            raw_fp[i_corr] = filtered_fp_counts
 
     print(f"Filtraggio Transienti completato.")
     print(f"Immagini valide: {immagini_processate_correttamente}/{totale_immagini}")
 
     # --- CALCOLO MEDIA E DEVIAZIONE STANDARD ---
-    results_mean_corr = {}
-    results_std_corr = {}
-    results_mean_fp = {}
-    results_std_fp = {}
+    results_mean_corr = []
+    results_std_corr = []
+    results_mean_fp = []
+    results_std_fp = []
 
     if immagini_processate_correttamente > 0:
-        for size_val in SIZES_TO_TEST:
-            mean_c = []
-            std_c = []
-            mean_f = []
-            std_f = []
+        for i_corr in range(len(CORRELATION_RADII)):
+            vals_c = raw_corr[i_corr]
+            vals_f = raw_fp[i_corr]
 
-            for i_fwhm in range(len(FWHM_RANGE)):
-                vals_c = raw_corr[size_val][i_fwhm]
-                vals_f = raw_fp[size_val][i_fwhm]
+            results_mean_corr.append(np.mean(vals_c))
+            results_std_corr.append(np.std(vals_c))
 
-                mean_c.append(np.mean(vals_c))
-                std_c.append(np.std(vals_c))
-
-                mean_f.append(np.mean(vals_f))
-                std_f.append(np.std(vals_f))
-
-            results_mean_corr[size_val] = np.array(mean_c)
-            results_std_corr[size_val] = np.array(std_c)
-            results_mean_fp[size_val] = np.array(mean_f)
-            results_std_fp[size_val] = np.array(std_f)
+            results_mean_fp.append(np.mean(vals_f))
+            results_std_fp.append(np.std(vals_f))
     else:
         print(f"ERRORE: Nessuna immagine elaborata correttamente per la Run {run_id}.")
         return
 
     # --- CREAZIONE DATAFRAME COMPLETO ---
-    data_dict = {'FWHM': FWHM_RANGE}
+    radii_arcsec = CORRELATION_RADII.to(u.arcsec).value
 
-    for size_val in SIZES_TO_TEST:
-        data_dict[f'Perse_MagLT10_Size{size_val}_Mean'] = results_mean_corr[size_val]
-        data_dict[f'Perse_MagLT10_Size{size_val}_Std'] = results_std_corr[size_val]
-        data_dict[f'FP_Size{size_val}_Mean'] = results_mean_fp[size_val]
-        data_dict[f'FP_Size{size_val}_Std'] = results_std_fp[size_val]
+    data_dict = {
+        'Raggio_Corr_arcsec': radii_arcsec,
+        'Perse_MagLT10_Mean': results_mean_corr,
+        'Perse_MagLT10_Std': results_std_corr,
+        'FP_Mean': results_mean_fp,
+        'FP_Std': results_std_fp
+    }
 
     df_risultati = pd.DataFrame(data_dict)
 
-    csv_filename = f'risultati_scan_run_{run_id}_perse_mag_lt_10.csv'
+    csv_filename = f'risultati_scan_correlazione_run_{run_id}.csv'
     df_risultati.to_csv(csv_filename, index=False)
     print(f"Risultati statistici salvati in: {csv_filename}")
 
     # --- PLOTTING FINALE ---
     plt.figure(figsize=(12, 8))
-    colors_corr = {3: 'red', 5: 'blue'}
-    colors_fp = {3: 'darkred', 5: 'darkblue'}
 
-    for size_val in SIZES_TO_TEST:
-        plt.plot(FWHM_RANGE, results_mean_corr[size_val],
-                 color=colors_corr[size_val], linestyle='-', linewidth=2,
-                 label=f'Media Stelle Perse (Mag < 10) - Size {size_val}')
+    plt.plot(radii_arcsec, results_mean_corr,
+             color='red', linestyle='-', linewidth=2,
+             label='Media Stelle Perse (Mag < 10)')
 
-        plt.plot(FWHM_RANGE, results_mean_fp[size_val],
-                 color=colors_fp[size_val], linestyle='--', linewidth=2,
-                 label=f'Media Falsi Positivi (FP) - Size {size_val}')
+    plt.plot(radii_arcsec, results_mean_fp,
+             color='darkblue', linestyle='--', linewidth=2,
+             label='Media Falsi Positivi (FP)')
 
     plt.grid(True, which="both", linestyle='--', alpha=0.6)
-    plt.xlabel('FWHM')
+    plt.xlabel('Raggio di Correlazione (arcosecondi)')
     plt.ylabel('Numero MEDIO per immagine (Log)')
     plt.yscale('log')
-    plt.title(f'Scan Parametri (Falsi Positivi vs Stelle Perse < Mag 10): Run {run_id}')
+    plt.title(f'Scan Raggio di Correlazione (Falsi Positivi vs Stelle Perse < Mag 10): Run {run_id}')
 
+    # Inverto l'asse X in modo che l'aumento della selettività (raggio minore) si legga da sinistra a destra
     ax = plt.gca()
+    ax.invert_xaxis()
     ax.yaxis.set_minor_locator(ticker.LogLocator(base=10.0, subs=np.arange(2, 10), numticks=100))
     ax.yaxis.set_minor_formatter(ticker.ScalarFormatter())
     ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
@@ -814,13 +808,18 @@ def analizza_singola_run(run_id, satelliti_attivi):
     plt.legend()
     plt.tight_layout()
 
-    plt.savefig(f'scan_parametri_run_{run_id}_perse_mag_lt_10.png', dpi=300)
+    plt.savefig(f'scan_correlazione_run_{run_id}.png', dpi=300)
     plt.close()
 
 
 # --- BLOCCO DI ESECUZIONE GLOBALE ---
 if __name__ == "__main__":
     runs_to_process = [1, 2, 3]
+
+    # Carico i parametri di segmentazione che rimarranno FISSI per tutta l'esecuzione
+    file_parametri_seg = cerca_file_nel_progetto(BASE_DIR, 'parametri_image_segmentation.txt')
+    parametri_caricati = leggi_file_parametri(str(file_parametri_seg)) if file_parametri_seg else {}
+    print("\nParametri Image Segmentation caricati e fissati:", parametri_caricati)
 
     # =================================================================
     # PRE-CALCOLO HIPPARCOS GLOBALE (UNA SOLA VOLTA)
@@ -830,22 +829,7 @@ if __name__ == "__main__":
     with fits.open(file_hipparco) as hdu_list_hipparco:
         tbl_catalogo_hipparco_globale = Table(hdu_list_hipparco[1].data)
 
-    # calcolo errori propagati al J2000
-    dt = 2000.0 - 1991.25
-    sigma_ra_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco_globale['e_RAICRS']) ** 2 + (
-            dt * np.nan_to_num(tbl_catalogo_hipparco_globale['e_pmRA'])) ** 2) / 3600000.0
-    sigma_dec_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco_globale['e_DEICRS']) ** 2 + (
-            dt * np.nan_to_num(tbl_catalogo_hipparco_globale['e_pmDE'])) ** 2) / 3600000.0
-
-    sigma_hip_deg = np.sqrt(sigma_ra_deg ** 2 + sigma_dec_deg ** 2)
-    sigma_vizier_deg = 0.1 / 3600.0
-    sigma_totale_deg = np.sqrt(sigma_hip_deg ** 2 + sigma_vizier_deg ** 2)
-
-    # 3-SIGMA
-    exclusion_radii_deg_ = 3.0 * sigma_totale_deg
-    exclusion_radii_deg = np.full(len(exclusion_radii_deg_), 1.1 / 3600.0)
-
-    # pre-calcolo SkyCoord globale
+    # pre-calcolo SkyCoord globale per Hipparcos
     coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco_globale['_RAJ2000'],
                                       dec=tbl_catalogo_hipparco_globale['_DEJ2000'],
                                       unit=u.deg)
@@ -912,7 +896,8 @@ if __name__ == "__main__":
 
     # faccio partire l'elaborazione ciclica
     for r in runs_to_process:
-        analizza_singola_run(r, satelliti_attivi_globali)
+        analizza_singola_run(r, satelliti_attivi_globali, parametri_caricati, coords_hipparco_global,
+                             tbl_catalogo_hipparco_globale)
 
     print(f"\n\n{'=' * 60}")
     print(f"TUTTE LE RUN COMPLETATE.")

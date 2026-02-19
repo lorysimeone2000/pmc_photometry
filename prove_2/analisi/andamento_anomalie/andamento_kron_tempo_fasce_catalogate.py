@@ -6,11 +6,14 @@ from astropy.table import Table
 import warnings
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
-from astropy.wcs import FITSFixedWarning
+from astropy.wcs import FITSFixedWarning, WCS
 from matplotlib.colors import LogNorm
 from matplotlib.patches import Circle, Wedge
 from matplotlib.gridspec import GridSpec
 from pathlib import Path
+from astropy.wcs.utils import proj_plane_pixel_scales
+from astropy.visualization import simple_norm
+import astropy.units as u
 
 # sopprimo il warning FITSFixedWarning
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
@@ -82,6 +85,76 @@ def leggi_header_da_csv(filename):
     return header_dict
 
 
+def salva_cutout(region, data_sub, r_corr_px, tbl_ref, img_idx, run_id):
+    # estraggo i dati della stella
+    xc, yc = region['coords']
+    area = region['area']
+    star_id = region['star_id']
+    media_flusso = region['media_flusso_fisso_max_run']
+    corr = region['corrispondenza']
+
+    # calcolo il lato del riquadro basato sulla radice dell'area
+    side = np.sqrt(area) * 1.1
+    half_side = side / 2.0
+
+    # imposto i limiti spaziali del cutout
+    x_min = int(np.floor(xc - half_side))
+    x_max = int(np.ceil(xc + half_side))
+    y_min = int(np.floor(yc - half_side))
+    y_max = int(np.ceil(yc + half_side))
+
+    # prevengo sforamenti rispetto ai bordi dell'immagine reale
+    ny, nx = data_sub.shape
+    x_min = max(0, x_min)
+    x_max = min(nx, x_max)
+    y_min = max(0, y_min)
+    y_max = min(ny, y_max)
+
+    cutout = data_sub[y_min:y_max, x_min:x_max]
+
+    fig, ax = plt.subplots(figsize=(5, 5))
+    if cutout.size > 0:
+        norm = simple_norm(cutout, 'log', percent=99.9)
+        ax.imshow(cutout, cmap='gray_r', origin='lower', extent=[x_min, x_max, y_min, y_max], norm=norm)
+
+    # identifico le stelle catalogate presenti in tutto il file CSV
+    mask_si = np.char.startswith(tbl_ref['Corrispondenza'].astype(str), 'SI')
+    tbl_cat = tbl_ref[mask_si]
+
+    # le filtro tenendo solo quelle che cadono visivamente dentro il mio riquadro
+    mask_in_box = (tbl_cat['xcentroid'] >= x_min) & (tbl_cat['xcentroid'] <= x_max) & \
+                  (tbl_cat['ycentroid'] >= y_min) & (tbl_cat['ycentroid'] <= y_max)
+    tbl_cat_box = tbl_cat[mask_in_box]
+
+    # estraggo la magnitudine minima (valore più brillante) per fissare il limite inferiore della colorbar
+    min_mag = np.nanmin(tbl_ref[mask_si]['Mag']) if len(tbl_ref[mask_si]) > 0 else 0
+
+    if len(tbl_cat_box) > 0:
+        # disegno i pallini con dimensione 4 e associo la colorbar invertita
+        sc = ax.scatter(tbl_cat_box['xcentroid'], tbl_cat_box['ycentroid'], c=tbl_cat_box['Mag'],
+                        cmap='viridis_r', vmin=min_mag, vmax=15, s=4, zorder=5)
+        cbar = plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label('Mag')
+
+    # traccio il cerchio di correlazione in giallo acceso
+    circle = Circle((xc, yc), r_corr_px, edgecolor='#ffff00', facecolor='none', linewidth=1.5, zorder=10)
+    ax.add_patch(circle)
+
+    # se è un falso positivo, aggiungo una vistosa croce rossa sul centroide
+    if str(corr) == 'NO':
+        ax.plot(xc, yc, marker='+', color='red', markersize=15, markeredgewidth=2, zorder=15)
+
+    ax.set_title(f"Oggetto {star_id}\nkron medio {media_flusso}")
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+
+    # strutturo il nome del file esattamente come richiesto
+    nome_figura = f"{star_id}_immagine{img_idx}_run_{run_id}.png"
+    plt.savefig(nome_figura, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  > Salvata immagine cutout: {nome_figura}")
+
+
 # --- impostazione dinamica dei percorsi ---
 
 # imposto la cartella base dinamicamente
@@ -125,7 +198,7 @@ PERC_RIDUZIONE = 1 / NUM_FASCE  # imposto il 5% del RAGGIO TOTALE come spessore 
 # genero i colori dinamici (uno per fascia)
 colors_map = plt.cm.jet(np.linspace(0, 1, NUM_FASCE))
 
-# Creo due liste separate per le regioni di sinistra (SI) e destra (NO)
+# creo due liste separate per le regioni di sinistra (SI) e destra (NO)
 regions_info_si = []
 regions_info_no = []
 
@@ -145,7 +218,7 @@ for i in range(NUM_FASCE):
 
     name = f"Anello {i + 1} ({int(r_inner)}-{int(r_outer)} px)"
 
-    # Aggiungo la regione per la colonna di sinistra (SI)
+    # aggiungo la regione per la colonna di sinistra (SI)
     regions_info_si.append({
         'name': name,
         'r_min': r_inner,
@@ -155,7 +228,7 @@ for i in range(NUM_FASCE):
         'star_flux': 0
     })
 
-    # Aggiungo la regione per la colonna di destra (NO)
+    # aggiungo la regione per la colonna di destra (NO)
     regions_info_no.append({
         'name': name,
         'r_min': r_inner,
@@ -178,6 +251,11 @@ path_ref = os.path.join(cartella_ref, files_ref[INDICE_IMMAGINE_RIFERIMENTO])
 print(f"File riferimento per coordinate: {os.path.basename(path_ref)}")
 df_ref = pd.read_csv(path_ref, comment='#')
 tbl_ref = Table.from_pandas(df_ref)
+
+# recupero il path FITS originale dall'header del CSV per utilizzarlo successivamente nei cutout
+header_ref_csv = leggi_header_da_csv(path_ref)
+nome_fits = header_ref_csv.get('NOME_FILE_FITS', '')
+path_fits_originale = cerca_file_nel_progetto(BASE_DIR, nome_fits)
 
 # divido subito la tabella in base alla Corrispondenza
 mask_si = np.char.startswith(tbl_ref['Corrispondenza'].astype(str), 'SI')
@@ -208,6 +286,13 @@ for region in regions_info_si:
         best_star = candidates[idx_best]
         region['star_id'] = best_star['ID']
         region['star_flux'] = best_star['flusso_fisso_max_run']
+
+        # aggiungo i dati geometrici per i cutout
+        region['coords'] = (best_star['xcentroid'], best_star['ycentroid'])
+        region['area'] = best_star['area']
+        region['media_flusso_fisso_max_run'] = best_star['media_flusso_fisso_max_run']
+        region['corrispondenza'] = best_star['Corrispondenza']
+
         found_stars_si.append(region)
         print(f"  > {region['name']}: Trovata ID {best_star['ID']} (Flux: {best_star['flusso_fisso_max_run']:.1f})")
     else:
@@ -230,13 +315,38 @@ for region in regions_info_no:
         best_star = candidates[idx_best]
         region['star_id'] = best_star['ID']
         region['star_flux'] = best_star['flusso_fisso_max_run']
+
+        # aggiungo i dati geometrici per i cutout
+        region['coords'] = (best_star['xcentroid'], best_star['ycentroid'])
+        region['area'] = best_star['area']
+        region['media_flusso_fisso_max_run'] = best_star['media_flusso_fisso_max_run']
+        region['corrispondenza'] = best_star['Corrispondenza']
+
         found_stars_no.append(region)
         print(f"  > {region['name']}: Trovata ID {best_star['ID']} (Flux: {best_star['flusso_fisso_max_run']:.1f})")
     else:
         print(f"  > {region['name']}: NESSUNA stella NO trovata con count >= {MIN_COUNT_RUN1_NO}.")
 
+# --- FASE 1.5: SALVATAGGIO CUTOUT DELLE STELLE SELEZIONATE ---
+if path_fits_originale and os.path.exists(path_fits_originale):
+    print("\nGenerazione immagini cutout dal file FITS di riferimento...")
+    with fits.open(str(path_fits_originale), memmap=False) as hdu_list:
+        image_data = hdu_list[0].data
+        mean, median, std = sigma_clipped_stats(image_data, sigma=3.0)
+        data_sub = image_data - median
+        wcs_ref = WCS(hdu_list[0].header)
+
+        # converto la scala pixel in gradi per ottenere la dimensione in pixel dell'area di correlazione
+        pixel_scales = proj_plane_pixel_scales(wcs_ref)
+        pixel_scale = np.mean(pixel_scales) * u.deg
+        r_corr_px = 0.003349 / pixel_scale.value
+
+        # ciclo su tutte le stelle trovate (sia SI che NO)
+        for reg in found_stars_si + found_stars_no:
+            salva_cutout(reg, data_sub, r_corr_px, tbl_ref, INDICE_IMMAGINE_RIFERIMENTO, run_list[RUN_REF])
+
 # --- FASE 2: ESTRAZIONE CURVE DI LUCE ---
-# Unisco tutti gli ID trovati per estrarre i dati in un colpo solo
+# unisco tutti gli ID trovati per estrarre i dati in un colpo solo
 tutti_gli_id = [reg['star_id'] for reg in found_stars_si] + [reg['star_id'] for reg in found_stars_no]
 stars_data = {sid: {'times': [], 'flux': []} for sid in tutti_gli_id if sid is not None}
 
@@ -265,7 +375,7 @@ for run in run_list:
             if t0_global is None: t0_global = t_curr
             t_rel = (t_curr - t0_global) / 1000.0
 
-            # Aggiorno il tempo globale solo la prima volta
+            # aggiorno il tempo globale solo la prima volta
             if len(stars_data[list(stars_data.keys())[0]]['times']) == len(total_times):
                 total_times.append(t_rel)
 
@@ -375,7 +485,7 @@ plt.tight_layout(rect=[0, 0, 1, 0.97])
 plt.subplots_adjust(wspace=0.15, hspace=0.15)
 
 # salvo la figura impostando il nome dinamicamente in base al kron di riferimento
-nome_figura = f"andamento_kron_tempo_fasce_{KRON_TARGET}_run_{RUN_REF+1}.png"
+nome_figura = f"andamento_kron_tempo_fasce_{KRON_TARGET}_run_{RUN_REF + 1}.png"
 plt.savefig(nome_figura, dpi=300, bbox_inches='tight')
 print(f"\nSalvataggio completato: {nome_figura}")
 

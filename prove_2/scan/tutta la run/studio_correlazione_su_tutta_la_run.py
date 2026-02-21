@@ -406,8 +406,8 @@ MAG_LIMIT_ANALYSIS = 10.0  # soglia per definire le stelle "importanti" (Stelle 
 MERGE_CATALOG_RADIUS = 1.1 * u.arcsec  # Fisso il raggio di merge Vizier/Hipparcos
 
 # Definisco l'array per lo scan del parametro di correlazione
-start_corr_deg = 0.003349 / 2.0
-end_corr_deg = 36 / 3600 # converto 1.5 arcosecondi in gradi
+start_corr_deg = 12 / 3600
+end_corr_deg = 75 / 3600 # converto 1.5 arcosecondi in gradi
 CORRELATION_RADII = np.linspace(start_corr_deg, end_corr_deg, 3000) * u.deg
 
 

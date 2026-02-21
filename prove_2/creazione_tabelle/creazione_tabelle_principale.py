@@ -680,6 +680,7 @@ if __name__ == "__main__":
 
             with fits.open(percorso_file, memmap=False) as hdu:
                 w = WCS(hdu[0].header)
+                header_date_obs = hdu[0].header['DATE-OBS'] # Salvo la stringa temporale del singolo file prima che si chiuda l'hdu
             coords = w.pixel_to_world(df_trovate['xcentroid'], df_trovate['ycentroid'])
             df_trovate['RA_centroid'] = coords.ra.deg
             df_trovate['DEC_centroid'] = coords.dec.deg
@@ -716,9 +717,8 @@ if __name__ == "__main__":
                     df_no['Corrispondenza'] = 'NO'
                     for c in df_catalogate.columns: df_no[c] = np.nan
 
-                    # 3. Ottengo l'orario esatto dello scatto dall'header FITS (usando DATE-OBS in formato ISO UTC)
-                    # NOTA: mi assicuro che 'DATE-OBS' sia la keyword giusta nel mio FITS per la data/ora UTC
-                    tempo_scatto_astropy = Time(hdu_list[0].header['DATE-OBS'], format='isot', scale='utc')
+                    # 3. Ottengo l'orario esatto dello scatto dal singolo header FITS
+                    tempo_scatto_astropy = Time(header_date_obs, format='isot', scale='utc')
                     tempo_skyfield = ts.from_astropy(tempo_scatto_astropy)
 
                     # 4. Calcolo le coordinate RA/DEC di tutti i satelliti visti dal telescopio in quel millisecondo
@@ -739,6 +739,7 @@ if __name__ == "__main__":
                     if ra_sat_list and len(df_no) > 0:
                         catalogo_satelliti = SkyCoord(ra=ra_sat_list * u.deg, dec=dec_sat_list * u.deg)
 
+
                         # 5. Eseguo il match tra gli oggetti 'NO' (non a catalogo) e i satelliti
                         coords_oggetti_no = SkyCoord(ra=df_no['RA_centroid'].values * u.deg,
                                                      dec=df_no['DEC_centroid'].values * u.deg)
@@ -751,6 +752,7 @@ if __name__ == "__main__":
                         # Elimino i falsi positivi causati dai satelliti
                         df_no = df_no[~mask_is_satellite]
                         contatore_satelliti = contatore_satelliti + np.sum(mask_is_satellite)
+                        contatore_satelliti_presenti =  contatore_satelliti_presenti + len(catalogo_satelliti)
 
                     df_final = pd.concat([df_si, df_no], ignore_index=True)
 
@@ -830,7 +832,8 @@ if __name__ == "__main__":
             salva_csv_con_header_fits(df_final, dict(fits.getheader(percorso_file)),
                                       file_out, str(percorso_file), parametri_caricati)
 
-        print(f"Contati {contatore_satelliti} oggetti senza corrispondenza matchati con i satelliti nella run {run}")
+        print(f"Rientrati {contatore_satelliti_presenti} nel riquadro della PMC.")
+        print(f"Contati {contatore_satelliti} oggetti senza corrispondenza matchati con i satelliti nella run {run}.")
 
         # =============================================================================
         # FASE 2 & 3: RAGGI MAX E FLUSSO FISSO (PER RUN)

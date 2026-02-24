@@ -1,0 +1,2 @@
+ Scarico tutti i file csv dal server remoto e li salvo direttamente nella mia cartella specifica
+scp "astro@10.99.56.220:~/ASTRI/Lorenzo/pmc_photometry/prove_2/scan/tutta\ la\ run/*.csv" "/home/lorysimeone/tesi_magistrale/pmc_photometry/prove_2/scan/tutta la run/"

@@ -400,7 +400,8 @@ PARAMETRI_FISSI = {
 
 FWHM_RANGE = np.linspace(2.2, 3.0, 150)
 SIZES_TO_TEST = [3, 5]
-soglia_correlazione = 0.003349 * u.deg
+# soglia_correlazione = 0.003349 * u.deg
+soglia_correlazione = 35/3600 * u.deg
 MAG_LIMIT_ANALYSIS = 10.0  # soglia per definire le stelle "importanti" (Stelle Perse < 10)
 
 

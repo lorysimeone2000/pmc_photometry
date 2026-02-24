@@ -46,7 +46,7 @@ df_medio = df_totale.groupby('Raggio_Corr_arcsec').mean().reset_index()
 plt.figure(figsize=(12, 8))
 
 # definisco l'asse X
-df_medio = df_medio[df_medio['Raggio_Corr_arcsec'] > 12]
+# df_medio = df_medio[df_medio['Raggio_Corr_arcsec'] > 12]
 x_axis = df_medio['Raggio_Corr_arcsec']
 
 # --- 4. TRACCIAMENTO LINEE ---
@@ -73,11 +73,13 @@ plt.ylabel('Numero MEDIO per immagine - Media delle Run')
 ax = plt.gca()
 
 # imposto l'asse Y in scala logaritmica
-ax.set_yscale('log')
+#ax.set_yscale('symlog', linthresh=1.0)
 
 # forzo la visualizzazione di più numeri sull'asse Y abilitando le etichette anche per i minor ticks
 ax.yaxis.set_major_locator(ticker.LogLocator(base=10.0, numticks=15))
-ax.yaxis.set_minor_locator(ticker.LogLocator(base=10.0, subs=np.arange(2, 10), numticks=100))
+ax.yaxis.set_minor_locator(ticker.LogLocator(base=10.0, subs=np.arange(0, 10), numticks=100))
+# forzo il limite inferiore esattamente a 0
+ax.set_ylim(bottom=0)
 
 # formatto le etichette dell'asse Y logaritmico per mostrarle come numeri normali
 ax.yaxis.set_major_formatter(ticker.ScalarFormatter())

@@ -401,7 +401,7 @@ PARAMETRI_FISSI = {
 FWHM_RANGE = np.linspace(2.2, 3.0, 150)
 SIZES_TO_TEST = [3, 5]
 # soglia_correlazione = 0.003349 * u.deg
-soglia_correlazione = 35/3600 * u.deg
+soglia_correlazione = 35 / 3600 * u.deg
 MAG_LIMIT_ANALYSIS = 10.0  # soglia per definire le stelle "importanti" (Stelle Perse < 10)
 
 
@@ -479,7 +479,9 @@ def analizza_singola_run(run_id, satelliti_attivi):
 
     tbl_hipparco_run_subset = tbl_catalogo_hipparco_globale[mask_hip_fov]
     coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
-    exclusion_radii_run_subset = [mask_hip_fov]
+
+    # correggo il bug estraendo i valori dall'array originale tramite la maschera
+    exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
 
     # --- FILTRAGGIO COMPETITIVO A SINGOLA FASE ---
     print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")

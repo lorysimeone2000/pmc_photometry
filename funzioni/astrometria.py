@@ -98,7 +98,7 @@ def tabella_catalogo(image_file_, tbl_vizier_cut, tbl_hipparco_run_clean):
     nome_catalogo_vizier = np.array(["II/389/ps1_dr2"] * len(tbl_vizier_cut), dtype=object)
     colonne_vizier = {
         'Catalogo': nome_catalogo_vizier,
-        'ID': np.char.add("II/389/ps1_dr2_", np.array(tbl_vizier_cut['objID']).astype(str)),
+        'ID': tbl_vizier_cut['objID'],
         'RAJ2000': tbl_vizier_cut['RAJ2000'],
         'DEJ2000': tbl_vizier_cut['DEJ2000'],
         'Mag': tbl_vizier_cut['gmag'],
@@ -107,7 +107,7 @@ def tabella_catalogo(image_file_, tbl_vizier_cut, tbl_hipparco_run_clean):
     nome_catalogo_hipparco = np.array(["I/239/hip_main"] * len(tbl_hipparco_run_clean), dtype=object)
     colonne_hipparco = {
         'Catalogo': nome_catalogo_hipparco,
-        'ID': np.char.add("I/239/hip_main_", np.array(tbl_hipparco_run_clean['HIP']).astype(str)),
+        'ID': tbl_hipparco_run_clean['HIP'],
         'RAJ2000': tbl_hipparco_run_clean['_RAJ2000'],
         'DEJ2000': tbl_hipparco_run_clean['_DEJ2000'],
         'Mag': tbl_hipparco_run_clean['Vmag'],

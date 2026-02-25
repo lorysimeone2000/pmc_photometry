@@ -5,5 +5,8 @@
 
 # Ignoro i file temporanei di Windows (Zone.Identifier)
 *:Zone.Identifier
-/.idea
+
+.idea/
 *.fits
+PMC_DATA/
+blazar/PMC_DATA_BLAZAR/

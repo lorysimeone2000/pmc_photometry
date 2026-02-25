@@ -177,7 +177,7 @@ if __name__ == "__main__":
         tempo_ref_astropy = Time(hdu_ref[0].header['DATE-OBS'], format='isot', scale='utc')
         hdu_ref.close()
 
-        cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR / 'blazar','tabelle_unite')
+        cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR / 'blazar', 'tabelle', 'tabelle_unite')
         if cartella_tabelle is None:
             cartella_tabelle = BASE_DIR / "blazar" / "tabelle" / "tabelle_unite"
         cartella_tabelle.mkdir(parents=True, exist_ok=True)

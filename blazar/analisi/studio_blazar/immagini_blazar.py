@@ -208,8 +208,6 @@ if __name__ == "__main__":
     for cartella_giorno in sorted([d for d in cartella_dati.iterdir() if d.is_dir()]):
         for run_folder in sorted([d for d in cartella_giorno.iterdir() if d.is_dir()]):
 
-            contatore_globale += 1
-
             run_name = run_folder.name
             print(f"\n==================== ELABORAZIONE {cartella_giorno.name} - {run_name} ====================")
 
@@ -232,6 +230,9 @@ if __name__ == "__main__":
             print(f"--- FASE 1: Segmentazione & Unione ({len(file_list)} files) ---")
 
             for n, percorso_file in enumerate(tqdm(file_list, desc=f"Fase 1 {run_name}"), 1):
+
+                contatore_globale += 1
+
                 if n == 1:
                     hdu_list = fits.open(percorso_file)
                     w = WCS(hdu_list[0].header)

@@ -324,7 +324,7 @@ def leggi_header_da_csv(filename):
 # =============================================================================
 
 cartella_dati = BASE_DIR / "blazar" / "PMC_DATA_BLAZAR"
-cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR / 'blazar', "tabelle" / "tabelle_cataloghi")
+cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR / 'blazar', "tabelle_cataloghi")
 
 if cartella_tabelle is None:
     # Creo se non esiste in base_dir

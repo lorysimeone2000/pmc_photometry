@@ -5,3 +5,5 @@
 
 # Ignoro i file temporanei di Windows (Zone.Identifier)
 *:Zone.Identifier
+/.idea
+*.fits

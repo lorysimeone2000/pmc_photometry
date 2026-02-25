@@ -447,7 +447,7 @@ if __name__ == "__main__":
                             # mi baso sul massimo e sul minimo dell'intero catalogo per uniformare la colorbar
                             vmin_cat = df_catalogate['Mag'].min()
                             vmax_cat = df_catalogate['Mag'].max()
-                            scatter_cat = ax.scatter(x_cat_cutout, y_cat_cutout, c=mag_cat_cutout, cmap='viridis', s=15,
+                            scatter_cat = ax.scatter(x_cat_cutout, y_cat_cutout, c=mag_cat_cutout, cmap='viridis_r', s=15,
                                                      vmin=vmin_cat, vmax=vmax_cat, zorder=5)
 
                             # aggiungo la seconda colorbar dedicata alle magnitudini del catalogo

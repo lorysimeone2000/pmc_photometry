@@ -1,5 +1,4 @@
 # Ignoro tutti i file CSV (spesso sono dati pesanti o output)
-*.csv
 *.fit
 *.png
 

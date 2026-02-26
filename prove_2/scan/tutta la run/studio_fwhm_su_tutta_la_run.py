@@ -398,7 +398,7 @@ PARAMETRI_FISSI = {
     'soglia_filtro_rel': 0.05
 }
 
-FWHM_RANGE = np.linspace(2.2, 3.0, 150)
+FWHM_RANGE = np.linspace(2.4, 6.0, 150)
 SIZES_TO_TEST = [3, 5]
 # soglia_correlazione = 0.003349 * u.deg
 soglia_correlazione = 35 / 3600 * u.deg

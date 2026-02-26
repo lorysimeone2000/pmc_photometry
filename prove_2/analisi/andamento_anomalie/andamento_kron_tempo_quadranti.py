@@ -121,8 +121,9 @@ def salva_cutout(region, data_sub, r_corr_px, wcs_ref, img_idx, run_id, cartella
     corr = region['corrispondenza']
 
     # calcolo il lato del riquadro basato sulla radice dell'area
-    side = np.sqrt(area) * 1.5 * 2
-    half_side = side / 2.0
+    # side = np.sqrt(area) * 1.5 * 2
+    side = 2*35/3600 / np.mean(proj_plane_pixel_scales(wcs_ref))
+    half_side = side*1.25 / 2.0
 
     # imposto i limiti spaziali del cutout
     x_min = int(np.floor(xc - half_side))
@@ -272,7 +273,7 @@ print(f"------------------------------")
 
 run_list = [1, 2, 3]
 KRON_TARGET = 300
-RUN_REF = 2
+RUN_REF = 1
 INDICE_IMMAGINE_RIFERIMENTO = 35
 MIN_COUNT_RUN1 = 75
 MIN_COUNT_RUN1_NO = 25
@@ -357,7 +358,7 @@ if path_fits_originale and os.path.exists(path_fits_originale):
         _, median, _ = sigma_clipped_stats(image_data, sigma=3.0)
         data_sub = image_data - median
         wcs_ref = WCS(hdu_list[0].header)
-        r_corr_px = 0.003349 / np.mean(proj_plane_pixel_scales(wcs_ref))
+        r_corr_px = 35/3600 / np.mean(proj_plane_pixel_scales(wcs_ref))
         for reg in found_stars_si + found_stars_no:
             salva_cutout(reg, data_sub, r_corr_px, wcs_ref, INDICE_IMMAGINE_RIFERIMENTO, run_list[RUN_REF],
                          cartella_output, parametri_seg, BASE_DIR)
@@ -437,7 +438,8 @@ if path_fits_originale and os.path.exists(path_fits_originale):
         _, median_all, _ = sigma_clipped_stats(image_data_all, sigma=3.0)
         data_sub_all = image_data_all - median_all
         wcs_ref_all = WCS(hdu_list[0].header)
-        r_corr_px_all = 0.003349 / np.mean(proj_plane_pixel_scales(wcs_ref_all))
+        # r_corr_px_all = 0.003349 / np.mean(proj_plane_pixel_scales(wcs_ref_all))
+        r_corr_px_all = 35/3600/ np.mean(proj_plane_pixel_scales(wcs_ref_all))
 
         # ciclo su tutte le stelle presenti in tbl_no (quelle senza corrispondenza)
         for riga in tqdm(tbl_no, desc="Salvataggio Cutout NO Match"):

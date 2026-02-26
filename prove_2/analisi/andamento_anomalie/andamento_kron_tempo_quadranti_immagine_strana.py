@@ -271,7 +271,7 @@ print(f"------------------------------")
 
 run_list = [1, 2, 3]
 KRON_TARGET = 115
-RUN_REF = 2  # Imposto l'indice 2 per lavorare sulla Run 3
+RUN_REF = 1  # Imposto l'indice 2 per lavorare sulla Run 3
 MIN_COUNT_RUN1 = 75
 MIN_COUNT_RUN1_NO = 25
 

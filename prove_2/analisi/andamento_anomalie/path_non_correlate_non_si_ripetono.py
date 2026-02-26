@@ -87,7 +87,7 @@ else:
     print("ERRORE: File parametri non trovato.")
     parametri = {}
 
-RUN_REF = 3
+RUN_REF = 2
 
 fwhm = parametri.get('fwhm', 2.8)
 size = parametri.get('size', 5)

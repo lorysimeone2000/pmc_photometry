@@ -1,11 +1,11 @@
 import pandas as pd
-#pd.set_option('display.show_dimensions', False)
+# pd.set_option('display.show_dimensions', False)
 from photutils.datasets import make_100gaussians_image
 from photutils.background import Background2D, MedianBackground
 from astropy.convolution import convolve
 from photutils.segmentation import make_2dgaussian_kernel
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm # permette di avere la scala logaritmica
+from matplotlib.colors import LogNorm  # permette di avere la scala logaritmica
 import matplotlib.cm as cm
 from photutils.segmentation import detect_sources
 from photutils.segmentation import SourceCatalog
@@ -23,7 +23,10 @@ from astropy.table import Table
 from photutils.segmentation import SourceFinder
 from photutils.detection import find_peaks
 from photutils.aperture import CircularAperture
+from astropy.wcs import WCS
 from pathlib import Path
+from shapely.geometry import Point, Polygon
+
 
 # =============================================================================
 # FUNZIONI DI GESTIONE PERCORSI E UTILITÀ
@@ -38,12 +41,14 @@ def trova_cartella_base(nome_target="pmc_photometry"):
     print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
     return path_corrente.parent
 
+
 def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
     # Cerco una cartella specifica ricorsivamente
     cartelle_trovate = [p for p in base_dir.rglob(nome_cartella_esatto) if p.is_dir()]
     if not cartelle_trovate: return None
     cartelle_trovate.sort(key=lambda p: len(str(p)))
     return cartelle_trovate[0]
+
 
 def cerca_file_nel_progetto(base_dir, nome_file_esatto):
     # Cerco un file specifico ricorsivamente
@@ -52,6 +57,7 @@ def cerca_file_nel_progetto(base_dir, nome_file_esatto):
     if len(files_trovati) > 1:
         files_trovati.sort(key=lambda p: len(str(p)))
     return files_trovati[0]
+
 
 def leggi_file_parametri(percorso):
     parametri = {}
@@ -70,6 +76,7 @@ def leggi_file_parametri(percorso):
                         pass
     return parametri
 
+
 # --- INIZIO CODICE ---
 # Imposto la cartella base in modo dinamico
 BASE_DIR = trova_cartella_base("pmc_photometry")
@@ -82,7 +89,7 @@ else:
     print("ERRORE: File parametri non trovato.")
     parametri = {}
 
-RUN_REF = 3
+RUN_REF = 1
 
 fwhm = parametri.get('fwhm', 2.8)
 size = parametri.get('size', 5)
@@ -106,10 +113,12 @@ print(f"Trovati {len(file_csv)} file CSV:")
 '''for file in file_csv:
     print(f"  - {file}")'''
 
-i=0
-j=0
-posizioni_lista = [] # lista che dovrà essere riempita con tutte le poszioni di tutte le tabelle
+i = 0
+j = 0
+posizioni_lista = []  # lista che dovrà essere riempita con tutte le poszioni di tutte le tabelle
 colori_lista = []  # Lista per i colori di ogni punto
+numeri_immagine_lista = []  # memorizzo l'indice dell'immagine per poterlo stampare accanto a ogni pallino
+id_lista = []  # memorizzo l'ID assegnato all'oggetto
 
 # creo una colormap per la sfumatura
 colormap = cm.viridis  # posso cambiare con: 'plasma', 'inferno', 'magma', 'cool', 'spring', etc.
@@ -120,7 +129,7 @@ for nome_file in file_csv:
     percorso_completo = os.path.join(cartella_csv, nome_file)
     # print(f"Nome file csv: {nome_file}")
 
-    if i <=2:
+    if i <= 2:
         print(f"\n{'=' * 50}")
         print(f"Elaborazione: {nome_file}")
         print(f"{'=' * 50}")
@@ -133,8 +142,13 @@ for nome_file in file_csv:
         mask_si = np.char.startswith(tbl['Corrispondenza'].astype(str), 'SI')
         tbl_no = tbl[~mask_si]
 
-        posizioni_file = np.transpose((tbl_no['RA_centroid'], tbl_no['DEC_centroid'])) # creo l'array di posizioni per questo file
-        posizioni_lista.append(posizioni_file) # lo aggiungo alla lista totale
+        posizioni_file = np.transpose(
+            (tbl_no['RA_centroid'], tbl_no['DEC_centroid']))  # creo l'array di posizioni per questo file
+        posizioni_lista.append(posizioni_file)  # lo aggiungo alla lista totale
+
+        # salvo il numero dell'immagine e l'ID per ciascuna delle posizioni appena trovate
+        numeri_immagine_lista.extend([i] * len(posizioni_file))
+        id_lista.extend(tbl_no['ID'])
 
         # Calcola il colore per questo file
         if len(file_csv) > 1:
@@ -158,9 +172,12 @@ for nome_file in file_csv:
 
 posizioni_array = np.vstack(posizioni_lista)
 colori_array = np.array(colori_lista)
-print(f"\n{'='*60}")
+numeri_immagine_array = np.array(numeri_immagine_lista)  # converto in array la lista dei numeri immagine
+id_array = np.array(id_lista)  # converto in array gli id
+
+print(f"\n{'=' * 60}")
 print(f"ARRAY FINALE CREATO")
-print(f"{'='*60}")
+print(f"{'=' * 60}")
 print(f"Dimensioni array posizioni: {posizioni_array.shape}")
 
 print(f"Massimo RA: {np.max(posizioni_array[:, 0])}")
@@ -169,6 +186,8 @@ print("Ho verificato che l'asse x e l'asse y sono corrispondenti a quelli dell'i
 
 # secondi
 x = []
+fov_ra = []
+fov_dec = []
 
 # Cerco dinamicamente la lista delle immagini
 file_lista_immagini = cerca_file_nel_progetto(BASE_DIR, f'lista_immagini_run_{RUN_REF}.txt')
@@ -178,7 +197,7 @@ if not file_lista_immagini:
 
 # Leggo la lista
 with open(file_lista_immagini, 'r') as file:
-    file_list_raw = file.read().splitlines() # creo una lista di stringhe che sono i percorsi
+    file_list_raw = file.read().splitlines()  # creo una lista di stringhe che sono i percorsi
 
 file_list = []
 # Risolvo dinamicamente i percorsi dei file FITS contenuti nel TXT per garantirne la portabilità
@@ -188,7 +207,7 @@ for p in file_list_raw:
         try:
             if "pmc_photometry" in p_obj.parts:
                 idx = p_obj.parts.index("pmc_photometry")
-                new_path = BASE_DIR.joinpath(*p_obj.parts[idx+1:])
+                new_path = BASE_DIR.joinpath(*p_obj.parts[idx + 1:])
                 if new_path.exists():
                     file_list.append(str(new_path))
                 else:
@@ -201,17 +220,37 @@ for p in file_list_raw:
 n = 0
 # Elaboro tutti i file
 for percorso_file in file_list:
-    n = n+1
+    n = n + 1
     try:
         with fits.open(percorso_file) as hdu_list:
             image_header = hdu_list[0].header
-            if n==1:
+            if n == 1:
                 x.append(0)
                 t1 = image_header["TSTART"]
-                # print(0 , "secondi")
+
+                # estraggo i confini della fotocamera dalla prima immagine
+                w_first = WCS(image_header)
+                nx = image_header.get('NAXIS1', 3072)
+                ny = image_header.get('NAXIS2', 2048)
+
+                # creo i 4 angoli del sensore per passarlo a Shapely
+                corners_pix = np.array([
+                    [0, 0],
+                    [nx, 0],
+                    [nx, ny],
+                    [0, ny]
+                ])
+                corners_world = w_first.pixel_to_world(corners_pix[:, 0], corners_pix[:, 1])
+
+                # Creo il poligono matematico della camera usando shapely
+                polygon_coords = np.column_stack((corners_world.ra.deg, corners_world.dec.deg))
+                poly_fov = Polygon(polygon_coords)
+
+                # Estraggo il perimetro esterno chiuso (che include il ritorno al punto di origine)
+                fov_ra, fov_dec = poly_fov.exterior.xy
+
             else:
-                x.append((image_header["TSTART"]-t1)/np.float64(1e3))
-                # print((image_header["TSTART"]-t1)/np.float64(1e3) , "secondi")
+                x.append((image_header["TSTART"] - t1) / np.float64(1e3))
     except Exception as e:
         print(f"Errore caricamento FITS {percorso_file}: {e}")
 
@@ -224,11 +263,21 @@ plt.scatter(posizioni_array[:, 0], posizioni_array[:, 1],
             s=4,
             alpha=1,
             color=colori_array,
-            linewidth=0)       # ⬅ Nessuna linea di bordo
+            linewidth=0)  # ⬅ Nessuna linea di bordo
+
+# aggiungo il testo con il numero dell'immagine e l'ID vicino a ogni pallino
+for x_val, y_val, num_img, obj_id in zip(posizioni_array[:, 0], posizioni_array[:, 1], numeri_immagine_array, id_array):
+    plt.text(x_val, y_val, f"{num_img}\nID: {obj_id}", fontsize=5, alpha=0.7, ha='left', va='bottom')
+
+# aggiungo il bordo sottile che rappresenta il FOV della fotocamera estratto dal Poligono
+if len(fov_ra) > 0 and len(fov_dec) > 0:
+    plt.plot(fov_ra, fov_dec, color='black', linewidth=0.8, linestyle='-', zorder=1, label='Confini Fotocamera')
+    plt.legend(loc='upper right', fontsize=9)
 
 plt.xlabel('RA (Gradi)')
 plt.ylabel('DEC (Gradi)')
-plt.title(f'Posizioni di tutte le sorgenti non catalogate della run {RUN_REF}\nTotale: {len(posizioni_array)} sorgenti da {len(file_csv)} file della run')
+plt.title(
+    f'Posizioni di tutte le sorgenti non catalogate della run {RUN_REF}\nTotale: {len(posizioni_array)} sorgenti da {len(file_csv)} file della run')
 plt.grid(True, alpha=0.4, linestyle='--')
 
 # =========================================================
@@ -254,7 +303,7 @@ cbar.set_ticks(np.linspace(np.min(x), np.max(x), 10))  # 10 ticks equidistanti
 
 plt.tight_layout()
 plt.savefig(f'path_non_correlate_tutte_run{RUN_REF}.png')
-plt.show()
+# plt.show() <-- Commentato per evitare l'avviso su WSL
 
 # =============================================================================
 # NUOVO GRAFICO: Numero totale di oggetti 'NO' cumulativo nel tempo (Run 1, 2, 3)
@@ -268,6 +317,7 @@ colori_runs = {1: 'blue', 2: 'green', 3: 'red'}
 tutti_i_tempi = []
 tutti_i_conteggi_no = []
 tutti_i_colori = []  # Per assegnare a ogni punto il colore della sua run
+tutti_i_numeri_img_temporale = []  # memorizzo il numero dell'immagine per questo grafico
 
 t0_global = None  # Tempo zero assoluto (inizio Run 1)
 run_boundaries = []  # Per memorizzare il tempo di fine di ogni run e tracciare la linea verticale
@@ -335,6 +385,9 @@ for r in [1, 2, 3]:
             tutti_i_conteggi_no.append(conteggio_no)
             tutti_i_colori.append(colori_runs[r])
 
+            # salvo il numero dell'immagine (facendolo partire da 1)
+            tutti_i_numeri_img_temporale.append(n_img + 1)
+
         except Exception as e:
             # Ignoro i file corrotti ma stampo l'errore per sicurezza
             print(f"Errore {percorso_file}: {e}")
@@ -355,6 +408,10 @@ for r in [1, 2, 3]:
     mask_run = np.array(tutti_i_colori) == colori_runs[r]
     plt.scatter(tempi_arr[mask_run], conteggi_arr[mask_run],
                 color=colori_runs[r], s=5, label=f'Run {r}', zorder=2)
+
+# stampo il numero dell'immagine accanto a ogni pallino anche per il grafico temporale
+for x_val, y_val, num_img in zip(tempi_arr, conteggi_arr, tutti_i_numeri_img_temporale):
+    plt.text(x_val, y_val, str(num_img), fontsize=6, alpha=0.7, ha='left', va='bottom')
 
 # Disegno le linee verticali di separazione e le etichette per ogni run
 for r_idx, (run_num, t_end) in enumerate(run_boundaries):
@@ -381,4 +438,4 @@ plt.grid(True, alpha=0.4, linestyle='--')
 plt.legend()
 plt.tight_layout()
 plt.savefig('andamento_non_catalogati_temporale_continuo.png')
-plt.show()
+# plt.show() <-- Commentato per evitare l'avviso su WSL

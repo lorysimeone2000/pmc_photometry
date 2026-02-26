@@ -337,7 +337,9 @@ if __name__ == "__main__":
 
             with fits.open(percorso_file, memmap=False) as hdu:
                 w = WCS(hdu[0].header)
-                header_date_obs = hdu[0].header['DATE-OBS']
+                t_inizio = Time(hdu[0].header['DATE-OBS'], format='isot', scale='utc')
+                t_fine = Time(hdu[0].header['DATE-END'], format='isot', scale='utc')
+                header_date_obs = (t_inizio + (t_fine - t_inizio) / 2.0).isot
             coords = w.pixel_to_world(df_trovate['xcentroid'], df_trovate['ycentroid'])
             df_trovate['RA_centroid'] = coords.ra.deg
             df_trovate['DEC_centroid'] = coords.dec.deg
@@ -401,6 +403,7 @@ if __name__ == "__main__":
                         # 6. Escludo gli oggetti vicini alla traiettoria di un satellite
                         tolleranza_satellite = 3/60 * u.deg
                         mask_is_satellite = d2d_sat < tolleranza_satellite
+                        if np.sum(mask_is_satellite) > 0: print(f"L'immagine {n} della run {run} ha trovato {np.sum(mask_is_satellite)} satelliti")
 
                         # Elimino i falsi positivi causati dai satelliti
                         # df_no = df_no[~mask_is_satellite]

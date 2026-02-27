@@ -405,8 +405,9 @@ if __name__ == "__main__":
 
                         for sat in satelliti_attivi:
                             # Controllo se il NAVSTAR 74 (NORAD 40105) è presente nel file scaricato
-                            if sat.model.satnum == 40105:
-                                if n==1:
+                            if n==1:
+                                if sat.model.satnum == 40105:
+
                                     navstar_trovato_nel_tle = True
                                     topo_nav = (sat - osservatorio).at(tempo_skyfield)
                                     ra_n, dec_n, _ = topo_nav.radec()

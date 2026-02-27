@@ -393,22 +393,68 @@ if __name__ == "__main__":
                         dec_sat_list.append(dec_sat.degrees)
 
                     if ra_sat_list and len(df_no) > 0:
-                        catalogo_satelliti = SkyCoord(ra=ra_sat_list * u.deg, dec=dec_sat_list * u.deg)
+                        # 3. Ottengo l'orario esatto dello scatto
+                        tempo_scatto_astropy = Time(header_date_obs, format='isot', scale='utc')
+                        exptime = hdu_list[0].header.get('EXPTIME', 0.0)
+                        tempo_medio_astropy = tempo_scatto_astropy + timedelta(seconds=exptime / 2.0)
+                        tempo_skyfield = ts.from_astropy(tempo_medio_astropy)
 
-                        # 5. Eseguo il match tra gli oggetti 'NO' (non a catalogo) e i satelliti
-                        coords_oggetti_no = SkyCoord(ra=df_no['RA_centroid'].values * u.deg,
-                                                     dec=df_no['DEC_centroid'].values * u.deg)
-                        idx_sat, d2d_sat, _ = coords_oggetti_no.match_to_catalog_sky(catalogo_satelliti)
+                        # --- INIZIO DEBUG SATELLITE ---
+                        ra_sat_list, dec_sat_list = [], []
+                        navstar_trovato_nel_tle = False
 
-                        # 6. Escludo gli oggetti vicini alla traiettoria di un satellite
-                        tolleranza_satellite = 3/60 * u.deg
-                        mask_is_satellite = d2d_sat < tolleranza_satellite
-                        if np.sum(mask_is_satellite) > 0: print(f"L'immagine {n} della run {run} ha trovato {np.sum(mask_is_satellite)} satelliti")
+                        for sat in satelliti_attivi:
+                            # Controllo se il NAVSTAR 74 (NORAD 40105) è presente nel file scaricato
+                            if sat.model.satnum == 40105:
+                                if n==1:
+                                    navstar_trovato_nel_tle = True
+                                    topo_nav = (sat - osservatorio).at(tempo_skyfield)
+                                    ra_n, dec_n, _ = topo_nav.radec()
+                                    print(f"\n[DEBUG] NAVSTAR 74 TROVATO NEL CATALOGO TLE!")
+                                    print(
+                                        f"[DEBUG] Posizione calcolata Skyfield -> RA: {ra_n.hours * 15:.4f}, DEC: {dec_n.degrees:.4f}")
+                                else: print(
+                                f"\n[ATTENZIONE] Il NAVSTAR 74 (NORAD 40105) NON È PRESENTE nei {len(satelliti_attivi)} TLE scaricati!")
 
-                        # Elimino i falsi positivi causati dai satelliti
-                        # df_no = df_no[~mask_is_satellite]
-                        contatore_satelliti = contatore_satelliti + np.sum(mask_is_satellite)
-                        contatore_satelliti_presenti =  contatore_satelliti_presenti + len(catalogo_satelliti)
+
+                            topocentrica = (sat - osservatorio).at(tempo_skyfield)
+                            ra_sat, dec_sat, _ = topocentrica.radec()
+
+                            if np.isnan(ra_sat.hours) or np.isnan(dec_sat.degrees):
+                                continue
+
+                            ra_sat_list.append(ra_sat.hours * 15)
+                            dec_sat_list.append(dec_sat.degrees)
+
+                        if ra_sat_list and len(df_no) > 0:
+                            catalogo_satelliti = SkyCoord(ra=ra_sat_list * u.deg, dec=dec_sat_list * u.deg)
+                            coords_oggetti_no = SkyCoord(ra=df_no['RA_centroid'].values * u.deg,
+                                                         dec=df_no['DEC_centroid'].values * u.deg)
+
+                            idx_sat, d2d_sat, _ = coords_oggetti_no.match_to_catalog_sky(catalogo_satelliti)
+
+                            # --- STAMPA DISTANZE REALI ---
+                            print(f"\n[DEBUG] Distanze degli oggetti NO dal satellite più vicino:")
+                            for k in range(len(df_no)):
+                                obj_id = df_no.iloc[k].get('ID', f'Index_{k}')
+                                dist_arcmin = d2d_sat[k].arcmin
+                                print(
+                                    f" -> Oggetto {obj_id} (RA: {coords_oggetti_no[k].ra.deg:.4f}, DEC: {coords_oggetti_no[k].dec.deg:.4f}) dista {dist_arcmin:.2f} arcmin dal satellite più vicino.")
+
+                            # Aumentiamo la tolleranza a 10 arcminuti per la prova
+                            tolleranza_satellite = 10 / 60 * u.deg
+                            mask_is_satellite = d2d_sat < tolleranza_satellite
+
+                            if np.sum(mask_is_satellite) > 0:
+                                print(
+                                    f"[SUCCESS] L'immagine {n} ha eliminato {np.sum(mask_is_satellite)} oggetti come satelliti!")
+
+                            # Elimino i falsi positivi
+                            # df_no = df_no[~mask_is_satellite]
+                            contatore_satelliti = contatore_satelliti + np.sum(mask_is_satellite)
+                            contatore_satelliti_presenti = contatore_satelliti_presenti + len(catalogo_satelliti)
+
+                        df_final = pd.concat([df_si, df_no], ignore_index=True)
 
                     df_final = pd.concat([df_si, df_no], ignore_index=True)
 

@@ -414,9 +414,6 @@ if __name__ == "__main__":
                                     print(f"\n[DEBUG] NAVSTAR 74 TROVATO NEL CATALOGO TLE!")
                                     print(
                                         f"[DEBUG] Posizione calcolata Skyfield -> RA: {ra_n.hours * 15:.4f}, DEC: {dec_n.degrees:.4f}")
-                                else: print(
-                                f"\n[ATTENZIONE] Il NAVSTAR 74 (NORAD 40105) NON È PRESENTE nei {len(satelliti_attivi)} TLE scaricati!")
-
 
                             topocentrica = (sat - osservatorio).at(tempo_skyfield)
                             ra_sat, dec_sat, _ = topocentrica.radec()

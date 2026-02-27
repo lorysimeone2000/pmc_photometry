@@ -432,7 +432,7 @@ if __name__ == "__main__":
                                                          dec=df_no['DEC_centroid'].values * u.deg)
 
                             idx_sat, d2d_sat, _ = coords_oggetti_no.match_to_catalog_sky(catalogo_satelliti)
-
+# jbuu
                             # --- STAMPA DISTANZE REALI ---
                             print(f"\n[DEBUG] Distanze degli oggetti NO dal satellite più vicino:")
                             for k in range(len(df_no)):

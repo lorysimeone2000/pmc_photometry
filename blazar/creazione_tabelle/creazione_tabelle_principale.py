@@ -48,6 +48,9 @@ from astropy.time import Time
 import requests
 from datetime import timedelta
 
+# import per la ricerca spaziale ultra veloce
+from scipy.spatial import cKDTree
+
 # --- GESTIONE WARNING ---
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', message='.*failed to converge.*', category=UserWarning)
@@ -177,7 +180,7 @@ if __name__ == "__main__":
         tempo_ref_astropy = Time(hdu_ref[0].header['DATE-OBS'], format='isot', scale='utc')
         hdu_ref.close()
 
-        cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR / 'blazar','tabelle_unite')
+        cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR / 'blazar', 'tabelle_unite')
         if cartella_tabelle is None:
             cartella_tabelle = BASE_DIR / "blazar" / "tabelle" / "tabelle_unite"
         cartella_tabelle.mkdir(parents=True, exist_ok=True)
@@ -405,33 +408,53 @@ if __name__ == "__main__":
                         df_final['Corrispondenza'] = 'NO'
 
                 # =================================================================
-                # INIZIO BLOCCO: TRACKING GLOBALE OTTIMIZZATO (BASATO SU COORDINATE)
+                # INIZIO BLOCCO: TRACKING GLOBALE OTTIMIZZATO (cKDTree - SCIPY)
                 # =================================================================
+                ra_rad = np.radians(df_final['RA_centroid'].values)
+                dec_rad = np.radians(df_final['DEC_centroid'].values)
+                x = np.cos(dec_rad) * np.cos(ra_rad)
+                y = np.cos(dec_rad) * np.sin(ra_rad)
+                z = np.sin(dec_rad)
+                coords_cart = np.column_stack((x, y, z))
+
+                soglia_rad = np.radians(dist_ripetizione.deg)
+                soglia_3d = 2.0 * np.sin(soglia_rad / 2.0)
 
                 final_labels = np.empty(len(df_final), dtype=object)
 
-                for idx_label in range(len(df_final)):
-                    row = df_final.iloc[idx_label]
+                if global_tracker_coords is None:
+                    # al primo giro, inizializzo la mia memoria storica
+                    global_tracker_coords = coords_cart
+                    global_tracker_labels = [f"RA_{ra:.3f}DEC{dec:.3f}" for ra, dec in
+                                             zip(df_final['RA_centroid'].values, df_final['DEC_centroid'].values)]
+                    final_labels[:] = global_tracker_labels
+                else:
+                    # creo un albero KD per una ricerca spaziale ultra veloce
+                    albero = cKDTree(global_tracker_coords)
+                    distanze, indici = albero.query(coords_cart, distance_upper_bound=soglia_3d)
 
-                    ra_obj = row['RA_centroid']
-                    dec_obj = row['DEC_centroid']
-                    coord_obj = SkyCoord(ra=ra_obj * u.deg, dec=dec_obj * u.deg)
+                    # trovo quali oggetti hanno un match sotto la mia soglia
+                    mask_match = distanze <= soglia_3d
 
-                    if global_tracker_coords is None:
-                        assigned_label = f"RA_{ra_obj:.3f}DEC{dec_obj:.3f}"
-                        global_tracker_coords = SkyCoord([coord_obj])
-                        global_tracker_labels = [assigned_label]
-                    else:
-                        idx_match, d2d, _ = coord_obj.match_to_catalog_sky(global_tracker_coords)
-                        if d2d < dist_ripetizione:
-                            assigned_label = global_tracker_labels[idx_match]
-                        else:
-                            assigned_label = f"RA_{ra_obj:.3f}__DEC_{dec_obj:.3f}"
-                            temp_coords = SkyCoord([global_tracker_coords, SkyCoord([coord_obj])])
-                            global_tracker_coords = temp_coords
-                            global_tracker_labels.append(assigned_label)
+                    # assegno le etichette già note
+                    for i in np.where(mask_match)[0]:
+                        final_labels[i] = global_tracker_labels[indici[i]]
 
-                    final_labels[idx_label] = assigned_label
+                    # isolo i miei nuovi oggetti non trovati
+                    nuovi_idx = np.where(~mask_match)[0]
+                    if len(nuovi_idx) > 0:
+                        nuove_coords_cart = coords_cart[nuovi_idx]
+                        nuove_labels = [
+                            f"RA_{df_final['RA_centroid'].values[i]:.3f}__DEC_{df_final['DEC_centroid'].values[i]:.3f}"
+                            for i in nuovi_idx
+                        ]
+
+                        for i, l_idx in enumerate(nuovi_idx):
+                            final_labels[l_idx] = nuove_labels[i]
+
+                        # aggiorno la mia memoria accodando i nuovi array in puro numpy
+                        global_tracker_coords = np.vstack([global_tracker_coords, nuove_coords_cart])
+                        global_tracker_labels.extend(nuove_labels)
 
                 df_final['label'] = final_labels
 
@@ -608,7 +631,7 @@ if __name__ == "__main__":
 
     known_clusters_coords = []
     known_clusters_ids = []
-    threshold_deg = 0.0011
+    threshold_deg = 35 / 3600  # Aggiornato col nuovo valore corretto
     unique_files = df_no['file_index'].unique()
     next_internal_id = 1
     no_mapping = {}
@@ -633,17 +656,50 @@ if __name__ == "__main__":
             for i, (match_idx, dist, ra_curr, dec_curr) in enumerate(
                     zip(idx_cluster, d2d, subset['RA_centroid'], subset['DEC_centroid'])):
                 global_idx = indices_subset[i]
+
+                # Applicata la modifica per aggiornare la memoria e risolvere il doppio append
                 if dist.deg <= threshold_deg:
                     no_mapping[global_idx] = known_clusters_ids[match_idx]
+                    # Aggiorno le coordinate in memoria per seguire lo spostamento
+                    known_clusters_coords[match_idx] = (ra_curr, dec_curr)
                 else:
                     cid = f"INT_{next_internal_id}"
                     known_clusters_ids.append(cid)
                     known_clusters_coords.append((ra_curr, dec_curr))
-                    known_clusters_ids.append(cid)
                     no_mapping[global_idx] = cid
                     next_internal_id += 1
 
     for idx, uid in no_mapping.items(): big_df.at[idx, 'run_unique_id'] = uid
+
+    # =================================================================
+    # FILTRO TEMPORALE E FILTRO RIPETIZIONI (< 2)
+    # =================================================================
+    print("Eseguo il filtraggio temporale e delle ripetizioni minime...")
+
+    # 1. applico il filtro di prossimità temporale (+/- 2 immagini)
+    big_df['da_eliminare_temporale'] = False
+    mask_no_temp = big_df['Corrispondenza'] == 'NO'
+
+    for uid, group in big_df[mask_no_temp].groupby('run_unique_id'):
+        indici_file = group['file_index'].values
+        for idx_row, f_idx in zip(group.index, indici_file):
+            # cerco se esiste almeno una rilevazione dello stesso oggetto nel range di 2 immagini adiacenti
+            vicini = [x for x in indici_file if x != f_idx and abs(x - f_idx) <= 2]
+            if len(vicini) == 0:
+                # marco la singola rilevazione isolata per l'eliminazione
+                big_df.at[idx_row, 'da_eliminare_temporale'] = True
+
+    # elimino materialmente le righe isolate temporalmente
+    big_df = big_df[~big_df['da_eliminare_temporale']].drop(columns=['da_eliminare_temporale'])
+
+    # 2. applico il filtro per numero totale di ripetizioni (< 2)
+    conteggi_aggiornati = big_df['run_unique_id'].value_counts()
+    id_da_scartare = conteggi_aggiornati[conteggi_aggiornati < 2].index
+
+    # creo la maschera ed elimino i NO con meno di 2 ripetizioni totali
+    mask_da_scartare_rip = (big_df['Corrispondenza'] == 'NO') & (big_df['run_unique_id'].isin(id_da_scartare))
+    big_df = big_df[~mask_da_scartare_rip]
+    # =================================================================
 
     print("Calcolo statistiche globali e riorganizzazione colonne...")
     cols_flux = ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper', 'flusso_fisso_max_run']

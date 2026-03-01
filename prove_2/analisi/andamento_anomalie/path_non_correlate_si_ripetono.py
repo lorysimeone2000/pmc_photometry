@@ -23,7 +23,9 @@ from astropy.table import Table
 from photutils.segmentation import SourceFinder
 from photutils.detection import find_peaks
 from photutils.aperture import CircularAperture
+from astropy.wcs import WCS
 from pathlib import Path
+from shapely.geometry import Point, Polygon
 
 
 # =============================================================================
@@ -87,7 +89,7 @@ else:
     print("ERRORE: File parametri non trovato.")
     parametri = {}
 
-RUN_REF = 2
+RUN_REF = 1
 
 fwhm = parametri.get('fwhm', 2.8)
 size = parametri.get('size', 5)
@@ -97,7 +99,7 @@ threshold = parametri.get('threshold_assoluta', 3.0)
 n = parametri.get('pixel', 5)
 
 # Cerco dinamicamente la cartella tabelle_unite_run_{RUN_REF}
-cartella_csv_path = cerca_cartella_nel_progetto(BASE_DIR, f"tabelle_unite_run_{RUN_REF}")
+cartella_csv_path = cerca_cartella_nel_progetto(BASE_DIR, f"prove_2/tabelle/tabelle_unite/tabelle_unite_run_{RUN_REF}")
 if cartella_csv_path is None:
     print(f"ERRORE CRITICO: Cartella 'tabelle_unite_run_{RUN_REF}' non trovata.")
     exit()
@@ -105,16 +107,15 @@ cartella_csv = str(cartella_csv_path)
 
 # Lista tutti i file CSV e ordinali
 file_csv = sorted([f for f in os.listdir(cartella_csv) if f.endswith('.csv')])
-print("lista:")
 
 print(f"Trovati {len(file_csv)} file CSV:")
-'''for file in file_csv:
-    print(f"  - {file}")'''
 
 i = 0
 j = 0
 posizioni_lista = []  # lista che dovrà essere riempita con tutte le poszioni di tutte le tabelle
 colori_lista = []  # Lista per i colori di ogni punto
+numeri_immagine_lista = []  # memorizzo l'indice dell'immagine per poterlo stampare accanto a ogni pallino
+id_lista = []  # memorizzo l'ID assegnato all'oggetto
 
 # creo una colormap per la sfumatura
 colormap = cm.viridis  # posso cambiare con: 'plasma', 'inferno', 'magma', 'cool', 'spring', etc.
@@ -123,9 +124,8 @@ colormap = cm.viridis  # posso cambiare con: 'plasma', 'inferno', 'magma', 'cool
 for nome_file in file_csv:
     i += 1
     percorso_completo = os.path.join(cartella_csv, nome_file)
-    # print(f"Nome file csv: {nome_file}")
 
-    if i <= 2:
+    if i < 2:
         print(f"\n{'=' * 50}")
         print(f"Elaborazione: {nome_file}")
         print(f"{'=' * 50}")
@@ -135,39 +135,54 @@ for nome_file in file_csv:
         tbl = Table.from_pandas(df)
         j = j + len(tbl)
 
-        mask_si = np.char.startswith(tbl['Corrispondenza'].astype(str), 'SI')
-        tbl_no = tbl[~mask_si]
-        mask_no_ripetizioni = tbl_no['ripetizioni'] == 1
-        tbl_no_no_ripetizioni = tbl_no[mask_no_ripetizioni]
-        # print(f"Trovati {len(tbl_no_no_ripetizioni)} oggetti")
+        mask_no = ~np.char.startswith(tbl['Corrispondenza'].astype(str), 'SI')
+        mask_ripetizioni = tbl['ripetizioni'] > 1
+        mask_combinata = mask_ripetizioni & mask_no
+        tbl_no = tbl[mask_combinata]
 
-        posizioni_file = np.transpose((tbl_no_no_ripetizioni['RA_centroid'], tbl_no_no_ripetizioni[
-            'DEC_centroid']))  # creo l'array di posizioni per questo file
-        posizioni_lista.append(posizioni_file)  # lo aggiungo alla lista totale
+        # Filtro per mantenere solo le sorgenti con ripetizioni maggiori di 1
+        mask_ripetizioni = tbl_no['ripetizioni'] > 1
+        tbl_ripetuti = tbl_no[mask_ripetizioni]
 
-        # Calcola il colore per questo file
-        if len(file_csv) > 1:
-            colore_valore = i / (len(file_csv))
-        else:
-            colore_valore = 0.5  # Se c'è solo un file
+        if len(tbl_ripetuti) > 0:
+            posizioni_file = np.transpose(
+                (tbl_ripetuti['RA_centroid'], tbl_ripetuti['DEC_centroid']))  # creo l'array di posizioni
+            posizioni_lista.append(posizioni_file)  # lo aggiungo alla lista totale
 
-        colore_rgb = colormap(colore_valore)
+            # salvo il numero dell'immagine e l'ID per ciascuna delle posizioni appena trovate
+            numeri_immagine_lista.extend([i] * len(posizioni_file))
+            id_lista.extend(tbl_ripetuti['ID'])
 
-        if i < 3:  # Debug
-            print(f"Punti: {len(posizioni_file)}")
-            print(f"Valore colore: {colore_valore:.3f}")
-            print(f"Colore RGB: {colore_rgb[:3]}")
+            # Calcola il colore per questo file
+            if len(file_csv) > 1:
+                colore_valore = i / (len(file_csv))
+            else:
+                colore_valore = 0.5  # Se c'è solo un file
 
-        # Aggiungo lo stesso colore per tutti i punti di questo file
-        for _ in range(len(posizioni_file)):
-            colori_lista.append(colore_rgb)
+            colore_rgb = colormap(colore_valore)
+
+            if i < 3:  # Debug
+                print(f"Punti: {len(posizioni_file)}")
+                print(f"Valore colore: {colore_valore:.3f}")
+                print(f"Colore RGB: {colore_rgb[:3]}")
+
+            # Aggiungo lo stesso colore per tutti i punti di questo file
+            for _ in range(len(posizioni_file)):
+                colori_lista.append(colore_rgb)
 
     except Exception as e:
         print(f"Errore nella lettura di {nome_file}: {e}")
 
+if not posizioni_lista:
+    print(f"Nessun oggetto con ripetizioni > 1 trovato nella run {RUN_REF}.")
+    exit()
+
 posizioni_array = np.vstack(posizioni_lista)
-print(f"Nella run {RUN_REF} ci sono {len(posizioni_array)} oggetti che compaiono una sola volta nella stessa posizione")
+print(f"Nella run {RUN_REF} ci sono {len(posizioni_array)} oggetti non catalogati che si ripetono (ripetizioni > 1)")
 colori_array = np.array(colori_lista)
+numeri_immagine_array = np.array(numeri_immagine_lista)  # converto in array la lista dei numeri immagine
+id_array = np.array(id_lista)  # converto in array gli id
+
 print(f"\n{'=' * 60}")
 print(f"ARRAY FINALE CREATO")
 print(f"{'=' * 60}")
@@ -179,6 +194,8 @@ print("Ho verificato che l'asse x e l'asse y sono corrispondenti a quelli dell'i
 
 # secondi
 x = []
+fov_ra = []
+fov_dec = []
 
 # Cerco dinamicamente la lista delle immagini
 file_lista_immagini = cerca_file_nel_progetto(BASE_DIR, f'lista_immagini_run_{RUN_REF}.txt')
@@ -218,10 +235,29 @@ for percorso_file in file_list:
             if n == 1:
                 x.append(0)
                 t1 = image_header["TSTART"]
-                # print(0 , "secondi")
+
+                # estraggo i confini della fotocamera dalla prima immagine
+                w_first = WCS(image_header)
+                nx = image_header.get('NAXIS1', 3072)
+                ny = image_header.get('NAXIS2', 2048)
+
+                # creo i 4 angoli del sensore per passarlo a Shapely
+                corners_pix = np.array([
+                    [0, 0],
+                    [nx, 0],
+                    [nx, ny],
+                    [0, ny]
+                ])
+                corners_world = w_first.pixel_to_world(corners_pix[:, 0], corners_pix[:, 1])
+
+                # Creo il poligono matematico della camera usando shapely
+                polygon_coords = np.column_stack((corners_world.ra.deg, corners_world.dec.deg))
+                poly_fov = Polygon(polygon_coords)
+
+                # Estraggo il perimetro esterno chiuso (che include il ritorno al punto di origine)
+                fov_ra, fov_dec = poly_fov.exterior.xy
             else:
                 x.append((image_header["TSTART"] - t1) / np.float64(1e3))
-                # print((image_header["TSTART"]-t1)/np.float64(1e3) , "secondi")
     except Exception as e:
         print(f"Errore caricamento FITS {percorso_file}: {e}")
 
@@ -236,10 +272,19 @@ plt.scatter(posizioni_array[:, 0], posizioni_array[:, 1],
             color=colori_array,
             linewidth=0)  # ⬅ Nessuna linea di bordo
 
+# aggiungo il testo con il numero dell'immagine e l'ID vicino a ogni pallino
+for x_val, y_val, num_img, obj_id in zip(posizioni_array[:, 0], posizioni_array[:, 1], numeri_immagine_array, id_array):
+    plt.text(x_val, y_val, f"{num_img}\nID: {obj_id}", fontsize=5, alpha=0.7, ha='left', va='bottom')
+
+# aggiungo il bordo sottile che rappresenta il FOV della fotocamera estratto dal Poligono
+if len(fov_ra) > 0 and len(fov_dec) > 0:
+    plt.plot(fov_ra, fov_dec, color='black', linewidth=0.8, linestyle='-', zorder=1, label='Confini Fotocamera')
+    plt.legend(loc='upper right', fontsize=9)
+
 plt.xlabel('RA (Gradi)')
 plt.ylabel('DEC (Gradi)')
 plt.title(
-    f'Posizioni delle sorgenti non catalogate che non si ripetono nella stessa posizione della run {RUN_REF}\nTotale: {len(posizioni_array)} sorgenti da {len(file_csv)} file della run')
+    f'Posizioni delle sorgenti non catalogate che si ripetono (ripetizioni > 1) della run {RUN_REF}\nTotale: {len(posizioni_array)} sorgenti da {len(file_csv)} file della run')
 plt.grid(True, alpha=0.4, linestyle='--')
 
 # =========================================================
@@ -265,7 +310,7 @@ cbar.set_ticks(np.linspace(np.min(x), np.max(x), 10))  # 10 ticks equidistanti
 
 plt.tight_layout()
 plt.savefig(f'path_non_correlate_no_ripetizioni_run_{RUN_REF}.png')
-plt.show()
+# plt.show()
 
 # =============================================================================
 # NUOVO GRAFICO: Numero totale di oggetti 'NO' cumulativo nel tempo (Run 1, 2, 3)
@@ -279,12 +324,13 @@ colori_runs = {1: 'blue', 2: 'green', 3: 'red'}
 tutti_i_tempi = []
 tutti_i_conteggi_no = []
 tutti_i_colori = []  # Per assegnare a ogni punto il colore della sua run
+tutti_i_numeri_img_temporale = []  # memorizzo il numero dell'immagine per questo grafico
 
 t0_global = None  # Tempo zero assoluto (inizio Run 1)
 run_boundaries = []  # Per memorizzare il tempo di fine di ogni run e tracciare la linea verticale
 
 for r in [1, 2, 3]:
-    cartella_csv_r_path = cerca_cartella_nel_progetto(BASE_DIR, f"tabelle_unite_run_{r}")
+    cartella_csv_r_path = cerca_cartella_nel_progetto(BASE_DIR, f"prove_2/tabelle/tabelle_unite/tabelle_unite_run_{r}")
     if not cartella_csv_r_path:
         continue
     cartella_csv_r = str(cartella_csv_r_path)
@@ -333,20 +379,23 @@ for r in [1, 2, 3]:
                 tempo_relativo = (t_curr - t0_global) / 1000.0
                 ultimo_tempo_run = tempo_relativo
 
-            # 2. Conto gli oggetti "NO"
+            # 2. Conto gli oggetti "NO" con ripetizioni > 1
             percorso_completo_csv = os.path.join(cartella_csv_r, nome_file_csv)
             df = pd.read_csv(percorso_completo_csv, comment="#")
             tbl = Table.from_pandas(df)
 
             mask_no = ~np.char.startswith(tbl['Corrispondenza'].astype(str), 'SI')
-            mask_no_ripetizioni = tbl['ripetizioni'] == 1
-            mask_combinata = mask_no_ripetizioni & mask_no&mask_no_ripetizioni
+            mask_ripetizioni = tbl['ripetizioni'] > 1
+            mask_combinata = mask_ripetizioni & mask_no
             conteggio_no = np.sum(mask_combinata)
 
             # 3. Salvo nelle liste globali
             tutti_i_tempi.append(tempo_relativo)
             tutti_i_conteggi_no.append(conteggio_no)
             tutti_i_colori.append(colori_runs[r])
+
+            # salvo il numero dell'immagine (facendolo partire da 1)
+            tutti_i_numeri_img_temporale.append(n_img + 1)
 
         except Exception as e:
             # Ignoro i file corrotti ma stampo l'errore per sicurezza
@@ -369,6 +418,10 @@ for r in [1, 2, 3]:
     plt.scatter(tempi_arr[mask_run], conteggi_arr[mask_run],
                 color=colori_runs[r], s=5, label=f'Run {r}', zorder=2)
 
+# stampo il numero dell'immagine accanto a ogni pallino anche per il grafico temporale
+for x_val, y_val, num_img in zip(tempi_arr, conteggi_arr, tutti_i_numeri_img_temporale):
+    plt.text(x_val, y_val, str(num_img), fontsize=6, alpha=0.7, ha='left', va='bottom')
+
 # Disegno le linee verticali di separazione e le etichette per ogni run
 for r_idx, (run_num, t_end) in enumerate(run_boundaries):
     plt.axvline(x=t_end, color='black', linestyle='--', alpha=0.5)
@@ -389,9 +442,10 @@ for r_idx, (run_num, t_end) in enumerate(run_boundaries):
 
 plt.xlabel('Tempo dall\'inizio della Run 1 (secondi)')
 plt.ylabel('Numero totale di oggetti non catalogati (NO)')
-plt.title('Andamento degli oggetti non catalogati cumulativo (Run 1, 2, 3) \n solo quelli che non si ripetono')
+plt.title(
+    'Andamento degli oggetti non catalogati cumulativo (Run 1, 2, 3)\nsolo quelli che si ripetono (ripetizioni > 1)')
 plt.grid(True, alpha=0.4, linestyle='--')
 plt.legend()
 plt.tight_layout()
-plt.savefig('andamento_non_catalogati_no_ripetizioni_temporale_continuo.png')
-plt.show()
+plt.savefig('andamento_non_catalogati_con_ripetizioni_temporale_continuo.png')
+# plt.show()

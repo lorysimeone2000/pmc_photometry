@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import sys
 from astropy.table import Table
 import warnings
 from astropy.io import fits
@@ -26,7 +27,7 @@ warnings.filterwarnings('ignore', category=FITSFixedWarning)
 
 
 # =============================================================================
-# --- FUNZIONI DI UTILITÀ PER LA RICERCA DINAMICA ---
+# --- CONFIGURAZIONE PERCORSI E IMPORTAZIONE MODULI ESTERNI ---
 # =============================================================================
 
 def trova_cartella_base(nome_target="pmc_photometry"):
@@ -38,79 +39,19 @@ def trova_cartella_base(nome_target="pmc_photometry"):
     print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
     return path_corrente.parent
 
+BASE_DIR = trova_cartella_base("pmc_photometry")
 
-def cerca_file_nel_progetto(base_dir, nome_file_esatto):
-    # cerco un file specifico in tutte le sottocartelle
-    files_trovati = list(base_dir.rglob(nome_file_esatto))
-    if not files_trovati: return None
-    if len(files_trovati) > 1:
-        files_trovati.sort(key=lambda p: len(str(p)))
-    return files_trovati[0]
+if str(BASE_DIR) not in sys.path:
+    sys.path.append(str(BASE_DIR))
 
-
-def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
-    # cerco una cartella specifica in tutte le sottocartelle
-    cartelle_trovate = [p for p in base_dir.rglob(nome_cartella_esatto) if p.is_dir()]
-    if not cartelle_trovate: return None
-    cartelle_trovate.sort(key=lambda p: len(str(p)))
-    if len(cartelle_trovate) > 1:
-        print(
-            f"INFO: Trovate {len(cartelle_trovate)} cartelle '{nome_cartella_esatto}'. Uso la prima: {cartelle_trovate[0].relative_to(base_dir)}")
-    return cartelle_trovate[0]
+# importo le mie funzioni di utilità e astrometria
+from funzioni.utilita import *
+from funzioni.astrometria import *
 
 
-def converti_valore(valore):
-    # converto una stringa nel tipo di dato appropriato
-    valore = str(valore).strip()
-    if not valore: return valore
-    try:
-        return int(valore)
-    except ValueError:
-        pass
-    try:
-        return float(valore)
-    except ValueError:
-        pass
-    if valore.upper() in ['T', 'TRUE', 'YES', 'Y']:
-        return True
-    elif valore.upper() in ['F', 'FALSE', 'NO', 'N']:
-        return False
-    return valore
-
-
-def leggi_header_da_csv(filename):
-    # leggo l'header FITS salvato nelle prime righe del file CSV
-    header_dict = {}
-    with open(filename, 'r') as f:
-        for line in f:
-            if line.startswith('#') and ':' in line:
-                clean_line = line.strip()[1:].strip()
-                if clean_line and ': ' in clean_line:
-                    key, value = clean_line.split(': ', 1)
-                    header_dict[key] = converti_valore(value)
-            elif line.strip() == '#':
-                break
-    return header_dict
-
-
-def leggi_file_parametri(percorso):
-    # leggo il file dei parametri per la segmentazione
-    parametri = {}
-    if not percorso or not os.path.exists(percorso): return {}
-    with open(percorso, 'r') as file:
-        next(file, None)  # salto l'intestazione
-        for riga in file:
-            riga = riga.split('#')[0].strip()
-            if riga:
-                parts = riga.split()
-                if len(parts) >= 2:
-                    try:
-                        valore = float(parts[1]) if '.' in parts[1] else int(parts[1])
-                        parametri[parts[0]] = valore
-                    except ValueError:
-                        pass
-    return parametri
-
+# =============================================================================
+# --- FUNZIONI GRAFICHE SPECIFICHE ---
+# =============================================================================
 
 def salva_cutout(region, data_sub, r_corr_px, wcs_ref, img_idx, run_id, cartella_out, parametri_seg, base_dir_progetto):
     # estraggo i dati della stella
@@ -120,8 +61,7 @@ def salva_cutout(region, data_sub, r_corr_px, wcs_ref, img_idx, run_id, cartella
     media_flusso = region['media_flusso_fisso_max_run']
     corr = region['corrispondenza']
 
-    # calcolo il lato del riquadro basato sulla radice dell'area
-    # side = np.sqrt(area) * 1.5 * 2
+    # calcolo il lato del riquadro
     side = 2*35/3600 / np.mean(proj_plane_pixel_scales(wcs_ref))
     half_side = side*1.25 / 2.0
 
@@ -142,12 +82,17 @@ def salva_cutout(region, data_sub, r_corr_px, wcs_ref, img_idx, run_id, cartella
 
     fig, ax = plt.subplots(figsize=(6, 6))
 
-    # Inizializzo le liste per la legenda manuale
+    # inizializzo le liste per la legenda manuale
     legend_elements = []
 
     if cutout.size > 0:
         norm = simple_norm(cutout, 'log', percent=99.9)
-        ax.imshow(cutout, cmap='gray_r', origin='lower', extent=[x_min, x_max, y_min, y_max], norm=norm)
+        # mappo l'immagine per poterne estrarre la colorbar in seguito
+        img_plot = ax.imshow(cutout, cmap='gray_r', origin='lower', extent=[x_min, x_max, y_min, y_max], norm=norm)
+
+        # aggiungo la colorbar dell'intensità dei pixel
+        cbar_img = fig.colorbar(img_plot, ax=ax, fraction=0.046, pad=0.04)
+        cbar_img.set_label('Intensità (ADU)')
 
         # applico l'image segmentation al cutout usando i parametri forniti
         fwhm = parametri_seg.get('fwhm', 3.0)
@@ -162,43 +107,37 @@ def salva_cutout(region, data_sub, r_corr_px, wcs_ref, img_idx, run_id, cartella
             segment_map = finder(convolved_cutout, threshold)
 
             if segment_map is not None:
-                # disegno i confini. Rimosso 'label' per evitare il warning
+                # disegno i confini
                 ax.contour(segment_map.data > 0, levels=[0.5], colors='#00ff00', alpha=0.5, linewidths=1.5,
                            extent=[x_min, x_max, y_min, y_max], origin='lower', zorder=8)
 
-                # Aggiungo l'elemento alla legenda (proxy artist)
+                # aggiungo l'elemento alla legenda
                 legend_elements.append(Patch(facecolor='none', edgecolor='#00ff00', alpha=0.5,
                                              label='Regione della segmentazione', linewidth=1.5))
         except Exception:
             pass
 
-    # --- NUOVA LOGICA: RECUPERO IL CATALOGO ORIGINALE PER STAMPARE TUTTE LE STELLE ---
-    # cerco la cartella delle sorgenti catalogate della run corrente
-    nome_cartella_cat = f"sorgenti_catalogate_run_{run_id}"
+    # --- RECUPERO IL CATALOGO ORIGINALE PER STAMPARE TUTTE LE STELLE ---
+    nome_cartella_cat = f"prove_2/tabelle/sorgenti/catalogate_run/sorgenti_catalogate_run_{run_id}"
     cartella_cat = cerca_cartella_nel_progetto(base_dir_progetto, nome_cartella_cat)
 
-    tbl_cat_box = []  # inizializzo la lista vuota in caso di problemi
+    tbl_cat_box = []
 
     if cartella_cat is not None:
-        # costruisco il nome esatto del file csv in base all'indice
         nome_file_cat = f"run_{run_id}_stelle_catalogate_immagine_{img_idx:03d}.csv"
         path_file_cat = cerca_file_nel_progetto(cartella_cat, nome_file_cat)
 
         if path_file_cat is not None:
             try:
-                # leggo TUTTO il catalogo per quell'immagine
                 df_cat_full = pd.read_csv(path_file_cat, comment='#')
                 tbl_cat_full = Table.from_pandas(df_cat_full)
 
-                # se non ho xcentroid e ycentroid (poiché il catalogo puro potrebbe avere solo RA e DEC),
-                # li genero al volo usando il WCS che ho passato alla funzione
                 if 'xcentroid' not in tbl_cat_full.colnames or 'ycentroid' not in tbl_cat_full.colnames:
                     coords_cat_sky = u.Quantity([tbl_cat_full['RAJ2000'], tbl_cat_full['DEJ2000']], unit=u.deg)
                     x_pix, y_pix = wcs_ref.world_to_pixel_values(coords_cat_sky[0], coords_cat_sky[1])
                     tbl_cat_full['xcentroid'] = x_pix
                     tbl_cat_full['ycentroid'] = y_pix
 
-                # filtro tenendo solo quelle che cadono visivamente dentro il mio riquadro specifico
                 mask_in_box = (tbl_cat_full['xcentroid'] >= x_min) & (tbl_cat_full['xcentroid'] <= x_max) & \
                               (tbl_cat_full['ycentroid'] >= y_min) & (tbl_cat_full['ycentroid'] <= y_max)
 
@@ -208,29 +147,27 @@ def salva_cutout(region, data_sub, r_corr_px, wcs_ref, img_idx, run_id, cartella
                 pass
 
     if len(tbl_cat_box) > 0:
-        # fisso il limite inferiore della colorbar a 5, il superiore a 15 (o lo adatto ai dati)
         min_mag = min(np.nanmin(tbl_cat_box['Mag']), 5)
         max_mag = 15
 
         ax.scatter(tbl_cat_box['xcentroid'], tbl_cat_box['ycentroid'], c=tbl_cat_box['Mag'],
                    cmap='viridis_r', vmin=min_mag, vmax=max_mag, s=4, zorder=5)
 
-        # Aggiungo alla legenda
         legend_elements.append(Line2D([0], [0], marker='o', color='w', label='Stelle catalogate',
                                       markerfacecolor='gray', markersize=5))
 
-        # Colorbar
+        # colorbar dedicata per la magnitudine
         sm = plt.cm.ScalarMappable(cmap='viridis_r', norm=plt.Normalize(vmin=min_mag, vmax=max_mag))
         sm.set_array([])
-        cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label('Mag')
+        cbar_mag = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.08)
+        cbar_mag.set_label('Mag')
 
-    # Cerchio di correlazione
+    # cerchio di correlazione
     circle = Circle((xc, yc), r_corr_px, edgecolor='#ffff00', facecolor='none', linewidth=1.5, zorder=10)
     ax.add_patch(circle)
     legend_elements.append(Patch(facecolor='none', edgecolor='#ffff00', label='Regione di correlazione', linewidth=1.5))
 
-    # Croce per NO
+    # croce per NO
     if str(corr) == 'NO':
         ax.plot(xc, yc, marker='+', color='red', markersize=15, markeredgewidth=2, zorder=15)
         legend_elements.append(Line2D([0], [0], marker='+', color='red', label='Centroide (No match)',
@@ -240,25 +177,22 @@ def salva_cutout(region, data_sub, r_corr_px, wcs_ref, img_idx, run_id, cartella
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
 
-    # Stampo la legenda corretta
     ax.legend(handles=legend_elements, loc='upper right', fontsize=7, framealpha=0.7)
 
     nome_figura = f"{star_id}_immagine{img_idx:03d}_run_{run_id}.png"
     percorso_completo = cartella_out / nome_figura
     plt.savefig(percorso_completo, dpi=300, bbox_inches='tight')
     plt.close(fig)
-    # Print rimosso per il loop di tutti i NO match, attivo solo se serve
 
 
 # =============================================================================
 # --- 1. IMPOSTAZIONE DINAMICA DEI PERCORSI E PARAMETRI ---
 # =============================================================================
 
-BASE_DIR = trova_cartella_base("pmc_photometry")
 print(f"--- CONFIGURAZIONE SISTEMA ---")
 print(f"Cartella Base rilevata: {BASE_DIR}")
 
-cartella_unite = cerca_cartella_nel_progetto(BASE_DIR, "tabelle_unite")
+cartella_unite = cerca_cartella_nel_progetto(BASE_DIR, "prove_2/tabelle/tabelle_unite")
 if cartella_unite is None:
     print("ERRORE: Cartella 'tabelle_unite' non trovata.")
     exit()
@@ -273,11 +207,11 @@ print(f"------------------------------")
 
 run_list = [1, 2, 3]
 KRON_TARGET = 300
-RUN_REF = 1
+RUN_REF = 3
 RUN_REF = RUN_REF - 1
-INDICE_IMMAGINE_RIFERIMENTO = 79
+INDICE_IMMAGINE_RIFERIMENTO = 35
 MIN_COUNT_RUN1 = 75
-MIN_COUNT_RUN1_NO = 25
+MIN_COUNT_RUN1_NO = 1
 
 nome_cartella_output = f"Kron_ref_{KRON_TARGET}_run_{run_list[RUN_REF]}_immagine_{INDICE_IMMAGINE_RIFERIMENTO:03d}"
 cartella_output = Path(nome_cartella_output)

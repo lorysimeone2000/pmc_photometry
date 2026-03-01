@@ -187,7 +187,7 @@ vizier = Vizier(
 )
 
 # cerco le cartelle necessarie
-cartella_unite = cerca_cartella_nel_progetto(BASE_DIR, "tabelle_unite")
+cartella_unite = cerca_cartella_nel_progetto(BASE_DIR, "prove_2/tabelle/tabelle_unite")
 if cartella_unite is None:
     print("ERRORE: Cartella 'tabelle_unite' non trovata.")
     exit()

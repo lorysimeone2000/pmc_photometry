@@ -99,7 +99,7 @@ threshold = parametri.get('threshold_assoluta', 3.0)
 n = parametri.get('pixel', 5)
 
 # Cerco dinamicamente la cartella tabelle_unite_run_{RUN_REF}
-cartella_csv_path = cerca_cartella_nel_progetto(BASE_DIR, f"tabelle_unite_run_{RUN_REF}")
+cartella_csv_path = cerca_cartella_nel_progetto(BASE_DIR, f"prove_2/tabelle/tabelle_unite/tabelle_unite_run_{RUN_REF}")
 if cartella_csv_path is None:
     print(f"ERRORE CRITICO: Cartella 'tabelle_unite_run_{RUN_REF}' non trovata.")
     exit()
@@ -438,4 +438,4 @@ plt.grid(True, alpha=0.4, linestyle='--')
 plt.legend()
 plt.tight_layout()
 plt.savefig('andamento_non_catalogati_temporale_continuo.png')
-# plt.show() <-- Commentato per evitare l'avviso su WSL
+plt.show() # <-- Commentato per evitare l'avviso su WSL

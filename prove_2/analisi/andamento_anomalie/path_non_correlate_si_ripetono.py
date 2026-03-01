@@ -89,7 +89,7 @@ else:
     print("ERRORE: File parametri non trovato.")
     parametri = {}
 
-RUN_REF = 1
+RUN_REF = 3
 
 fwhm = parametri.get('fwhm', 2.8)
 size = parametri.get('size', 5)
@@ -200,7 +200,7 @@ fov_dec = []
 # Cerco dinamicamente la lista delle immagini
 file_lista_immagini = cerca_file_nel_progetto(BASE_DIR, f'lista_immagini_run_{RUN_REF}.txt')
 if not file_lista_immagini:
-    print("ERRORE: File 'lista_immagini_run_1.txt' non trovato.")
+    print(f"ERRORE: File 'lista_immagini_run_{RUN_REF}.txt' non trovato.")
     exit()
 
 # Leggo la lista
@@ -309,8 +309,8 @@ cbar = plt.colorbar(sm, ax=plt.gca(), label='Secondi')
 cbar.set_ticks(np.linspace(np.min(x), np.max(x), 10))  # 10 ticks equidistanti
 
 plt.tight_layout()
-plt.savefig(f'path_non_correlate_no_ripetizioni_run_{RUN_REF}.png')
-# plt.show()
+plt.savefig(f'path_non_correlate_con_ripetizioni_run_{RUN_REF}.png')
+plt.show()
 
 # =============================================================================
 # NUOVO GRAFICO: Numero totale di oggetti 'NO' cumulativo nel tempo (Run 1, 2, 3)

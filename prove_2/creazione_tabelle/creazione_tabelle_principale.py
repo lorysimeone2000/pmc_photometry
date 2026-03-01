@@ -224,14 +224,18 @@ if __name__ == "__main__":
             print(f"Nessun FITS in Run {run}, salto.")
             continue
 
-        cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR, "prove_2/tabelle")
-        if cartella_tabelle is None:
-            print("Cartella tabelle non trovata")
+        # =============================================================================
+        # DEFINIZIONE E CREAZIONE AUTOMATICA PERCORSI DI OUTPUT (CORRETTO)
+        # =============================================================================
+        # Sposto questo blocco fuori da ogni condizione restrittiva
+        cartella_prove = BASE_DIR / "prove_2"
+        cartella_tabelle = cartella_prove / "tabelle"
 
-        output_dir = cartella_tabelle / f"tabelle_unite/tabelle_unite_run_{run}"
+        # Creo il percorso finale (mkdir con parents=True gestisce tutta la catena)
+        output_dir = cartella_tabelle / "tabelle_unite" / f"tabelle_unite_run_{run}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"Cartella di output: {output_dir}")
+        print(f"Cartella di output verificata/creata: {output_dir}")
 
         # Inizializzo le mie variabili di tracking a zero per ogni singola run
         global_tracker_coords = None

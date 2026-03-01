@@ -87,8 +87,7 @@ if PMC_DATA:
                                 'tempo': Time(tempo_obs_str),
                                 'dej2000': float(dec)
                             })
-            except Exception:
-                pass
+
 
     if not file_validi:
         print("Nessun file trovato per il Blazar Markarian 421.")

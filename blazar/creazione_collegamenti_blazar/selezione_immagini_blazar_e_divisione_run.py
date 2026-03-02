@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 # 0. CONFIGURAZIONE PERCORSI E IMPORTAZIONE MODULI ESTERNI
 # =============================================================================
 
-def trova_cartella_base(nome_target="pmc_photometry"):
+def trova_cartella_base(nome_target="Lorenzo"):
     # risalgo l'albero delle directory per trovare la radice del progetto
     path_corrente = Path(__file__).resolve()
     for parent in [path_corrente] + list(path_corrente.parents):
@@ -22,7 +22,7 @@ def trova_cartella_base(nome_target="pmc_photometry"):
             return parent
     return path_corrente.parent
 
-BASE_DIR = trova_cartella_base("pmc_photometry")
+BASE_DIR = trova_cartella_base("Lorenzo")
 
 if str(BASE_DIR) not in sys.path:
     sys.path.append(str(BASE_DIR))
@@ -38,7 +38,7 @@ coords_mrk421 = SkyCoord(ra=166.1138 * u.deg, dec=38.2088 * u.deg, frame='icrs')
 raggio_fov_tolleranza = 6 * u.deg
 
 PMC_DATA = cerca_cartella_nel_progetto(BASE_DIR, "PMC_DATA")
-cartella_blazar = BASE_DIR / "blazar/PMC_DATA_BLAZAR"
+cartella_blazar = BASE_DIR / "PMC_DATA_BLAZAR"
 cartella_blazar.mkdir(exist_ok=True, parents=True)
 
 if PMC_DATA:

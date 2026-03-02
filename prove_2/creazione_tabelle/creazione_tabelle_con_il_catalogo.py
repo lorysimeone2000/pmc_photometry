@@ -109,7 +109,7 @@ def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
 
 
 # Definisco la BASE_DIR dinamicamente
-BASE_DIR = trova_cartella_base("pmc_photometry")
+BASE_DIR = trova_cartella_base("Lorenzo")
 
 print(f"--- CONFIGURAZIONE SISTEMA ---")
 print(f"Cartella Base rilevata: {BASE_DIR}")

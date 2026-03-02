@@ -62,7 +62,7 @@ warnings.filterwarnings('ignore', category=VerifyWarning)
 # 0. CONFIGURAZIONE PERCORSI E IMPORTAZIONE MODULI ESTERNI
 # =============================================================================
 
-def trova_cartella_base(nome_target="pmc_photometry"):
+def trova_cartella_base(nome_target="Lorenzo"):
     path_corrente = Path(__file__).resolve()
     for parent in [path_corrente] + list(path_corrente.parents):
         if parent.name == nome_target:
@@ -71,7 +71,7 @@ def trova_cartella_base(nome_target="pmc_photometry"):
     return path_corrente.parent
 
 
-BASE_DIR = trova_cartella_base("pmc_photometry")
+BASE_DIR = trova_cartella_base("Lorenzo")
 
 if str(BASE_DIR) not in sys.path:
     sys.path.append(str(BASE_DIR))
@@ -89,7 +89,7 @@ print(f"------------------------------")
 ts = load.timescale()
 
 # 2. Imposto le coordinate del mio telescopio usando la funzione importata
-lat_oss, lon_oss, alt_oss = ottieni_coordinate_telescopio('ASTRI 1', BASE_DIR)
+lat_oss, lon_oss, alt_oss = ottieni_coordinate_telescopio('ASTRI 1', BASE_DIR / "pmc_photometry")
 
 # creo l'oggetto geografico wgs84
 osservatorio = wgs84.latlon(lat_oss, lon_oss, elevation_m=alt_oss)
@@ -167,7 +167,7 @@ if __name__ == "__main__":
     print("\nPreparo il catalogo satelliti storici...")
 
     file_fits_riferimento = None
-    cartella_dati = BASE_DIR / "blazar" / "PMC_DATA_BLAZAR"
+    cartella_dati = BASE_DIR / "PMC_DATA_BLAZAR"
 
     if cartella_dati.exists():
         f_list = list(cartella_dati.rglob('*.fit')) + list(cartella_dati.rglob('*.fits')) + list(
@@ -182,7 +182,7 @@ if __name__ == "__main__":
 
         cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR / 'blazar', 'tabelle_unite')
         if cartella_tabelle is None:
-            cartella_tabelle = BASE_DIR / "blazar" / "tabelle" / "tabelle_unite"
+            cartella_tabelle = BASE_DIR / "tabelle_blazar" / "tabelle_unite"
         cartella_tabelle.mkdir(parents=True, exist_ok=True)
 
         percorso_tle = scarica_tle_storici(tempo_ref_astropy, tuo_user, tua_password, cartella_tabelle)

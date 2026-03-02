@@ -59,7 +59,7 @@ warnings.filterwarnings('ignore', category=VerifyWarning)
 # 0. CONFIGURAZIONE PERCORSI E IMPORTAZIONE MODULI ESTERNI
 # =============================================================================
 
-def trova_cartella_base(nome_target="pmc_photometry"):
+def trova_cartella_base(nome_target="Lorenzo"):
     path_corrente = Path(__file__).resolve()
     for parent in [path_corrente] + list(path_corrente.parents):
         if parent.name == nome_target:
@@ -68,7 +68,7 @@ def trova_cartella_base(nome_target="pmc_photometry"):
     return path_corrente.parent
 
 
-BASE_DIR = trova_cartella_base("pmc_photometry")
+BASE_DIR = trova_cartella_base("Lorenzo")
 
 # Aggiungo la BASE_DIR al sys.path per permettere l'importazione della cartella 'funzioni'
 if str(BASE_DIR) not in sys.path:

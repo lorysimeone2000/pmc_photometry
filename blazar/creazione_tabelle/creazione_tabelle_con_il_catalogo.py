@@ -108,7 +108,7 @@ def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
 
 
 # Definisco la BASE_DIR dinamicamente
-BASE_DIR = trova_cartella_base("pmc_photometry")
+BASE_DIR = trova_cartella_base("Lorenzo")
 
 print(f"--- CONFIGURAZIONE SISTEMA ---")
 print(f"Cartella Base rilevata: {BASE_DIR}")
@@ -323,12 +323,12 @@ def leggi_header_da_csv(filename):
 # ELABORAZIONE DI TUTTI I FILE NELLA NUOVA STRUTTURA
 # =============================================================================
 
-cartella_dati = BASE_DIR / "blazar" / "PMC_DATA_BLAZAR"
+cartella_dati = BASE_DIR / "PMC_DATA_BLAZAR"
 cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR / 'blazar', "tabelle_cataloghi")
 
 if cartella_tabelle is None:
     # Creo se non esiste in base_dir
-    cartella_tabelle = BASE_DIR / "blazar" / "tabelle" / "tabelle_cataloghi"
+    cartella_tabelle = BASE_DIR / "tabelle_blazar" / "tabelle_cataloghi"
     cartella_tabelle.mkdir(parents=True, exist_ok=True)
 
 if not cartella_dati.exists():

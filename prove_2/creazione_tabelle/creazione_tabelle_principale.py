@@ -70,7 +70,7 @@ def trova_cartella_base(nome_target="pmc_photometry"):
     return path_corrente.parent
 
 
-BASE_DIR = trova_cartella_base("pmc_photometry")
+BASE_DIR = trova_cartella_base("Lorenzo")
 
 if str(BASE_DIR) not in sys.path:
     sys.path.append(str(BASE_DIR))
@@ -228,7 +228,7 @@ if __name__ == "__main__":
         # DEFINIZIONE E CREAZIONE AUTOMATICA PERCORSI DI OUTPUT (CORRETTO)
         # =============================================================================
         # Sposto questo blocco fuori da ogni condizione restrittiva
-        cartella_prove = BASE_DIR / "prove_2"
+        cartella_prove = BASE_DIR
         cartella_tabelle = cartella_prove / "tabelle"
 
         # Creo il percorso finale (mkdir con parents=True gestisce tutta la catena)

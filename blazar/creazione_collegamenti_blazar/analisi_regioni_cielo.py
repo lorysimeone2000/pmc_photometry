@@ -153,7 +153,7 @@ if PMC_DATA_BLAZAR:
         plt.savefig(nome_grafico, dpi=300)
         print(f"Grafico salvato: {nome_grafico}")
 
-        plt.show()
+        # plt.show()
         plt.close()
 else:
     print("Elaborazione interrotta: cartella PMC_DATA_BLAZAR non trovata.")

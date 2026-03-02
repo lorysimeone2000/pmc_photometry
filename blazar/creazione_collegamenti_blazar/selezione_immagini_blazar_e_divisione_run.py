@@ -10,6 +10,7 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
+
 # =============================================================================
 # 0. CONFIGURAZIONE PERCORSI E IMPORTAZIONE MODULI ESTERNI
 # =============================================================================
@@ -22,8 +23,11 @@ def trova_cartella_base(nome_target="Lorenzo"):
             return parent
     return path_corrente.parent
 
+
 BASE_DIR = trova_cartella_base("Lorenzo")
 
+# Se la cartella 'funzioni' ora si trova dentro 'pmc_photometry',
+# aggiungo quel percorso specifico al sys.path
 PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
 
 if PERCORSO_FUNZIONI not in sys.path:
@@ -44,7 +48,7 @@ cartella_blazar = BASE_DIR / "PMC_DATA_BLAZAR"
 cartella_blazar.mkdir(exist_ok=True, parents=True)
 
 if PMC_DATA:
-    # Cerco le cartelle risolvendo i symlink (fondamentale visto il tuo ls -ltr)
+    # Cerco le cartelle risolvendo i symlink
     sottocartelle = [d for d in PMC_DATA.iterdir() if d.is_dir() or d.is_symlink()]
     file_validi = []
 
@@ -53,7 +57,7 @@ if PMC_DATA:
     for cartella_giorno in sottocartelle:
         # Risolvo il symlink per accedere ai file reali
         percorso_reale = cartella_giorno.resolve()
-        
+
         file_fits_list = []
         for ext in ['*.fit', '*.fits', '*.FIT', '*.FITS']:
             file_fits_list.extend(percorso_reale.glob(ext))
@@ -73,14 +77,13 @@ if PMC_DATA:
                     tempo_obs_str = header.get('DATE-OBS')
 
                     if ra_val is not None and dec_val is not None:
-                        # Gestisco sia float (gradi) che stringhe (HH:MM:SS)
                         try:
                             if isinstance(ra_val, (int, float)):
                                 coords_centro = SkyCoord(ra=ra_val * u.deg, dec=dec_val * u.deg, frame='icrs')
                             else:
-                                # Se sono stringhe, specifico le unità
-                                coords_centro = SkyCoord(ra=ra_val, dec=dec_val, unit=(u.hourangle, u.deg), frame='icrs')
-                            
+                                coords_centro = SkyCoord(ra=ra_val, dec=dec_val, unit=(u.hourangle, u.deg),
+                                                         frame='icrs')
+
                             separazione = coords_centro.separation(coords_mrk421)
 
                             if separazione <= raggio_fov_tolleranza:
@@ -88,31 +91,27 @@ if PMC_DATA:
                                     'percorso_originale': percorso_file,
                                     'nome_file': percorso_file.name,
                                     'nome_giorno': cartella_giorno.name,
-                                    'tempo': Time(tempo_obs_str) if tempo_obs_str else Time(os.path.getmtime(percorso_file), format='unix'),
+                                    'tempo': Time(tempo_obs_str) if tempo_obs_str else Time(
+                                        os.path.getmtime(percorso_file), format='unix'),
                                     'dej2000': coords_centro.dec.deg
                                 })
-                        except Exception as e:
-                            # Salto il file se le coordinate non sono interpretabili
+                        except Exception:
                             continue
             except Exception:
                 continue
 
     if not file_validi:
-        print("\nERRORE: Nessun file trovato. Possibili cause:")
-        print("1. I symlink puntano a una cartella a cui l'utente lorysimeone non ha accesso (es. /home/astro/...).")
-        print("2. Le chiavi RA/DEC nell'header hanno nomi differenti da quelli standard.")
-        print("3. Il puntamento dei file è fuori dal raggio di 6 gradi da Mrk 421.")
+        print("\nERRORE: Nessun file trovato.")
         sys.exit()
 
     # --- Ordinamento e creazione RUN ---
     file_validi.sort(key=lambda x: x['tempo'])
-    
+
     soglia_tempo = 600.0
     soglia_spazio = 0.2
     contatore_run = 1
     tempo_precedente = None
     dej2000_precedente = None
-    file_trovati_blazar = []
 
     for dato in file_validi:
         if tempo_precedente is not None:
@@ -126,12 +125,14 @@ if PMC_DATA:
         cartella_destinazione_run.mkdir(parents=True, exist_ok=True)
 
         path_symlink = cartella_destinazione_run / dato['nome_file']
-        
-        # Creo il link usando il percorso assoluto reale
-        if not path_symlink.exists():
-            os.symlink(dato['percorso_originale'], path_symlink)
 
-        file_trovati_blazar.append(f"{dato['nome_giorno']}/{nome_run}/{dato['nome_file']}")
+        # Se il link esiste già, lo rimuovo per evitare l'errore FileExistsError
+        if path_symlink.exists() or path_symlink.is_symlink():
+            path_symlink.unlink()
+
+        # Creo il nuovo link simbolico
+        os.symlink(dato['percorso_originale'], path_symlink)
+
         tempo_precedente = dato['tempo']
         dej2000_precedente = dato['dej2000']
 

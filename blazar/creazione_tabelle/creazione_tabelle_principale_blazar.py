@@ -79,12 +79,6 @@ if PERCORSO_FUNZIONI not in sys.path:
     sys.path.append(PERCORSO_FUNZIONI)
 
 from funzioni.utilita import *
-from funzioni.astrometria import *PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
-
-if PERCORSO_FUNZIONI not in sys.path:
-    sys.path.append(PERCORSO_FUNZIONI)
-
-from funzioni.utilita import *
 from funzioni.astrometria import *
 
 print(f"--- CONFIGURAZIONE SISTEMA ---")
@@ -187,7 +181,7 @@ if __name__ == "__main__":
         tempo_ref_astropy = Time(hdu_ref[0].header['DATE-OBS'], format='isot', scale='utc')
         hdu_ref.close()
 
-        cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR / 'blazar', 'tabelle_unite')
+        cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR / 'tabelle_blazar', 'tabelle_unite')
         if cartella_tabelle is None:
             cartella_tabelle = BASE_DIR / "tabelle_blazar" / "tabelle_unite"
         cartella_tabelle.mkdir(parents=True, exist_ok=True)
@@ -212,8 +206,8 @@ if __name__ == "__main__":
         exit()
 
     # --- CICLO PER OGNI RUN ---
-    for cartella_giorno in [d for d in cartella_dati.iterdir() if d.is_dir()]:
-        for run_folder in [d for d in cartella_giorno.iterdir() if d.is_dir()]:
+    for cartella_giorno in sorted([d for d in cartella_dati.iterdir() if d.is_dir()]):
+        for run_folder in sorted([d for d in cartella_giorno.iterdir() if d.is_dir()]):
 
             run_name = run_folder.name
             print(f"\n==================== ELABORAZIONE {cartella_giorno.name} - {run_name} ====================")
@@ -380,7 +374,7 @@ if __name__ == "__main__":
                         df_no['Corrispondenza'] = 'NO'
                         for c in df_catalogate.columns: df_no[c] = np.nan
 
-                        tempo_scatto_astropy = Time(header_date_obs, format='isot', scale='utc')
+                        '''tempo_scatto_astropy = Time(header_date_obs, format='isot', scale='utc')
                         tempo_skyfield = ts.from_astropy(tempo_scatto_astropy)
 
                         ra_sat_list, dec_sat_list = [], []
@@ -406,7 +400,7 @@ if __name__ == "__main__":
 
                             # Elimino i falsi positivi causati dai satelliti
                             contatore_satelliti = contatore_satelliti + np.sum(mask_is_satellite)
-                            contatore_satelliti_presenti = contatore_satelliti_presenti + len(catalogo_satelliti)
+                            contatore_satelliti_presenti = contatore_satelliti_presenti + len(catalogo_satelliti)'''
 
                         df_final = pd.concat([df_si, df_no], ignore_index=True)
 
@@ -424,7 +418,7 @@ if __name__ == "__main__":
                 z = np.sin(dec_rad)
                 coords_cart = np.column_stack((x, y, z))
 
-                soglia_rad = np.radians(dist_ripetizione.deg)
+                soglia_rad = np.radians(dist_ripetizione.value)
                 soglia_3d = 2.0 * np.sin(soglia_rad / 2.0)
 
                 final_labels = np.empty(len(df_final), dtype=object)

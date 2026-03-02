@@ -11,6 +11,7 @@ from photutils.segmentation import detect_sources
 from photutils.segmentation import SourceCatalog
 import numpy as np
 import os
+import sys
 from astropy.visualization import SqrtStretch
 from astropy.visualization.mpl_normalize import ImageNormalize
 from photutils.segmentation import deblend_sources

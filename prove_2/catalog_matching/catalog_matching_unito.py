@@ -43,6 +43,7 @@ from astropy.table import Table, vstack
 
 # Importo Path per la gestione dinamica dei percorsi
 from pathlib import Path
+from astropy.wcs.utils import proj_plane_pixel_scales
 
 # Sopprimo i warning non critici
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
@@ -53,7 +54,7 @@ warnings.filterwarnings('ignore', category=VerifyWarning)
 # FUNZIONI DI GESTIONE PERCORSI E UTILITÀ
 # =============================================================================
 
-def trova_cartella_base(nome_target="pmc_photometry"):
+def trova_cartella_base(nome_target="Lorenzo"):
     # Cerco la cartella base risalendo l'albero delle directory
     path_corrente = Path(__file__).resolve()
     for parent in [path_corrente] + list(path_corrente.parents):
@@ -80,7 +81,7 @@ def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
     return cartelle_trovate[0]
 
 # Trovo la cartella base del mio progetto
-BASE_DIR = trova_cartella_base("pmc_photometry")
+BASE_DIR = trova_cartella_base("Lorenzo")
 
 # Leggo i parametri cercandoli dinamicamente
 parametri = {}
@@ -196,7 +197,7 @@ def leggi_header_da_csv(filename):
 run = 1
 
 # Cerco la cartella in cui trovo i file CSV delle stelle catalogate
-nome_cartella_csv = f"tabelle_unite_run_{run}"
+nome_cartella_csv = f"tabelle/tabelle_unite/tabelle_unite_run_{run}"
 cartella_csv_path = cerca_cartella_nel_progetto(BASE_DIR, nome_cartella_csv)
 
 if cartella_csv_path is None:
@@ -433,7 +434,8 @@ plt.xlabel('Ascensione Retta (RA J2000) [gradi]')
 plt.ylabel('Declinazione (DEC J2000) [gradi]')
 plt.title(f'Mappa del catalogo Vizier ({len(tbl_cataloghi)} stelle), catturata dalla pmc')
 
-plt.show()
+plt.savefig('catalog_matching_unito_cazzata.png')
+# plt.show()
 
 # Faccio il matching con l'immagine della PMC
 
@@ -482,9 +484,23 @@ posizioni_celesti_segmentation_ra = np.array(posizioni_celesti_segmentation.ra)
 posizioni_celesti_segmentation_dec = np.array(posizioni_celesti_segmentation.dec)
 ra_segmentation_max = np.max(posizioni_celesti_segmentation_ra)
 
-# Creo le aperture per ogni posizione
-apertures = CircularAperture(positions, r=5.0)
+
+# Calcolo la scala di piastra media dell'immagine in gradi per pixel
+pixel_scales = proj_plane_pixel_scales(w)
+pixel_scale_mean = np.mean(pixel_scales)
+
+# Imposto la mia tolleranza di 35 arcosecondi e la converto in gradi
+tolleranza_arcsec = 35.0
+tolleranza_gradi = tolleranza_arcsec / 3600.0
+
+# Calcolo il raggio effettivo in pixel
+raggio_pixel = tolleranza_gradi / pixel_scale_mean
+print(f"Raggio di {tolleranza_arcsec} arcsec convertito in {raggio_pixel:.2f} pixel")
+
+# Creo le aperture per ogni posizione usando il raggio dinamico
+apertures = CircularAperture(positions, r=raggio_pixel)
 apertures.plot(color='red', lw=1.)
+
 
 ax.set_xlabel('x')
 ax.set_ylabel('y')
@@ -504,4 +520,5 @@ legend_elements = [
 ax.legend(handles=legend_elements, loc='upper right',
            framealpha=0.85, fancybox=True, shadow=True)
 
-plt.show()
+plt.savefig('catalog_matching_unito.png', bbox_inches='tight')
+# plt.show()

@@ -11,6 +11,7 @@ from photutils.segmentation import detect_sources
 from photutils.segmentation import SourceCatalog
 import numpy as np
 import os
+import sys
 from astropy.visualization import SqrtStretch
 from astropy.visualization.mpl_normalize import ImageNormalize
 from photutils.segmentation import deblend_sources
@@ -331,7 +332,7 @@ def leggi_header_da_csv(filename):
 # ELABORAZIONE DI TUTTI I FILE NELLA NUOVA STRUTTURA
 # =============================================================================
 
-cartella_dati = BASE_DIR / "blazar" / "PMC_DATA_BLAZAR"
+cartella_dati = BASE_DIR / "PMC_DATA_BLAZAR"
 cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR / 'blazar', "tabelle_cataloghi")
 
 if cartella_tabelle is None:

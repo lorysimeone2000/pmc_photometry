@@ -54,7 +54,7 @@ warnings.filterwarnings('ignore', category=VerifyWarning)
 # FUNZIONI DI GESTIONE PERCORSI E UTILITÀ
 # =============================================================================
 
-def trova_cartella_base(nome_target="pmc_photometry"):
+def trova_cartella_base(nome_target="Lorenzo"):
     # Cerco la cartella base risalendo l'albero delle directory
     path_corrente = Path(__file__).resolve()
     for parent in [path_corrente] + list(path_corrente.parents):
@@ -82,7 +82,7 @@ def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
 
 
 # Trovo la cartella base del mio progetto
-BASE_DIR = trova_cartella_base("pmc_photometry")
+BASE_DIR = trova_cartella_base("Lorenzo")
 
 # Leggo i parametri
 parametri = {}
@@ -173,7 +173,7 @@ immagine = 35
 max_sep = 0.003349 * u.deg
 
 # Cerco la cartella in cui trovo i file CSV delle tabelle unite
-nome_cartella_csv = f"tabelle_unite_run_{run}"
+nome_cartella_csv = f"tabelle/tabelle_unite/tabelle_unite_run_{run}"
 cartella_csv_path = cerca_cartella_nel_progetto(BASE_DIR, nome_cartella_csv)
 
 if cartella_csv_path is None:
@@ -321,4 +321,6 @@ ax.legend(handles=legend_elements, loc='upper right',
 
 ax.scatter(posizioni_vere_pixel[:, 0], posizioni_vere_pixel[:, 1], c=colors, s=36, alpha=0.7, cmap='viridis_r')
 
-plt.show()
+
+plt.savefig('catalog_matching_2.png', dpi=300)
+# plt.show()

@@ -69,7 +69,7 @@ def trova_cartella_base(nome_target="pmc_photometry"):
     return path_corrente.parent
 
 
-BASE_DIR = trova_cartella_base("pmc_photometry")
+BASE_DIR = trova_cartella_base("Lorenzo")
 
 if str(BASE_DIR) not in sys.path:
     sys.path.append(str(BASE_DIR))

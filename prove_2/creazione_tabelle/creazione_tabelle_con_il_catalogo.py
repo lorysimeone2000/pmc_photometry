@@ -111,6 +111,14 @@ def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
 # Definisco la BASE_DIR dinamicamente
 BASE_DIR = trova_cartella_base("Lorenzo")
 
+PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
+
+if PERCORSO_FUNZIONI not in sys.path:
+    sys.path.append(PERCORSO_FUNZIONI)
+
+from funzioni.utilita import *
+from funzioni.astrometria import *
+
 print(f"--- CONFIGURAZIONE SISTEMA ---")
 print(f"Cartella Base rilevata: {BASE_DIR}")
 print(f"------------------------------")

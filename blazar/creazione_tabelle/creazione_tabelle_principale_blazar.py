@@ -73,10 +73,17 @@ def trova_cartella_base(nome_target="Lorenzo"):
 
 BASE_DIR = trova_cartella_base("Lorenzo")
 
-if str(BASE_DIR) not in sys.path:
-    sys.path.append(str(BASE_DIR))
+PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
 
-# Importo le mie funzioni di utilità e astrometria
+if PERCORSO_FUNZIONI not in sys.path:
+    sys.path.append(PERCORSO_FUNZIONI)
+
+from funzioni.utilita import *
+from funzioni.astrometria import *PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
+
+if PERCORSO_FUNZIONI not in sys.path:
+    sys.path.append(PERCORSO_FUNZIONI)
+
 from funzioni.utilita import *
 from funzioni.astrometria import *
 

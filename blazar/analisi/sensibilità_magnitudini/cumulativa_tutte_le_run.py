@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 # 0. CONFIGURAZIONE PERCORSI E IMPORTAZIONE MODULI ESTERNI
 # =============================================================================
 
-def trova_cartella_base(nome_target="pmc_photometry"):
+def trova_cartella_base(nome_target="Lorenzo"):
     # risalgo l'albero delle directory per trovare la root del progetto
     path_corrente = Path(__file__).resolve()
     for parent in [path_corrente] + list(path_corrente.parents):
@@ -24,13 +24,15 @@ def trova_cartella_base(nome_target="pmc_photometry"):
     return path_corrente.parent
 
 
-BASE_DIR = trova_cartella_base("pmc_photometry")
+BASE_DIR = trova_cartella_base("Lorenzo")
 
-if str(BASE_DIR) not in sys.path:
-    sys.path.append(str(BASE_DIR))
+PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
 
-# importo solo l'utilità necessaria dal mio file esterno
-from funzioni.utilita import leggi_header_da_csv
+if PERCORSO_FUNZIONI not in sys.path:
+    sys.path.append(PERCORSO_FUNZIONI)
+
+from funzioni.utilita import *
+from funzioni.astrometria import *
 
 
 # =============================================================================
@@ -61,8 +63,8 @@ def freedman_diaconis_bins(data, num_images=1, max_bins=60):
 print("--- INIZIO CALCOLO DISTRIBUZIONE MEDIA (DATASET BLAZAR) ---")
 
 # definisco le cartelle bersaglio
-dir_unite = BASE_DIR / "blazar" / "tabelle" / "tabelle_unite"
-dir_cataloghi = BASE_DIR / "blazar" / "tabelle" / "tabelle_cataloghi"
+dir_unite = BASE_DIR / "tabelle_blazar" / "tabelle_unite"
+dir_cataloghi = BASE_DIR / "tabelle_blazar" / "tabelle_cataloghi"
 
 if not dir_unite.exists() or not dir_cataloghi.exists():
     print("ERRORE: Impossibile trovare le cartelle 'tabelle_unite' o 'tabelle_cataloghi' in blazar/tabelle/")
@@ -155,7 +157,7 @@ print(f"Stelle correlate uniche (tutte le run): {totale_correlate}")
 print(f"Stelle di catalogo NON correlate/perse: {totale_perse}")
 
 # =============================================================================
-# 3. ELABORAZIONE STATISTICA E PLOTTING
+# 3. ELABORAZIONE STATISTICA E PLOTTING GLOBALE
 # =============================================================================
 
 # 1. calcolo i bin comuni GLOBALI
@@ -211,11 +213,129 @@ plt.legend(fontsize=11)
 plt.tight_layout()
 
 # salvo l'immagine generata
-output_dir_grafici = BASE_DIR / "blazar" / "analisi" / "sensibilità_magnitudini"
+output_dir_grafici = BASE_DIR / "pmc_photometry" / "blazar" / "analisi" / "sensibilità_magnitudini"
 output_dir_grafici.mkdir(parents=True, exist_ok=True)
 output_path = output_dir_grafici / "distribuzione_media_magnitudini_blazar.png"
 
-plt.savefig(output_path, dpi=300)
+plt.savefig('distribuzione_media_magnitudini_blazar.png', dpi=300)
 print(f"Grafico salvato in: {output_path.relative_to(BASE_DIR)}")
 
 plt.show()
+
+
+# =============================================================================
+# 4. GENERAZIONE GRAFICI PER SINGOLE IMMAGINI
+# =============================================================================
+
+print("\n--- INIZIO CALCOLO E PLOTTING SINGOLE IMMAGINI ---")
+
+# definisco la directory base per i nuovi grafici
+dir_output_singole = output_dir_grafici / "cumulativa_tutte_le_run"
+
+# esploro nuovamente la cartella dei giorni per elaborare l'immagine singola
+for giorno_dir in sorted([d for d in dir_unite.iterdir() if d.is_dir()]):
+
+    giorno_nome = giorno_dir.name
+    giorno_cat_dir = dir_cataloghi / giorno_nome
+
+    if not giorno_cat_dir.exists():
+        continue
+
+    # esploro la run all'interno del giorno
+    for run_dir in sorted([d for d in giorno_dir.iterdir() if d.is_dir()]):
+        run_nome = run_dir.name
+        run_cat_dir = giorno_cat_dir / run_nome
+
+        if not run_cat_dir.exists():
+            continue
+
+        csv_unite_list = sorted(list(run_dir.glob("*.csv")))
+        csv_cat_list = sorted(list(run_cat_dir.glob("*.csv")))
+
+        num_file = min(len(csv_unite_list), len(csv_cat_list))
+        if num_file == 0:
+            continue
+
+        # creo la sottocartella per il giorno e la run
+        out_run_dir = dir_output_singole / giorno_nome / run_nome
+        out_run_dir.mkdir(parents=True, exist_ok=True)
+
+        # analizzo l'immagine per generare il suo grafico
+        for i in tqdm(range(num_file), desc=f"Plotting {giorno_nome} - {run_nome}"):
+
+            if i % 20 != 0:
+                continue
+
+            file_unite = csv_unite_list[i]
+            file_cat = csv_cat_list[i]
+            nome_base = file_unite.stem
+
+            df_unite = pd.read_csv(file_unite, comment='#')
+            df_cat = pd.read_csv(file_cat, comment='#')
+
+            # filtro il match valido
+            mask_si = df_unite['Corrispondenza'].astype(str).str.startswith('SI', na=False)
+            df_si = df_unite[mask_si]
+            df_uniche = df_si.drop_duplicates(subset=['ID'])
+
+            # estraggo il vettore dell'immagine
+            mags_correlate_singola = df_uniche['Mag'].dropna().values
+            mags_catalogo_singola = df_cat['Mag'].dropna().values
+
+            if len(mags_catalogo_singola) == 0 and len(mags_correlate_singola) == 0:
+                continue
+
+            # unisco il dato per calcolare il bin ottimale
+            dati_singoli = np.concatenate((mags_correlate_singola, mags_catalogo_singola))
+            if len(dati_singoli) < 2:
+                continue
+
+            n_bin_singola = freedman_diaconis_bins(dati_singoli, num_images=1)
+            hist_range_singola = (np.min(dati_singoli), np.max(dati_singoli))
+            bins_singola = np.histogram_bin_edges(dati_singoli, bins=n_bin_singola, range=hist_range_singola)
+
+            # calcolo il conteggio
+            counts_cat_singola, bin_edges_singola = np.histogram(mags_catalogo_singola, bins=bins_singola)
+            counts_corr_singola, _ = np.histogram(mags_correlate_singola, bins=bins_singola)
+            bin_centers_singola = (bin_edges_singola[:-1] + bin_edges_singola[1:]) / 2
+
+            # genero il grafico identico al precedente
+            plt.figure(figsize=(14, 8))
+
+            # traccio la curva della sorgente catalogata
+            plt.plot(bin_centers_singola, counts_cat_singola,
+                     color='purple',
+                     linestyle='-',
+                     linewidth=1.5,
+                     label='Sorgenti Catalogate')
+
+            # traccio la curva della sorgente correlata
+            plt.plot(bin_centers_singola, counts_corr_singola,
+                     color='red',
+                     linestyle='-',
+                     linewidth=1.5,
+                     label='Sorgenti Correlate')
+
+            plt.yscale('log')
+            plt.xlabel('Magnitudine (Centri dei Bin)', fontsize=12)
+            plt.ylabel('Frequenza (Conteggi)', fontsize=12)
+
+            # definisco il titolo dinamicamente
+            titolo_singolo = f'Distribuzione Magnitudini: Catalogate vs Correlate ({nome_base})\n'
+            titolo_singolo += f'{len(mags_correlate_singola)} match su {len(mags_catalogo_singola)} catalogate'
+            if fwhm_usato and size_usato:
+                titolo_singolo += f' (FWHM = {fwhm_usato}, size = {size_usato})'
+            plt.title(titolo_singolo, fontsize=14)
+
+            # inverto l'asse x
+            plt.gca().invert_xaxis()
+
+            plt.grid(True, which="both", linestyle='--', alpha=0.6)
+            plt.legend(fontsize=11)
+            plt.tight_layout()
+
+            # salvo il grafico nella cartella specifica
+            plt.savefig(out_run_dir / f"{nome_base}.png", dpi=300)
+
+            # chiudo la figura per evitare di saturare la RAM
+            plt.close()

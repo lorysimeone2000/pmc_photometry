@@ -1,4 +1,7 @@
 import numpy as np
+import os
+import sys
+from pathlib import Path
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 from astropy.wcs import WCS
@@ -6,25 +9,68 @@ from reproject import reproject_interp  # Assicurati di aver fatto: pip install 
 import warnings
 from astropy.wcs import FITSFixedWarning
 from tqdm import tqdm
-import os
+
+from analisi.studio_correlazione.distribuzione_distanze import df_cat
 
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 
+
+# =============================================================================
+# FUNZIONI DI GESTIONE PERCORSI E UTILITÀ
+# =============================================================================
+
+def trova_cartella_base(nome_target="Lorenzo"):
+    # cerco la cartella base risalendo l'albero delle directory
+    path_corrente = Path(__file__).resolve()
+    for parent in [path_corrente] + list(path_corrente.parents):
+        if parent.name == nome_target:
+            return parent
+    print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
+    return path_corrente.parent
+
+
+# Trovo la cartella base del mio progetto
+BASE_DIR = trova_cartella_base("Lorenzo")
+
+PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
+if PERCORSO_FUNZIONI not in sys.path:
+    sys.path.append(PERCORSO_FUNZIONI)
+
+from funzioni.utilita import *
+from funzioni.astrometria import *
+
 # --- SETUP ---
 run = 1
-# Percorso del file lista
-path_lista = f'/home/lorysimeone/tesi_magistrale/prove_2/liste_percorsi_run/lista_immagini_run_{run}.txt'
+nome_cartella_run = f"20250120_run{run}"
 
-with open(path_lista, 'r') as file:
-    file_list = file.read().splitlines()
+# Costruisco il percorso della cartella che contiene le immagini FITS
+cartella_run = BASE_DIR / "pmc_photometry/run_vecchie" / nome_cartella_run
+
+# Verifico che la cartella esista
+if not cartella_run.exists():
+    raise FileNotFoundError(f"La cartella {cartella_run} non esiste!")
+
+# Cerco tutti i file FITS all'interno della cartella della run e li ordino alfabeticamente
+estensioni_valide = ['.fit', '.fits']
+file_list = sorted([f for f in cartella_run.rglob('*') if f.suffix.lower() in estensioni_valide and f.is_file()])
+
+# Trasformo in stringhe per compatibilità con il resto del codice
+file_list = [str(f) for f in file_list]
 
 if not file_list:
-    raise ValueError("La lista dei file è vuota!")
+    raise ValueError(f"Nessun file FITS trovato nella cartella {cartella_run}!")
+
+print(f"Trovati {len(file_list)} file FITS nella cartella della run {run}.")
 
 # --- PASSO 1: DEFINIRE IL SISTEMA DI RIFERIMENTO (CANVAS) ---
 # Usiamo la prima immagine come riferimento per il WCS e la dimensione finale.
-immagine_di_riferimento=12
-print(f"Caricamento riferimento: {file_list[immagine_di_riferimento]}") # prendo come riferimento un'immagine più stabile
+immagine_di_riferimento = 12
+if immagine_di_riferimento >= len(file_list):
+    print("Indice immagine di riferimento fuori dai limiti, uso la prima immagine (0).")
+    immagine_di_riferimento = 0
+
+print(
+    f"Caricamento riferimento: {file_list[immagine_di_riferimento]}")  # prendo come riferimento un'immagine più stabile
 hdu_ref = fits.open(file_list[immagine_di_riferimento])[0]
 target_header = hdu_ref.header.copy()
 target_wcs = WCS(target_header)
@@ -43,8 +89,10 @@ i = 0
 
 # --- PASSO 2: LOOP E RIPROIEZIONE ---
 for percorso_file_fits in tqdm(file_list, desc="Stacking", unit="img"):
-    i=i+1
-    if i==1 or i==len(file_list)-2 or i==len(file_list)-1: continue
+    i += 1
+    # Salto il primo e gli ultimi due file come da tuo script originale
+    if i == 1 or i == len(file_list) - 2 or i == len(file_list) - 1: continue
+
     try:
         with fits.open(percorso_file_fits) as hdu_list:
             # Caricamento dati
@@ -103,28 +151,39 @@ final_image_sum = final_image_sum * scale_factor_map
 
 # --- PASSO 3: SALVATAGGIO ---
 
-output_dir = f'/home/lorysimeone/tesi_magistrale/prove_2/stacking/'
+# Imposto la cartella di output dinamicamente basandomi su BASE_DIR
+output_dir = BASE_DIR / 'pmc_photometry' / 'prove_2' / 'stacking'
+output_dir.mkdir(parents=True, exist_ok=True)
 
 # 1. Salvataggio Immagine Sommata
-output_filename = os.path.join(output_dir, f'run_{run}_stacked_sum.fits')
-header_finale = target_header.copy() # Copiamo l'header per non modificare l'originale
-header_finale['HISTORY'] = f'Immagine ottenuta sommando N esposizioni riproiettate con reproject usando come riferimento l\' immagine {immagine_di_riferimento}'
+output_filename = output_dir / f'run_{run}_stacked_sum.fits'
+header_finale = target_header.copy()  # Copiamo l'header per non modificare l'originale
+header_finale[
+    'HISTORY'] = f'Immagine ottenuta sommando N esposizioni riproiettate con reproject usando come riferimento l\' immagine {immagine_di_riferimento}'
 
-fits.writeto(output_filename, final_image_sum, header_finale, overwrite=True)
+fits.writeto(str(output_filename), final_image_sum, header_finale, overwrite=True)
 print(f"Fatto! Immagine salvata come: {output_filename}")
 
 # 2. Salvataggio Coverage Map
-coverage_filename = os.path.join(output_dir, f'run_{run}_coverage_map.fits')
+coverage_filename = output_dir / f'run_{run}_coverage_map.fits'
 header_coverage = target_header.copy()
 header_coverage['HISTORY'] = 'Mappa di copertura (numero di immagini per pixel)'
 
 # La coverage map usa lo stesso WCS dell'immagine, così puoi sovrapporle in DS9
-fits.writeto(coverage_filename, coverage_map, header_coverage, overwrite=True)
+fits.writeto(str(coverage_filename), coverage_map, header_coverage, overwrite=True)
 print(f"Fatto! Coverage map salvata come: {coverage_filename}")
 
 # --- PASSO 4: VISUALIZZAZIONE VELOCE ---
 import matplotlib.pyplot as plt
 from astropy.visualization import simple_norm
+
+# mi baso sul massimo e sul minimo dell'intero catalogo per uniformare la colorbar
+vmin_cat = df_cat['Mag'].min()
+vmax_cat = df_cat['Mag'].max()
+scatter_cat = ax.scatter(x_cat_cutout, y_cat_cutout, c=mag_cat_cutout, cmap='viridis_r', s=15,
+                         vmin=vmin_cat, vmax=vmax_cat, zorder=5)
+# aggiungo la seconda colorbar dedicata alle magnitudini del catalogo
+plt.colorbar(scatter_cat, ax=ax, label='Magnitudine catalogo', fraction=0.046, pad=0.04)
 
 norm = simple_norm(final_image_sum, 'sqrt')
 plt.figure(figsize=(10, 10))
@@ -134,4 +193,5 @@ plt.colorbar(label='Counts (Sum)')
 plt.xlabel('RA')
 plt.ylabel('Dec')
 plt.title(f'Stacking Run {run}')
+plt.savefig(str(f'run_{run}_stack_grab.png'))
 plt.show()

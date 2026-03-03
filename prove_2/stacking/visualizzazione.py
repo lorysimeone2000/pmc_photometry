@@ -1,13 +1,11 @@
-import numpy.ma as ma # Aggiunto per i Masked Arrays
+import numpy.ma as ma
 import matplotlib.pyplot as plt
 import pandas as pd
-#pd.set_option('display.show_dimensions', False)
 from photutils.datasets import make_100gaussians_image
 from photutils.background import Background2D, MedianBackground
 from astropy.convolution import convolve
 from photutils.segmentation import make_2dgaussian_kernel
-import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm # permette di avere la scala logaritmica
+from matplotlib.colors import LogNorm
 from scipy.optimize import curve_fit
 from photutils.segmentation import detect_sources
 from photutils.segmentation import SourceCatalog
@@ -38,56 +36,118 @@ from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
 
 from shapely.geometry import Point, Polygon
-# warning
 import warnings
 from astropy.io.fits.verify import VerifyWarning
-import warnings
 from astropy.wcs import FITSFixedWarning
-warnings.filterwarnings('ignore', category=FITSFixedWarning) # Sopprime il warning FITSFixedWarning
+
+warnings.filterwarnings('ignore', category=FITSFixedWarning)  # sopprimo il warning FITSFixedWarning
 
 from pathlib import Path
 
-# --- DEFINIZIONE FILE ---
-image_file_c = "/home/lorysimeone/tesi_magistrale/prove_2/stacking/run_1_coverage_map.fits"
-image_file   = "/home/lorysimeone/tesi_magistrale/prove_2/stacking/run_1_stacked_sum.fits"
+
+# =============================================================================
+# FUNZIONI DI GESTIONE PERCORSI E UTILITÀ
+# =============================================================================
+
+def trova_cartella_base(nome_target="Lorenzo"):
+    # cerco la cartella base risalendo l'albero delle directory
+    path_corrente = Path(__file__).resolve()
+    for parent in [path_corrente] + list(path_corrente.parents):
+        if parent.name == nome_target:
+            return parent
+    print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
+    return path_corrente.parent
 
 
-# --- CARICAMENTO E CREAZIONE MASCHERA ---
+def cerca_file_nel_progetto(base_dir, nome_file_esatto):
+    # cerco un file ricorsivamente
+    files_trovati = list(base_dir.rglob(nome_file_esatto))
+    if not files_trovati: return None
+    if len(files_trovati) > 1:
+        files_trovati.sort(key=lambda p: len(str(p)))
+    return files_trovati[0]
 
-# 1. Caricamento Coverage Map
-hdu_list_c = fits.open(image_file_c)
-print("Informazioni Coverage Map:")
-hdu_list_c.info()
-image_data_c = hdu_list_c[0].data
-# La maschera è True dove la copertura è massima (112)
-full_coverage_value = np.max(image_data_c) # Il valore che voglio mascherare
-mask_max_coverage = image_data_c == full_coverage_value
-hdu_list_c.close()
 
-# 2. Caricamento Immagine Sommata
-hdu_list = fits.open(image_file)
-print("\nInformazioni Immagine Sommata:")
-hdu_list.info()
-image_data = hdu_list[0].data
-data = image_data
-hdu_list.close()
+# trovo la cartella base del mio progetto
+BASE_DIR = trova_cartella_base("Lorenzo")
+
+# --- CARICAMENTO E SOMMA DI TUTTE LE RUN ---
+
+# inizializzo le matrici vuote che conterranno la somma totale e la proiezione
+total_data = None
+total_coverage = None
+wcs_totale = None
+
+# ciclo su tutte le 3 run
+runs = [1, 2, 3]
+
+for run in runs:
+    # definisco i nomi dei file salvati nello step precedente per la run corrente
+    nome_file_c = f"run_{run}_coverage_map_crab.fits"
+    nome_file_sum = f"run_{run}_stacked_sum_crab.fits"
+
+    # cerco i file dinamicamente
+    percorso_c = cerca_file_nel_progetto(BASE_DIR, nome_file_c)
+    percorso_sum = cerca_file_nel_progetto(BASE_DIR, nome_file_sum)
+
+    if not percorso_c or not percorso_sum:
+        print(f"Attenzione: file mancanti per la run {run}. Salto questa run.")
+        continue
+
+    # 1. carico e sommo la Coverage Map
+    with fits.open(str(percorso_c)) as hdu_c:
+        image_data_c = hdu_c[0].data
+        if total_coverage is None:
+            # creo la matrice di zeri basandomi sulla forma della prima immagine trovata
+            total_coverage = np.zeros_like(image_data_c, dtype=float)
+        # aggiungo i dati della run corrente al totale
+        total_coverage += image_data_c
+
+    # 2. carico e sommo l'Immagine Stacked
+    with fits.open(str(percorso_sum)) as hdu_sum:
+        image_data_sum = hdu_sum[0].data
+
+        # estraggo il WCS dalla prima immagine utile per usarlo nel grafico
+        if wcs_totale is None:
+            wcs_totale = WCS(hdu_sum[0].header)
+
+        if total_data is None:
+            # creo la matrice di zeri per l'immagine
+            total_data = np.zeros_like(image_data_sum, dtype=float)
+        # aggiungo i conteggi della run corrente al totale
+        total_data += image_data_sum
+
+if total_data is None or total_coverage is None:
+    raise ValueError("Errore: non è stato possibile caricare i dati di nessuna run.")
+
+# estraggo il valore massimo di copertura globale raggiunto unendo le 3 run
+full_coverage_value = np.max(total_coverage)
+print(f"Copertura massima totale raggiunta: {full_coverage_value} immagini")
 
 # --- ESTRAZIONE E VISUALIZZAZIONE ---
 
-# Applichiamo la maschera:
-# Usiamo ~mask_max_coverage per nascondere tutti i pixel NON UGUALI a 115.
-# data = ma.masked_array(image_data, mask=~mask_max_coverage)
-mean, median, std = sigma_clipped_stats(image_data, sigma=3.0)
-print("Mediana: " , median)
-data = data - median
+# calcolo le statistiche sull'immagine totale
+mean, median, std = sigma_clipped_stats(total_data, sigma=3.0)
+print("Mediana totale: ", median)
 
-# Visualizzazione
+# sottraggo il fondo mediano
+data_finale = total_data - median
+
+# visualizzazione
+norm = simple_norm(data_finale, 'sqrt')
 plt.figure(figsize=(10, 8))
-plt.imshow(data, cmap="grey_r", norm=LogNorm(), interpolation='nearest') #genero l'immagine con scala di colori bianco e nero
-plt.gca().invert_yaxis() # inverto asse y
-plt.colorbar()
-plt.title(f'Immagine Sommata (Copertura={int(full_coverage_value)})')
-plt.xlabel('X (pixel)')
-plt.ylabel('Y (pixel)')
 
+# imposto il sistema di riferimento celeste tramite WCS
+plt.subplot(projection=wcs_totale)
+
+# genero l'immagine
+plt.imshow(data_finale, cmap="viridis", norm=norm, interpolation='nearest', origin='lower')
+plt.colorbar(label='Counts (Somma Totale)')
+plt.title(f'Stacking Crab 7x7 arcmin su tre run \n(Copertura max={int(full_coverage_value)})')
+
+# aggiorno le etichette con le coordinate celesti
+plt.xlabel('RA')
+plt.ylabel('Dec')
+
+plt.savefig('stacking_crab_totale.png')
 plt.show()

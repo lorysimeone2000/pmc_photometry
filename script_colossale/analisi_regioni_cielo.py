@@ -157,9 +157,9 @@ if PMC_DATA:
         distanze_prec = np.zeros(len(coordinate))
         distanze_succ = np.zeros(len(coordinate))
 
-        if len(coordinate) > 1:
-            distanze_prec[1:] = coordinate[1:].separation(coordinate[:-1]).deg
-            distanze_succ[:-1] = coordinate[:-1].separation(coordinate[1:]).deg
+        if len(coordinate) > 2:
+            distanze_prec[2:] = coordinate[2:].separation(coordinate[:-2]).deg
+            distanze_succ[:-2] = coordinate[:-2].separation(coordinate[2:]).deg
 
         # individuo i punti isolati distanti più di 0.5 gradi da entrambi
         da_escludere = (distanze_prec > 0.5) & (distanze_succ > 0.5)
@@ -170,8 +170,8 @@ if PMC_DATA:
 
         # ricalcolo le distanze angolari definitive sui punti validi
         distanze_angolari_filtrate = np.zeros(len(coordinate_filtrate))
-        if len(coordinate_filtrate) > 1:
-            distanze_angolari_filtrate[1:] = coordinate_filtrate[1:].separation(coordinate_filtrate[:-1]).deg
+        if len(coordinate_filtrate) > 2:
+            distanze_angolari_filtrate[2:] = coordinate_filtrate[2:].separation(coordinate_filtrate[:-2]).deg
 
         # genero il grafico per la sottocartella in esame
         plt.figure(figsize=(12, 6))

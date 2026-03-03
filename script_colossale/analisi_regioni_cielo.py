@@ -148,18 +148,34 @@ if PMC_DATA:
 
         # calcolo il tempo trascorso in secondi, impostando il primo scatto come istante zero (0)
         t0 = tempi_ordinati[0]
-        tempi_relativi_sec = [(t - t0).sec for t in tempi_ordinati]
+        tempi_relativi_sec = np.array([(t - t0).sec for t in tempi_ordinati])
 
-        # creo le coordinate e calcolo la distanza angolare dal punto precedente
+        # creo le coordinate per valutare le separazioni
         coordinate = SkyCoord(ra=ra_ordinate * u.deg, dec=dec_ordinate * u.deg, frame='icrs')
-        distanze_angolari = np.zeros(len(coordinate))
 
-        # calcolo la separazione per ogni punto rispetto al precedente (il primo rimane a 0)
-        distanze_angolari[1:] = coordinate[1:].separation(coordinate[:-1]).deg
+        # calcolo le distanze dal punto precedente e dal successivo
+        distanze_prec = np.zeros(len(coordinate))
+        distanze_succ = np.zeros(len(coordinate))
+
+        if len(coordinate) > 1:
+            distanze_prec[1:] = coordinate[1:].separation(coordinate[:-1]).deg
+            distanze_succ[:-1] = coordinate[:-1].separation(coordinate[1:]).deg
+
+        # individuo i punti isolati distanti più di 0.5 gradi da entrambi
+        da_escludere = (distanze_prec > 0.5) & (distanze_succ > 0.5)
+
+        # applico la maschera per escluderli dalle rappresentazioni
+        coordinate_filtrate = coordinate[~da_escludere]
+        tempi_filtrati = tempi_relativi_sec[~da_escludere]
+
+        # ricalcolo le distanze angolari definitive sui punti validi
+        distanze_angolari_filtrate = np.zeros(len(coordinate_filtrate))
+        if len(coordinate_filtrate) > 1:
+            distanze_angolari_filtrate[1:] = coordinate_filtrate[1:].separation(coordinate_filtrate[:-1]).deg
 
         # genero il grafico per la sottocartella in esame
         plt.figure(figsize=(12, 6))
-        plt.plot(tempi_relativi_sec, distanze_angolari, marker='o', linestyle='-', color='teal', markersize=4)
+        plt.plot(tempi_filtrati, distanze_angolari_filtrate, marker='o', linestyle='-', color='teal', markersize=4)
 
         plt.title(f"Distanza angolare tra immagini consecutive\nSottocartella: {cartella_run.name}", fontsize=14)
         plt.xlabel("Tempo trascorso dalla prima immagine (secondi)", fontsize=12)

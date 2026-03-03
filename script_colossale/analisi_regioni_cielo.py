@@ -153,16 +153,25 @@ if PMC_DATA:
         # creo le coordinate per valutare le separazioni
         coordinate = SkyCoord(ra=ra_ordinate * u.deg, dec=dec_ordinate * u.deg, frame='icrs')
 
-        # calcolo le distanze dal punto precedente e dal successivo
-        distanze_prec = np.zeros(len(coordinate))
-        distanze_succ = np.zeros(len(coordinate))
+        # preparo un array booleano per i punti da escludere
+        da_escludere = np.zeros(len(coordinate), dtype=bool)
 
-        if len(coordinate) > 2:
-            distanze_prec[2:] = coordinate[2:].separation(coordinate[:-2]).deg
-            distanze_succ[:-2] = coordinate[:-2].separation(coordinate[2:]).deg
+        # controllo ogni punto rispetto ai 10 precedenti e ai 10 successivi
+        for i in range(len(coordinate)):
+            # determino gli indici della finestra temporale (fino a 10 prima e 10 dopo)
+            inizio = max(0, i - 10)
+            fine = min(len(coordinate), i + 11)
 
-        # individuo i punti isolati distanti più di 0.5 gradi da entrambi
-        da_escludere = (distanze_prec > 0.5) & (distanze_succ > 0.5)
+            # creo una lista degli indici da confrontare, escludendo il punto stesso
+            indici_vicini = [j for j in range(inizio, fine) if j != i]
+
+            if len(indici_vicini) > 0:
+                # calcolo la distanza tra il punto i e tutti i suoi vicini nella finestra
+                distanze = coordinate[i].separation(coordinate[indici_vicini]).deg
+
+                # se almeno uno di questi punti dista più di 0.5 gradi, lo escludo
+                if np.any(distanze > 0.5):
+                    da_escludere[i] = True
 
         # applico la maschera per escluderli dalle rappresentazioni
         coordinate_filtrate = coordinate[~da_escludere]

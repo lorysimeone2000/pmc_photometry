@@ -60,6 +60,7 @@ warnings.filterwarnings('ignore', category=VerifyWarning)
 # =============================================================================
 
 def trova_cartella_base(nome_target="Lorenzo"):
+    # risalgo l'albero delle directory per trovare la radice del progetto
     path_corrente = Path(__file__).resolve()
     for parent in [path_corrente] + list(path_corrente.parents):
         if parent.name == nome_target:
@@ -77,6 +78,7 @@ if PERCORSO_FUNZIONI not in sys.path:
 
 from funzioni.utilita import *
 from funzioni.astrometria import *
+
 print(f"--- CONFIGURAZIONE SISTEMA ---")
 print(f"Cartella Base rilevata: {BASE_DIR}")
 print(f"Moduli esterni caricati con successo.")
@@ -107,6 +109,7 @@ if PMC_DATA:
 
         tempi = []
         ralinazioni = []
+        declinazioni = []
 
         # apro ogni FITS e leggo l'header
         for percorso_file in tqdm(file_fits_list, desc=f"Lettura header {cartella_run.name}"):
@@ -115,15 +118,20 @@ if PMC_DATA:
                     header = hdu[0].header
                     date_obs = header.get('DATE-OBS')
 
-                    # cerco la chiave ra (solitamente usata negli header), oppure RAJ2000 come fallback
+                    # cerco le chiavi RA e DEC
                     ra = header.get('ra')
                     if ra is None:
-                        ra = header.get('RAJ2000')
+                        ra = header.get('RAJ2000') or header.get('OBJ-RA')
 
-                    if date_obs is not None and ra is not None:
+                    dec = header.get('dec')
+                    if dec is None:
+                        dec = header.get('DEJ2000') or header.get('OBJ-DEC')
+
+                    if date_obs is not None and ra is not None and dec is not None:
                         # converto la stringa di tempo nel formato nativo di Astropy
                         tempi.append(Time(date_obs, format='isot', scale='utc'))
                         ralinazioni.append(float(ra))
+                        declinazioni.append(float(dec))
             except Exception:
                 # ignoro silenziosamente i file corrotti o non leggibili
                 pass
@@ -135,28 +143,35 @@ if PMC_DATA:
         # ordino cronologicamente i dati per sicurezza
         indici_ordinati = np.argsort(tempi)
         tempi_ordinati = np.array(tempi)[indici_ordinati]
-        ralinazioni_ordinate = np.array(ralinazioni)[indici_ordinati]
+        ra_ordinate = np.array(ralinazioni)[indici_ordinati]
+        dec_ordinate = np.array(declinazioni)[indici_ordinati]
 
         # calcolo il tempo trascorso in secondi, impostando il primo scatto come istante zero (0)
         t0 = tempi_ordinati[0]
         tempi_relativi_sec = [(t - t0).sec for t in tempi_ordinati]
 
+        # creo le coordinate e calcolo la distanza angolare dal punto precedente
+        coordinate = SkyCoord(ra=ra_ordinate * u.deg, dec=dec_ordinate * u.deg, frame='icrs')
+        distanze_angolari = np.zeros(len(coordinate))
+
+        # calcolo la separazione per ogni punto rispetto al precedente (il primo rimane a 0)
+        distanze_angolari[1:] = coordinate[1:].separation(coordinate[:-1]).deg
+
         # genero il grafico per la sottocartella in esame
         plt.figure(figsize=(12, 6))
-        plt.plot(tempi_relativi_sec, ralinazioni_ordinate, marker='o', linestyle='-', color='teal', markersize=4)
+        plt.plot(tempi_relativi_sec, distanze_angolari, marker='o', linestyle='-', color='teal', markersize=4)
 
-        plt.title(f"Andamento della coordinata RAJ2000 nel tempo\nSottocartella: {cartella_run.name}", fontsize=14)
+        plt.title(f"Distanza angolare tra immagini consecutive\nSottocartella: {cartella_run.name}", fontsize=14)
         plt.xlabel("Tempo trascorso dalla prima immagine (secondi)", fontsize=12)
-        plt.ylabel("Coordinata RAJ2000 (Gradi)", fontsize=12)
+        plt.ylabel("Distanza angolare (Gradi)", fontsize=12)
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.tight_layout()
 
-        # salvo il grafico e lo mostro
-        nome_grafico = f"andamento_RAJ2000_{cartella_run.name}.png"
+        # salvo il grafico e lo chiudo
+        nome_grafico = f"distanza_angolare_{cartella_run.name}.png"
         plt.savefig(nome_grafico, dpi=300)
         print(f"Grafico salvato: {nome_grafico}")
 
-        # plt.show()
         plt.close()
 else:
     print("Elaborazione interrotta: cartella PMC_DATA non trovata.")

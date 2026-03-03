@@ -43,7 +43,12 @@ print(f"Cartella Base: {BASE_DIR}")
 coords_mrk421 = SkyCoord(ra=166.1138 * u.deg, dec=38.2088 * u.deg, frame='icrs')
 raggio_fov_tolleranza = 6 * u.deg
 
-PMC_DATA = cerca_cartella_nel_progetto(BASE_DIR, "PMC_DATA")
+cartella_ASTRI1 = BASE_DIR.parent / "PMC_DATA" / "ASTRI1"
+
+file_fits_riferimento = None
+PMC_DATA = cartella_ASTRI1
+print(f"Cartella PMC_DATA trovata in {PMC_DATA}")
+
 cartella_blazar = BASE_DIR / "PMC_DATA_BLAZAR"
 cartella_blazar.mkdir(exist_ok=True, parents=True)
 

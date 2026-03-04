@@ -39,25 +39,21 @@ from funzioni.astrometria import *
 print(f"--- DEBUG ESTRAZIONE BLAZAR ---")
 print(f"Cartella Base: {BASE_DIR}")
 
-# Coordinate Mrk 421
-coords_mrk421 = SkyCoord(ra=166.1138 * u.deg, dec=38.2088 * u.deg, frame='icrs')
-raggio_fov_tolleranza = 6 * u.deg
-
 cartella_ASTRI1 = BASE_DIR.parent / "PMC_DATA" / "ASTRI1"
 
 file_fits_riferimento = None
 PMC_DATA = cartella_ASTRI1
 print(f"Cartella PMC_DATA trovata in {PMC_DATA}")
 
-cartella_blazar = BASE_DIR / "PMC_DATA_BLAZAR"
-cartella_blazar.mkdir(exist_ok=True, parents=True)
+cartella_colossale = BASE_DIR / "PMC_DATA_COLOSSALE"
+cartella_colossale.mkdir(exist_ok=True, parents=True)
 
 if PMC_DATA:
     # Cerco le cartelle risolvendo i symlink
     sottocartelle = [d for d in PMC_DATA.iterdir() if d.is_dir() or d.is_symlink()]
     file_validi = []
 
-    print(f"Trovate {len(sottocartelle)} cartelle/link in PMC_DATA.")
+    print(f"Trovate {len(sottocartelle)} cartelle/link in ASTRI1.")
 
     for cartella_giorno in sottocartelle:
         # Risolvo il symlink per accedere ai file reali
@@ -89,17 +85,14 @@ if PMC_DATA:
                                 coords_centro = SkyCoord(ra=ra_val, dec=dec_val, unit=(u.hourangle, u.deg),
                                                          frame='icrs')
 
-                            separazione = coords_centro.separation(coords_mrk421)
-
-                            if separazione <= raggio_fov_tolleranza:
-                                file_validi.append({
-                                    'percorso_originale': percorso_file,
-                                    'nome_file': percorso_file.name,
-                                    'nome_giorno': cartella_giorno.name,
-                                    'tempo': Time(tempo_obs_str) if tempo_obs_str else Time(
-                                        os.path.getmtime(percorso_file), format='unix'),
-                                    'dej2000': coords_centro.dec.deg
-                                })
+                            file_validi.append({
+                                'percorso_originale': percorso_file,
+                                'nome_file': percorso_file.name,
+                                'nome_giorno': cartella_giorno.name,
+                                'tempo': Time(tempo_obs_str) if tempo_obs_str else Time(
+                                    os.path.getmtime(percorso_file), format='unix'),
+                                'dej2000': coords_centro.dec.deg
+                            })
                         except Exception:
                             continue
             except Exception:
@@ -112,8 +105,8 @@ if PMC_DATA:
     # --- Ordinamento e creazione RUN ---
     file_validi.sort(key=lambda x: x['tempo'])
 
-    soglia_tempo = 600.0
-    soglia_spazio = 0.2
+    soglia_tempo = 300.0
+    soglia_spazio = 0.1
     contatore_run = 1
     tempo_precedente = None
     dej2000_precedente = None
@@ -126,7 +119,7 @@ if PMC_DATA:
                 contatore_run += 1
 
         nome_run = f"run_{contatore_run:08d}"
-        cartella_destinazione_run = cartella_blazar / dato['nome_giorno'] / nome_run
+        cartella_destinazione_run = cartella_colossale / dato['nome_giorno'] / nome_run
         cartella_destinazione_run.mkdir(parents=True, exist_ok=True)
 
         path_symlink = cartella_destinazione_run / dato['nome_file']

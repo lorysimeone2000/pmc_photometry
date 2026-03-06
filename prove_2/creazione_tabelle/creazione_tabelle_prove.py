@@ -38,6 +38,7 @@ from astropy.coordinates import Angle
 from shapely.geometry import Point, Polygon
 from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyUserWarning
+from scipy.ndimage import label
 
 # Eseguo l'import fondamentale per la mia portabilità
 from pathlib import Path
@@ -569,14 +570,21 @@ if __name__ == "__main__":
             # converto l'oggetto Path in stringa per passarlo ad astropy
             path_fits = str(file_trovato)
 
-            with fits.open(path_fits, memmap=False) as hdu:
-                data_fits = hdu[0].data
-                _, median_bg, _ = sigma_clipped_stats(data_fits[::10, ::10], sigma=3.0)
-                data_sub = data_fits - median_bg
+            # Uso la funzione del mio modulo astrometria per elaborare il file
+            data_sub, median_bg, _ = elabora_file_fits(path_fits)
+
+            # Creo la mappa delle mie regioni connesse (8-connettività) cercando i miei pixel positivi
+            struttura_8_conn = np.ones((3, 3), dtype=int)
+            mask_positiva = data_sub > 0
+            mappa_espansa, _ = label(mask_positiva, structure=struttura_8_conn)
 
             raggi_fissi = []
             ids_presenti = df_frame['ID'].values
+
             flussi_calcolati = []
+            flussi_doppi = []
+            flussi_intera_seg = []
+            flussi_kron_intera_seg = []
 
             for idx_star, star_id in enumerate(ids_presenti):
                 r_globale = map_raggi_max.get(star_id, np.nan)
@@ -590,22 +598,68 @@ if __name__ == "__main__":
 
                 raggi_fissi.append(r_globale)
 
+                pos = (df_frame.at[idx_star, 'xcentroid'], df_frame.at[idx_star, 'ycentroid'])
+
                 # calcolo il flusso usando l'apertura circolare fissa
                 if r_globale > 0 and not np.isnan(r_globale):
-                    pos = (df_frame.at[idx_star, 'xcentroid'], df_frame.at[idx_star, 'ycentroid'])
                     aper = CircularAperture(pos, r=r_globale)
                     phot = aperture_photometry(data_sub, aper)
                     flussi_calcolati.append(phot['aperture_sum'][0])
+
+                    # Calcolo il flusso per la mia apertura con raggio doppio
+                    r_doppio = r_globale * 2
+                    aper_doppia = CircularAperture(pos, r=r_doppio)
+                    phot_doppia = aperture_photometry(data_sub, aper_doppia)
+                    flussi_doppi.append(phot_doppia['aperture_sum'][0])
                 else:
                     flussi_calcolati.append(np.nan)
+                    flussi_doppi.append(np.nan)
+
+                # Calcolo i flussi per la mia segmentazione intera espansa
+                flusso_seg = np.nan
+                flusso_kron_seg = np.nan
+
+                x_c_int = int(round(pos[0]))
+                y_c_int = int(round(pos[1]))
+
+                if 0 <= y_c_int < mappa_espansa.shape[0] and 0 <= x_c_int < mappa_espansa.shape[1]:
+                    id_etichetta = mappa_espansa[y_c_int, x_c_int]
+                    if id_etichetta > 0:
+                        # Estraggo i pixel della mia etichetta
+                        maschera = (mappa_espansa == id_etichetta)
+                        y_idx_mask, x_idx_mask = np.where(maschera)
+                        valori_pixel = data_sub[maschera]
+                        distanze_pix = np.hypot(x_idx_mask - pos[0], y_idx_mask - pos[1])
+
+                        # Sommo tutti i pixel della mia segmentazione espansa
+                        flusso_seg = np.sum(valori_pixel)
+
+                        # Calcolo il mio flusso kron usando la funzione esportata da astrometria
+                        flusso_kron_calc, _ = calcola_flusso_kron_completo(data_sub, pos[0], pos[1], valori_pixel,
+                                                                           distanze_pix)
+                        flusso_kron_seg = flusso_kron_calc
+
+                flussi_intera_seg.append(flusso_seg)
+                flussi_kron_intera_seg.append(flusso_kron_seg)
 
             df_frame['flusso_fisso_max_run'] = flussi_calcolati
             df_frame['raggio_fisso_max_run'] = raggi_fissi
+
+            # Aggiungo le mie nuove colonne calcolate
+            df_frame['flusso_raggio_fisso_doppio'] = flussi_doppi
+            df_frame['flusso_intera_segmentazione'] = flussi_intera_seg
+            df_frame['flusso_kron_intera_segmentazione'] = flussi_kron_intera_seg
 
             # formatto le colonne a 2 cifre decimali
             df_frame['flusso_fisso_max_run'] = df_frame['flusso_fisso_max_run'].map(
                 lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
             df_frame['raggio_fisso_max_run'] = df_frame['raggio_fisso_max_run'].map(
+                lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
+            df_frame['flusso_raggio_fisso_doppio'] = df_frame['flusso_raggio_fisso_doppio'].map(
+                lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
+            df_frame['flusso_intera_segmentazione'] = df_frame['flusso_intera_segmentazione'].map(
+                lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
+            df_frame['flusso_kron_intera_segmentazione'] = df_frame['flusso_kron_intera_segmentazione'].map(
                 lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
 
             if 'label' in df_frame.columns:
@@ -649,7 +703,7 @@ if __name__ == "__main__":
 
         known_clusters_coords_run = []
         known_clusters_ids_run = []
-        threshold_deg = 35/3600
+        threshold_deg = 35 / 3600
         unique_files_run = df_no_run['file_index'].unique()
 
         # Rimuovo l'inizializzazione del contatore da qui, avendola spostata all'esterno del ciclo run
@@ -727,7 +781,8 @@ if __name__ == "__main__":
         # =================================================================
 
         print("Calcolo statistiche di run e riorganizzazione colonne...")
-        cols_flux = ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper', 'flusso_fisso_max_run']
+        cols_flux = ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper', 'flusso_fisso_max_run',
+                     'flusso_raggio_fisso_doppio', 'flusso_intera_segmentazione', 'flusso_kron_intera_segmentazione']
         cols_flux_presenti = [c for c in cols_flux if c in run_df.columns]
         for c in cols_flux_presenti: run_df[c] = pd.to_numeric(run_df[c], errors='coerce')
 

@@ -5,16 +5,40 @@ from matplotlib.patches import Rectangle
 from matplotlib.colors import LogNorm
 import numpy as np
 import os
+import sys
 from scipy.optimize import curve_fit
 from astropy.io import fits
 from astropy.stats import sigma_clipped_stats
 import warnings
 from pathlib import Path
 from tqdm import tqdm
+from astropy.io.fits.verify import VerifyWarning
+from astropy.utils.exceptions import AstropyUserWarning
+from astropy.wcs import FITSFixedWarning
 
-# Ignora warning numerici e FITS
 warnings.filterwarnings('ignore', category=RuntimeWarning)
-warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', message='.*failed to converge.*', category=UserWarning)
+warnings.simplefilter('ignore', category=FITSFixedWarning)
+warnings.filterwarnings('ignore', category=VerifyWarning)
+
+def trova_cartella_base(nome_target="pmc_photometry"):
+    path_corrente = Path(__file__).resolve()
+    for parent in [path_corrente] + list(path_corrente.parents):
+        if parent.name == nome_target:
+            return parent
+    print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
+    return path_corrente.parent
+
+
+BASE_DIR = trova_cartella_base("Lorenzo")
+
+PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
+
+if PERCORSO_FUNZIONI not in sys.path:
+    sys.path.append(PERCORSO_FUNZIONI)
+
+from funzioni.utilita import *
+from funzioni.astrometria import *
 
 
 # =============================================================================

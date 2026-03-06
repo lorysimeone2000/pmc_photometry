@@ -2,25 +2,44 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import sys
 from scipy.optimize import curve_fit
 import warnings
 from pathlib import Path
 from tqdm import tqdm
+from astropy.io.fits.verify import VerifyWarning
+from astropy.utils.exceptions import AstropyUserWarning
+from astropy.wcs import FITSFixedWarning
 
-# --- GESTIONE WARNING ---
 warnings.filterwarnings('ignore', category=RuntimeWarning)
-
-
-# =============================================================================
-# 0. FUNZIONI DI UTILITÀ E CONFIGURAZIONE
-# =============================================================================
+warnings.filterwarnings('ignore', category=FITSFixedWarning)
+warnings.filterwarnings('ignore', message='.*failed to converge.*', category=UserWarning)
+warnings.simplefilter('ignore', category=FITSFixedWarning)
+warnings.filterwarnings('ignore', category=VerifyWarning)
 
 def trova_cartella_base(nome_target="pmc_photometry"):
     path_corrente = Path(__file__).resolve()
     for parent in [path_corrente] + list(path_corrente.parents):
         if parent.name == nome_target:
             return parent
+    print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
     return path_corrente.parent
+
+
+BASE_DIR = trova_cartella_base("Lorenzo")
+
+PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
+
+if PERCORSO_FUNZIONI not in sys.path:
+    sys.path.append(PERCORSO_FUNZIONI)
+
+from funzioni.utilita import *
+from funzioni.astrometria import *
+
+
+# =============================================================================
+# 0. FUNZIONI DI UTILITÀ E CONFIGURAZIONE
+# =============================================================================
 
 
 def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
@@ -162,7 +181,7 @@ if len(df_fit_clean) > 2:
     if len(X) > 0:
         plt.errorbar(
             X, Y_flux, yerr=sigma_flux,
-            fmt='o', markersize=4, color='blue', ecolor='lightblue', alpha=0.7,
+            fmt='o', markersize=1, color='blue', ecolor='lightblue', alpha=0.7,
             label=f'Catalogati Validi ({len(X)})'
         )
 
@@ -176,7 +195,7 @@ if len(df_fit_clean) > 2:
             plt.scatter(
                 df_sature_plot['Mag'],
                 df_sature_plot['media_flusso_fisso_max_run'],
-                s=80, c='red', marker='x', linewidth=2,
+                s=40, c='red', marker='x', linewidth=1,
                 label=f'Sature (Escluse) ({len(df_sature_plot)})', zorder=20
             )
 

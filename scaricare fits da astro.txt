@@ -1,0 +1,1 @@
+rsync -avLP astro@10.99.56.220:~/ASTRI/Lorenzo/pmc_photometry/blazar/PMC_DATA/ /home/lorysimeone/tesi_magistrale/pmc_photometry/PMC_DATA/

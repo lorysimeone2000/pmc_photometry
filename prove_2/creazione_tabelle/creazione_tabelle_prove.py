@@ -38,7 +38,7 @@ from astropy.coordinates import Angle
 from shapely.geometry import Point, Polygon
 from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyUserWarning
-from scipy.ndimage import label
+from collections import deque
 
 # Eseguo l'import fondamentale per la mia portabilità
 from pathlib import Path
@@ -573,11 +573,6 @@ if __name__ == "__main__":
             # Uso la funzione del mio modulo astrometria per elaborare il file
             data_sub, median_bg, _ = elabora_file_fits(path_fits)
 
-            # Creo la mappa delle mie regioni connesse (8-connettività) cercando i miei pixel positivi
-            struttura_8_conn = np.ones((3, 3), dtype=int)
-            mask_positiva = data_sub > 0
-            mappa_espansa, _ = label(mask_positiva, structure=struttura_8_conn)
-
             raggi_fissi = []
             ids_presenti = df_frame['ID'].values
 
@@ -622,22 +617,47 @@ if __name__ == "__main__":
                 x_c_int = int(round(pos[0]))
                 y_c_int = int(round(pos[1]))
 
-                if 0 <= y_c_int < mappa_espansa.shape[0] and 0 <= x_c_int < mappa_espansa.shape[1]:
-                    id_etichetta = mappa_espansa[y_c_int, x_c_int]
-                    if id_etichetta > 0:
-                        # Estraggo i pixel della mia etichetta
-                        maschera = (mappa_espansa == id_etichetta)
-                        y_idx_mask, x_idx_mask = np.where(maschera)
-                        valori_pixel = data_sub[maschera]
-                        distanze_pix = np.hypot(x_idx_mask - pos[0], y_idx_mask - pos[1])
+                if 0 <= y_c_int < data_sub.shape[0] and 0 <= x_c_int < data_sub.shape[1]:
+                    if data_sub[y_c_int, x_c_int] != 0:
 
-                        # Sommo tutti i pixel della mia segmentazione espansa
-                        flusso_seg = np.sum(valori_pixel)
+                        # Inizializzo la mia coda e il mio set per i pixel adiacenti
+                        coda_pixel = deque([(y_c_int, x_c_int)])
+                        visitati = {(y_c_int, x_c_int)}
 
-                        # Calcolo il mio flusso kron usando la funzione esportata da astrometria
-                        flusso_kron_calc, _ = calcola_flusso_kron_completo(data_sub, pos[0], pos[1], valori_pixel,
-                                                                           distanze_pix)
-                        flusso_kron_seg = flusso_kron_calc
+                        y_val = []
+                        x_val = []
+                        pix_val = []
+
+                        # Esploro i miei pixel finché non trovo solo zeri
+                        while coda_pixel:
+                            cy, cx = coda_pixel.popleft()
+                            y_val.append(cy)
+                            x_val.append(cx)
+                            pix_val.append(data_sub[cy, cx])
+
+                            # Esploro i miei 8 vicini
+                            for dy in [-1, 0, 1]:
+                                for dx in [-1, 0, 1]:
+                                    if dy == 0 and dx == 0:
+                                        continue
+
+                                    ny, nx = cy + dy, cx + dx
+
+                                    # Verifico che le mie coordinate non escano dall'immagine
+                                    if 0 <= ny < data_sub.shape[0] and 0 <= nx < data_sub.shape[1]:
+                                        if (ny, nx) not in visitati and data_sub[ny, nx] != 0:
+                                            visitati.add((ny, nx))
+                                            coda_pixel.append((ny, nx))
+
+                        if pix_val:
+                            valori_pixel = np.array(pix_val)
+                            distanze_pix = np.hypot(np.array(x_val) - pos[0], np.array(y_val) - pos[1])
+
+                            flusso_seg = np.sum(valori_pixel)
+                            # Calcolo il mio flusso kron usando la funzione esportata da astrometria
+                            flusso_kron_calc, _ = calcola_flusso_kron_completo(data_sub, pos[0], pos[1], valori_pixel,
+                                                                               distanze_pix)
+                            flusso_kron_seg = flusso_kron_calc
 
                 flussi_intera_seg.append(flusso_seg)
                 flussi_kron_intera_seg.append(flusso_kron_seg)

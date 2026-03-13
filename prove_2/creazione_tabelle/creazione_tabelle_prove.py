@@ -5,7 +5,7 @@ from photutils.segmentation import make_2dgaussian_kernel
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from photutils.segmentation import SourceCatalog
-from photutils.aperture import aperture_photometry, CircularAperture
+from photutils.aperture import aperture_photometry, CircularAperture, CircularAnnulus
 import numpy as np
 import time
 import os
@@ -40,8 +40,6 @@ from shapely.geometry import Point, Polygon
 from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyUserWarning
 from scipy.ndimage import label
-
-# Eseguo l'import fondamentale per la mia portabilità
 from pathlib import Path
 
 '''
@@ -654,10 +652,12 @@ if __name__ == "__main__":
             flussi_calcolati = []
             flussi_calcolati_molt = []
             flussi_calcolati_add = []
+            flussi_calcolati_locale = []
 
             flussi_doppi = []
             flussi_doppi_molt = []
             flussi_doppi_add = []
+            flussi_doppi_locale = []
 
             flussi_intera_seg = []
             flussi_intera_seg_molt = []
@@ -665,6 +665,9 @@ if __name__ == "__main__":
             flussi_kron_intera_seg = []
             flussi_kron_intera_seg_molt = []
             flussi_kron_intera_seg_add = []
+            flussi_kron_intera_seg_locale = []
+
+            flussi_kron_manuale_aper_locale = []
 
             for idx_star, star_id in enumerate(ids_presenti):
                 r_globale = map_raggi_max.get(star_id, np.nan)
@@ -691,6 +694,15 @@ if __name__ == "__main__":
                     flussi_calcolati_molt.append(fl_calcolato * molt_corr)
                     flussi_calcolati_add.append(fl_calcolato + (np.pi * r_globale ** 2 / n_tot) * diff_s)
 
+                    # Calcolo il mio flusso corretto locale (Fondo locale con corona circolare)
+                    r_in = r_globale * 2.0
+                    r_out = r_globale * 4.0
+                    annulus = CircularAnnulus(pos, r_in=r_in, r_out=r_out)
+                    annulus_phot = aperture_photometry(data_sub, annulus)
+                    bkg_mean = annulus_phot['aperture_sum'][0] / annulus.area
+                    fl_locale = fl_calcolato - (bkg_mean * aper.area)
+                    flussi_calcolati_locale.append(fl_locale)
+
                     # Calcolo il flusso per la mia apertura con raggio doppio
                     r_doppio = r_globale * 2
                     aper_doppia = CircularAperture(pos, r=r_doppio)
@@ -701,14 +713,25 @@ if __name__ == "__main__":
                     # Aggiungo le mie correzioni al flusso doppio
                     flussi_doppi_molt.append(fl_doppio * molt_corr)
                     flussi_doppi_add.append(fl_doppio + (np.pi * r_doppio ** 2 / n_tot) * diff_s)
+
+                    # Calcolo il mio flusso doppio corretto locale
+                    r_in_doppio = r_doppio * 2.0
+                    r_out_doppio = r_doppio * 4.0
+                    annulus_doppio = CircularAnnulus(pos, r_in=r_in_doppio, r_out=r_out_doppio)
+                    annulus_phot_doppio = aperture_photometry(data_sub, annulus_doppio)
+                    bkg_mean_doppio = annulus_phot_doppio['aperture_sum'][0] / annulus_doppio.area
+                    fl_doppio_loc = fl_doppio - (bkg_mean_doppio * aper_doppia.area)
+                    flussi_doppi_locale.append(fl_doppio_loc)
                 else:
                     flussi_calcolati.append(np.nan)
                     flussi_calcolati_molt.append(np.nan)
                     flussi_calcolati_add.append(np.nan)
+                    flussi_calcolati_locale.append(np.nan)
 
                     flussi_doppi.append(np.nan)
                     flussi_doppi_molt.append(np.nan)
                     flussi_doppi_add.append(np.nan)
+                    flussi_doppi_locale.append(np.nan)
 
                 # Calcolo i flussi per la mia segmentazione intera espansa
                 flusso_seg = np.nan
@@ -716,6 +739,7 @@ if __name__ == "__main__":
                 flusso_kron_seg = np.nan
                 flusso_kron_seg_molt = np.nan
                 flusso_kron_seg_add = np.nan
+                flusso_kron_seg_loc = np.nan
 
                 x_c_int = int(round(pos[0]))
                 y_c_int = int(round(pos[1]))
@@ -743,22 +767,49 @@ if __name__ == "__main__":
                             flusso_kron_seg_molt = flusso_kron_calc * molt_corr
                             flusso_kron_seg_add = flusso_kron_calc + (np.pi * r_kron_finale ** 2 / n_tot) * diff_s
 
+                            # Calcolo il mio flusso kron intera seg corretto locale
+                            if r_kron_finale > 0:
+                                r_in_kron = r_kron_finale * 2.0
+                                r_out_kron = r_kron_finale * 4.0
+                                annulus_kron = CircularAnnulus(pos, r_in=r_in_kron, r_out=r_out_kron)
+                                annulus_phot_kron = aperture_photometry(data_sub, annulus_kron)
+                                bkg_mean_kron = annulus_phot_kron['aperture_sum'][0] / annulus_kron.area
+                                flusso_kron_seg_loc = flusso_kron_calc - (bkg_mean_kron * (np.pi * r_kron_finale ** 2))
+
                 flussi_intera_seg.append(flusso_seg)
                 flussi_intera_seg_molt.append(flusso_seg_molt)
 
                 flussi_kron_intera_seg.append(flusso_kron_seg)
                 flussi_kron_intera_seg_molt.append(flusso_kron_seg_molt)
                 flussi_kron_intera_seg_add.append(flusso_kron_seg_add)
+                flussi_kron_intera_seg_locale.append(flusso_kron_seg_loc)
+
+                # Calcolo il mio flusso kron manuale aper corretto locale
+                if 'kron_manuale_aper' in df_frame.columns and 'raggio_kron_aper' in df_frame.columns:
+                    r_kron_man = pd.to_numeric(df_frame.at[idx_star, 'raggio_kron_aper'], errors='coerce')
+                    fl_kron_man = pd.to_numeric(df_frame.at[idx_star, 'kron_manuale_aper'], errors='coerce')
+                    if pd.notnull(r_kron_man) and r_kron_man > 0 and pd.notnull(fl_kron_man):
+                        r_in_km = r_kron_man * 2.0
+                        r_out_km = r_kron_man * 4.0
+                        annulus_km = CircularAnnulus(pos, r_in=r_in_km, r_out=r_out_km)
+                        annulus_phot_km = aperture_photometry(data_sub, annulus_km)
+                        bkg_mean_km = annulus_phot_km['aperture_sum'][0] / annulus_km.area
+                        fl_kron_man_loc = fl_kron_man - (bkg_mean_km * (np.pi * r_kron_man ** 2))
+                        flussi_kron_manuale_aper_locale.append(fl_kron_man_loc)
+                    else:
+                        flussi_kron_manuale_aper_locale.append(np.nan)
 
             df_frame['raggio_fisso_max_run'] = raggi_fissi
 
             df_frame['flusso_fisso_max_run'] = flussi_calcolati
             df_frame['flusso_fisso_max_run_CORRETTO_Normalizzazione_Moltiplicativa'] = flussi_calcolati_molt
             df_frame['flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura'] = flussi_calcolati_add
+            df_frame['flusso_fisso_max_run_CORRETTO_LOCALE'] = flussi_calcolati_locale
 
             df_frame['flusso_raggio_fisso_doppio'] = flussi_doppi
             df_frame['flusso_raggio_fisso_doppio_CORRETTO_Normalizzazione_Moltiplicativa'] = flussi_doppi_molt
             df_frame['flusso_raggio_fisso_doppio_CORRETTO_Correzione_Additiva_dell_Apertura'] = flussi_doppi_add
+            df_frame['flusso_raggio_fisso_doppio_CORRETTO_LOCALE'] = flussi_doppi_locale
 
             df_frame['flusso_intera_segmentazione'] = flussi_intera_seg
             df_frame['flusso_intera_segmentazione_CORRETTO_Normalizzazione_Moltiplicativa'] = flussi_intera_seg_molt
@@ -768,20 +819,28 @@ if __name__ == "__main__":
                 'flusso_kron_intera_segmentazione_CORRETTO_Normalizzazione_Moltiplicativa'] = flussi_kron_intera_seg_molt
             df_frame[
                 'flusso_kron_intera_segmentazione_CORRETTO_Correzione_Additiva_dell_Apertura'] = flussi_kron_intera_seg_add
+            df_frame['flusso_kron_intera_segmentazione_CORRETTO_LOCALE'] = flussi_kron_intera_seg_locale
+
+            if 'kron_manuale_aper' in df_frame.columns and 'raggio_kron_aper' in df_frame.columns:
+                df_frame['kron_manuale_aper_CORRETTO_LOCALE'] = flussi_kron_manuale_aper_locale
 
             # formatto le colonne a 2 cifre decimali
             cols_to_format = [
                 'flusso_fisso_max_run', 'flusso_fisso_max_run_CORRETTO_Normalizzazione_Moltiplicativa',
                 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura',
+                'flusso_fisso_max_run_CORRETTO_LOCALE',
                 'raggio_fisso_max_run',
                 'flusso_raggio_fisso_doppio', 'flusso_raggio_fisso_doppio_CORRETTO_Normalizzazione_Moltiplicativa',
                 'flusso_raggio_fisso_doppio_CORRETTO_Correzione_Additiva_dell_Apertura',
+                'flusso_raggio_fisso_doppio_CORRETTO_LOCALE',
                 'flusso_intera_segmentazione', 'flusso_intera_segmentazione_CORRETTO_Normalizzazione_Moltiplicativa',
                 'flusso_kron_intera_segmentazione',
                 'flusso_kron_intera_segmentazione_CORRETTO_Normalizzazione_Moltiplicativa',
                 'flusso_kron_intera_segmentazione_CORRETTO_Correzione_Additiva_dell_Apertura',
+                'flusso_kron_intera_segmentazione_CORRETTO_LOCALE',
                 'kron_manuale_aper_CORRETTO_Normalizzazione_Moltiplicativa',
                 'kron_manuale_aper_CORRETTO_Correzione_Additiva_dell_Apertura',
+                'kron_manuale_aper_CORRETTO_LOCALE',
                 'kron_manuale_seg_CORRETTO_Normalizzazione_Moltiplicativa',
                 'somma_apertura_ultimo_pixel_CORRETTO_Normalizzazione_Moltiplicativa'
             ]
@@ -917,15 +976,19 @@ if __name__ == "__main__":
                      'kron_manuale_seg', 'kron_manuale_seg_CORRETTO_Normalizzazione_Moltiplicativa',
                      'kron_manuale_aper', 'kron_manuale_aper_CORRETTO_Normalizzazione_Moltiplicativa',
                      'kron_manuale_aper_CORRETTO_Correzione_Additiva_dell_Apertura',
+                     'kron_manuale_aper_CORRETTO_LOCALE',
                      'flusso_fisso_max_run', 'flusso_fisso_max_run_CORRETTO_Normalizzazione_Moltiplicativa',
                      'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura',
+                     'flusso_fisso_max_run_CORRETTO_LOCALE',
                      'flusso_raggio_fisso_doppio', 'flusso_raggio_fisso_doppio_CORRETTO_Normalizzazione_Moltiplicativa',
                      'flusso_raggio_fisso_doppio_CORRETTO_Correzione_Additiva_dell_Apertura',
+                     'flusso_raggio_fisso_doppio_CORRETTO_LOCALE',
                      'flusso_intera_segmentazione',
                      'flusso_intera_segmentazione_CORRETTO_Normalizzazione_Moltiplicativa',
                      'flusso_kron_intera_segmentazione',
                      'flusso_kron_intera_segmentazione_CORRETTO_Normalizzazione_Moltiplicativa',
-                     'flusso_kron_intera_segmentazione_CORRETTO_Correzione_Additiva_dell_Apertura']
+                     'flusso_kron_intera_segmentazione_CORRETTO_Correzione_Additiva_dell_Apertura',
+                     'flusso_kron_intera_segmentazione_CORRETTO_LOCALE']
         cols_flux_presenti = [c for c in cols_flux if c in run_df.columns]
         for c in cols_flux_presenti: run_df[c] = pd.to_numeric(run_df[c], errors='coerce')
 

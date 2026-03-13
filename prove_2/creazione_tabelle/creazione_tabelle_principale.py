@@ -113,6 +113,17 @@ vizier = Vizier(
 
 if __name__ == "__main__":
 
+    # Carico il mio file contenente i risultati della somma dei pixel
+    file_somma_pixel = cerca_file_nel_progetto(BASE_DIR, "risultati_somma_pixel.csv")
+    S_ref = np.nan
+    df_somma_pixel = None
+    if file_somma_pixel is not None:
+        df_somma_pixel = pd.read_csv(file_somma_pixel)
+        # Cerco la mia S di riferimento (run 1, immagine 35)
+        riga_ref = df_somma_pixel[(df_somma_pixel['Run'] == 1) & (df_somma_pixel['im'] == 35)]
+        if not riga_ref.empty:
+            S_ref = riga_ref['Somma_Pixel_Esterni'].values[0]
+
     # Impongo le unità di misura per risolvere il mio errore di matching
     soglia_correlazione = 35 / 3600 * u.deg
     dist_ripetizione = soglia_correlazione
@@ -358,6 +369,41 @@ if __name__ == "__main__":
             with fits.open(percorso_file, memmap=False) as hdu:
                 w = WCS(hdu[0].header)
                 header_date_obs = hdu[0].header['DATE-OBS']
+                N_tot = hdu[0].data.size
+
+            # Recupero la mia S(t) per calcolare le correzioni dei flussi di Fase 1
+            S_t = np.nan
+            if df_somma_pixel is not None:
+                r_S = df_somma_pixel[(df_somma_pixel['Run'] == run) & (df_somma_pixel['im'] == n)]
+                if not r_S.empty:
+                    S_t = r_S['Somma_Pixel_Esterni'].values[0]
+
+            for nome_flusso in ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper']:
+                if nome_flusso in df_trovate.columns:
+                    col_mult = f'flusso_{nome_flusso}_CORRETTO_Normalizzazione_Moltiplicativa'
+                    col_add = f'flusso_{nome_flusso}_CORRETTO_Correzione_Additiva_dell_Apertura'
+
+                    # Determino la mia area
+                    if nome_flusso == 'kron_manuale_seg' and 'area' in df_trovate.columns:
+                        area_arr = pd.to_numeric(df_trovate['area'], errors='coerce').values
+                    elif 'raggio_kron_aper' in df_trovate.columns:
+                        area_arr = np.pi * (pd.to_numeric(df_trovate['raggio_kron_aper'], errors='coerce').values) ** 2
+                    else:
+                        area_arr = 0.0
+
+                    flux_raw = pd.to_numeric(df_trovate[nome_flusso], errors='coerce').values
+
+                    if not np.isnan(S_t) and not np.isnan(S_ref):
+                        # Calcolo le mie correzioni per i flussi di Fase 1
+                        flux_mult = flux_raw * (S_ref / S_t)
+                        flux_add = flux_raw - (1.0 * area_arr * ((S_t - S_ref) / N_tot))
+                    else:
+                        flux_mult = np.full(len(flux_raw), np.nan)
+                        flux_add = np.full(len(flux_raw), np.nan)
+
+                    df_trovate[col_mult] = flux_mult
+                    df_trovate[col_add] = flux_add
+
             coords = w.pixel_to_world(df_trovate['xcentroid'], df_trovate['ycentroid'])
             df_trovate['RA_centroid'] = coords.ra.deg
             df_trovate['DEC_centroid'] = coords.dec.deg
@@ -571,6 +617,7 @@ if __name__ == "__main__":
 
             with fits.open(path_fits, memmap=False) as hdu:
                 data_fits = hdu[0].data
+                N_tot = data_fits.size
                 _, median_bg, _ = sigma_clipped_stats(data_fits[::10, ::10], sigma=3.0)
                 data_sub = data_fits - median_bg
 
@@ -601,6 +648,39 @@ if __name__ == "__main__":
 
             df_frame['flusso_fisso_max_run'] = flussi_calcolati
             df_frame['raggio_fisso_max_run'] = raggi_fissi
+
+            # Recupero la mia immagine corrente e calcolo le correzioni per il flusso fisso
+            if 'img_index' in df_frame.columns:
+                im_corr = df_frame['img_index'].iloc[0]
+            else:
+                im_corr = int(str(file_csv.stem).split('_')[-1])
+
+            S_t = np.nan
+            if df_somma_pixel is not None:
+                r_S = df_somma_pixel[(df_somma_pixel['Run'] == run) & (df_somma_pixel['im'] == im_corr)]
+                if not r_S.empty:
+                    S_t = r_S['Somma_Pixel_Esterni'].values[0]
+
+            nome_flusso = 'flusso_fisso_max_run'
+            col_mult = f'flusso_{nome_flusso}_CORRETTO_Normalizzazione_Moltiplicativa'
+            col_add = f'flusso_{nome_flusso}_CORRETTO_Correzione_Additiva_dell_Apertura'
+
+            area_arr = np.pi * (np.array(raggi_fissi)) ** 2
+            flux_raw = np.array(flussi_calcolati)
+
+            if not np.isnan(S_t) and not np.isnan(S_ref):
+                # Calcolo le mie correzioni per il flusso fisso di Fase 3
+                flux_mult = flux_raw * (S_ref / S_t)
+                flux_add = flux_raw - (1.0 * area_arr * ((S_t - S_ref) / N_tot))
+            else:
+                flux_mult = np.full(len(flux_raw), np.nan)
+                flux_add = np.full(len(flux_raw), np.nan)
+
+            df_frame[col_mult] = flux_mult
+            df_frame[col_add] = flux_add
+
+            df_frame[col_mult] = df_frame[col_mult].map(lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
+            df_frame[col_add] = df_frame[col_add].map(lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
 
             # formatto le colonne a 2 cifre decimali
             df_frame['flusso_fisso_max_run'] = df_frame['flusso_fisso_max_run'].map(
@@ -649,7 +729,7 @@ if __name__ == "__main__":
 
         known_clusters_coords_run = []
         known_clusters_ids_run = []
-        threshold_deg = 35/3600
+        threshold_deg = 35 / 3600
         unique_files_run = df_no_run['file_index'].unique()
 
         # Rimuovo l'inizializzazione del contatore da qui, avendola spostata all'esterno del ciclo run
@@ -727,7 +807,15 @@ if __name__ == "__main__":
         # =================================================================
 
         print("Calcolo statistiche di run e riorganizzazione colonne...")
-        cols_flux = ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper', 'flusso_fisso_max_run']
+        cols_flux_base = ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper',
+                          'flusso_fisso_max_run']
+        cols_flux = []
+        for c in cols_flux_base:
+            cols_flux.append(c)
+            # Aggiungo i miei flussi corretti alla lista per le statistiche
+            cols_flux.append(f'flusso_{c}_CORRETTO_Normalizzazione_Moltiplicativa')
+            cols_flux.append(f'flusso_{c}_CORRETTO_Correzione_Additiva_dell_Apertura')
+
         cols_flux_presenti = [c for c in cols_flux if c in run_df.columns]
         for c in cols_flux_presenti: run_df[c] = pd.to_numeric(run_df[c], errors='coerce')
 

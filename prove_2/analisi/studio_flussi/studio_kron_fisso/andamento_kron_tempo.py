@@ -53,7 +53,7 @@ base_path = "/home/lorysimeone/tesi_magistrale/prove_2/tabelle/tabelle_unite"
 
 # ID Stella Target (Hardcoded come richiesto)
 id_stella_target = 134270845394639028
-KRON_TARGET = 1000  # Solo per riferimento nel titolo
+KRON_TARGET = 300  # Solo per riferimento nel titolo
 
 print(f"--- ANALISI MULTI-RUN (Run: {run_list}) ---")
 print(f"Target ID: {id_stella_target}")
@@ -305,4 +305,6 @@ plt.grid(True, linestyle='--', alpha=0.3)
 plt.ylim(0, None)
 plt.legend()
 plt.tight_layout()
+
+plt.savefig(f'andamento_kron_{KRON_TARGET}', dpi=300)
 plt.show()

@@ -145,13 +145,13 @@ df_fit_clean = df_fit_valid[df_fit_valid['Mag'] <= SOGLIA_MAG_FIT].copy()
 
 print(f"Oggetti validi per i Bin (Match SI, No Saturi, Mag <= {SOGLIA_MAG_FIT}): {len(df_fit_clean)}")
 
-
 # preparo la lista dei flussi da analizzare
 flussi_da_analizzare = [
     ('media_flusso_fisso_max_run', 'std_flusso_fisso_max_run', 'Media Flusso Fisso Max Run'),
     ('media_flusso_raggio_fisso_doppio', 'std_flusso_raggio_fisso_doppio', 'Media Flusso Raggio Fisso Doppio'),
     ('media_flusso_intera_segmentazione', 'std_flusso_intera_segmentazione', 'Media Flusso Intera Segmentazione'),
-    ('media_flusso_kron_intera_segmentazione', 'std_flusso_kron_intera_segmentazione', 'Media Flusso Kron Intera Segmentazione')
+    ('media_flusso_kron_intera_segmentazione', 'std_flusso_kron_intera_segmentazione',
+     'Media Flusso Kron Intera Segmentazione')
 ]
 
 # =============================================================================
@@ -169,27 +169,30 @@ for col_flusso, col_err, nome_flusso in flussi_da_analizzare:
 
         n_bins_g = max(5, int(np.sqrt(len(X_all_g))))
 
-        # ordino gli array per magnitudine prima di spezzarli in chunk di uguale dimensione
-        sort_idx_g = np.argsort(X_all_g)
-        X_sorted_g = X_all_g[sort_idx_g]
-        Y_sorted_g = Y_all_g[sort_idx_g]
-        Err_sorted_g = Err_all_g[sort_idx_g]
-
-        # divido gli array in blocchi con lo stesso numero di stelle
-        X_chunks_g = np.array_split(X_sorted_g, n_bins_g)
-        Y_chunks_g = np.array_split(Y_sorted_g, n_bins_g)
-        Err_chunks_g = np.array_split(Err_sorted_g, n_bins_g)
+        # creo bin di larghezza uguale su tutto l'intervallo di magnitudini
+        bins_g = np.linspace(X_all_g.min(), X_all_g.max(), n_bins_g + 1)
 
         X_binned_g = []
         Y_binned_g = []
         Err_binned_g = []
+        Popolazioni_binned_g = []
 
-        for x_bin, y_bin, err_bin in zip(X_chunks_g, Y_chunks_g, Err_chunks_g):
-            if len(x_bin) > 0:
+        # raggruppo le stelle all'interno di ciascun bin a larghezza fissa
+        for i in range(n_bins_g):
+            if i == n_bins_g - 1:
+                mask = (X_all_g >= bins_g[i]) & (X_all_g <= bins_g[i + 1])
+            else:
+                mask = (X_all_g >= bins_g[i]) & (X_all_g < bins_g[i + 1])
+
+            if np.sum(mask) > 0:
+                x_bin = X_all_g[mask]
+                y_bin = Y_all_g[mask]
+                err_bin = Err_all_g[mask]
+
                 # calcolo la media semplice del flusso
                 y_media_semplice = np.mean(y_bin)
 
-                # calcolo la deviazione standard della media (errore standard) senza usare i pesi
+                # calcolo l'errore standard della media dipendente dalla popolazione N del bin
                 if len(y_bin) > 1:
                     y_errore_semplice = np.std(y_bin, ddof=1) / np.sqrt(len(y_bin))
                     if y_errore_semplice == 0:
@@ -202,12 +205,15 @@ for col_flusso, col_err, nome_flusso in flussi_da_analizzare:
                 X_binned_g.append(x_mean)
                 Y_binned_g.append(y_media_semplice)
                 Err_binned_g.append(y_errore_semplice)
+                Popolazioni_binned_g.append(len(y_bin))
 
         X_binned_g = np.array(X_binned_g)
         Y_binned_g = np.array(Y_binned_g)
         Err_binned_g = np.array(Err_binned_g)
 
         Y_log_g = np.log10(Y_binned_g)
+
+        # propago l'errore (che essendo proporzionale a 1/sqrt(N) conferirà più peso ai bin più popolati)
         sigma_log_g = (1 / np.log(10)) * (Err_binned_g / Y_binned_g)
 
         popt_g, pcov_g = curve_fit(modello_lineare, X_binned_g, Y_log_g, sigma=sigma_log_g, absolute_sigma=True)
@@ -220,7 +226,7 @@ for col_flusso, col_err, nome_flusso in flussi_da_analizzare:
         chi2_red_g = chi2_g / dof_g if dof_g > 0 else 0
 
         print(f"Numero di bin effettivi usati (Globale): {len(X_binned_g)}")
-        print(f"Stelle per bin (circa): {len(X_chunks_g[0])}")
+        print(f"Popolazione media dei bin: {np.mean(Popolazioni_binned_g):.1f} stelle")
         print(f"m = {m_fit_g:.4f} ± {err_m_g:.4f}")
         print(f"q = {q_fit_g:.4f} ± {err_q_g:.4f}")
         print(f"Chi2 Ridotto = {chi2_red_g:.2f}")
@@ -249,14 +255,13 @@ for col_flusso, col_err, nome_flusso in flussi_da_analizzare:
         plt.legend(fontsize=11, loc='best')
         plt.tight_layout()
 
-        out_file_globale = f"fit_globale_binned_media_non_pesata_{col_flusso}.png"
+        out_file_globale = f"fit_globale_PESATI_binned_media_non_pesata_{col_flusso}.png"
         plt.savefig(out_file_globale, dpi=300)
         print(f"Grafico 1 salvato: {out_file_globale}")
         plt.show()
 
     else:
         print("Non abbastanza punti validi per eseguire il fit globale.")
-
 
 # =============================================================================
 # 4. GRAFICO 2: BINNING E FIT SEPARATO PER SINGOLA RUN
@@ -279,27 +284,29 @@ for col_flusso, col_err, nome_flusso in flussi_da_analizzare:
 
             n_bins = max(5, int(np.sqrt(len(X_all))))
 
-            # ordino gli array per magnitudine per questa singola run
-            sort_idx = np.argsort(X_all)
-            X_sorted = X_all[sort_idx]
-            Y_sorted = Y_all[sort_idx]
-            Err_sorted = Err_all[sort_idx]
-
-            # divido gli array in blocchi con lo stesso numero di stelle
-            X_chunks = np.array_split(X_sorted, n_bins)
-            Y_chunks = np.array_split(Y_sorted, n_bins)
-            Err_chunks = np.array_split(Err_sorted, n_bins)
+            # creo i bin a larghezza fissa per questa run
+            bins = np.linspace(X_all.min(), X_all.max(), n_bins + 1)
 
             X_binned = []
             Y_binned = []
             Err_binned = []
+            Popolazioni_binned = []
 
-            for x_bin, y_bin, err_bin in zip(X_chunks, Y_chunks, Err_chunks):
-                if len(x_bin) > 0:
-                    # calcolo la media semplice del flusso per la singola run
+            for i in range(n_bins):
+                if i == n_bins - 1:
+                    mask = (X_all >= bins[i]) & (X_all <= bins[i + 1])
+                else:
+                    mask = (X_all >= bins[i]) & (X_all < bins[i + 1])
+
+                if np.sum(mask) > 0:
+                    x_bin = X_all[mask]
+                    y_bin = Y_all[mask]
+                    err_bin = Err_all[mask]
+
+                    # calcolo la media semplice
                     y_media_semplice = np.mean(y_bin)
 
-                    # calcolo la deviazione standard della media semplice (errore standard)
+                    # calcolo l'errore standard che dipendendo da N assegnerà dinamicamente il peso
                     if len(y_bin) > 1:
                         y_errore_semplice = np.std(y_bin, ddof=1) / np.sqrt(len(y_bin))
                         if y_errore_semplice == 0:
@@ -312,6 +319,7 @@ for col_flusso, col_err, nome_flusso in flussi_da_analizzare:
                     X_binned.append(x_mean)
                     Y_binned.append(y_media_semplice)
                     Err_binned.append(y_errore_semplice)
+                    Popolazioni_binned.append(len(y_bin))
 
             X_binned = np.array(X_binned)
             Y_binned = np.array(Y_binned)
@@ -334,7 +342,7 @@ for col_flusso, col_err, nome_flusso in flussi_da_analizzare:
 
             print(f"\nRisultati Run {run_id}:")
             print(f"Numero bin usati: {len(X_binned)} (su {n_bins})")
-            print(f"Stelle per bin (circa): {len(X_chunks[0])}")
+            print(f"Popolazione media dei bin: {np.mean(Popolazioni_binned):.1f} stelle")
             print(f"m = {m_fit:.4f} ± {err_m:.4f}")
             print(f"q = {q_fit:.4f} ± {err_q:.4f}")
             print(f"Chi2 Ridotto = {chi2_red:.2f}")
@@ -368,7 +376,7 @@ for col_flusso, col_err, nome_flusso in flussi_da_analizzare:
     plt.legend(fontsize=10, loc='best')
     plt.tight_layout()
 
-    out_file_run = f"fit_globale_binned_per_run_media_non_pesata_{col_flusso}.png"
+    out_file_run = f"fit_globale_binned_PESATI_per_run_media_non_pesata_{col_flusso}.png"
     plt.savefig(out_file_run, dpi=300)
     print(f"\nGrafico 2 salvato con successo come: {out_file_run}")
     plt.show()

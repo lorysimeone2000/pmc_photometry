@@ -223,3 +223,41 @@ def analisi_image_segmentation(percorso_file_, parametri_globali):
     if len(tbl_filtrato) > 0: tbl_filtrato['label'] = np.arange(1, len(tbl_filtrato) + 1)
 
     return tbl_filtrato, parametri_globali
+
+
+def calcola_e_aggiungi_correzioni(tbl, S_t, S_ref, N_tot):
+    # Eseguo il calcolo per le mie due correzioni su tutti i flussi richiesti.
+
+    # Mappo dinamicamente i flussi noti con la rispettiva area calcolata tramite il raggio.
+    # Per i flussi di segmentazione standard o Kron originale, utilizzo l'area della segmentazione direttamente;
+    # per quelli di apertura applico la canonica Area = pi * r^2
+    aree_flussi = {
+        'kron_manuale_aper': np.pi * (tbl['raggio_kron_aper'] ** 2) if 'raggio_kron_aper' in tbl.colnames else None,
+        'kron_manuale_seg': tbl['area'] if 'area' in tbl.colnames else None,
+        'somma_apertura_ultimo_pixel': np.pi * (
+                    tbl['raggio_kron_aper'] ** 2) if 'raggio_kron_aper' in tbl.colnames else None,
+        'kron_flux': tbl['area'] if 'area' in tbl.colnames else None
+    }
+
+    for nome_flusso, area in aree_flussi.items():
+        if nome_flusso in tbl.colnames and area is not None:
+            f_obs = tbl[nome_flusso]
+
+            # Applico la normalizzazione moltiplicativa
+            col_molt = f"flusso_{nome_flusso}_CORRETTO_Normalizzazione_Moltiplicativa"
+            tbl[col_molt] = f_obs * (S_ref / S_t)
+
+            # Applico la correzione additiva dell'apertura (forzando k = 1.0)
+            col_add = f"flusso_{nome_flusso}_CORRETTO_Correzione_Additiva_dell_Apertura"
+            tbl[col_add] = f_obs + 1.0 * area * ((S_ref - S_t) / N_tot)
+
+    return tbl
+
+# =========================================================================
+# ISTRUZIONE D'USO IN ASTROMETRIA:
+# Aggiorna la definizione della tua funzione principale in questo modo:
+# def analisi_image_segmentation(percorso_file, parametri_caricati, S_t, S_ref, N_tot):
+#
+# E prima dell'ultima riga (return tbl_trovate, ...), aggiungi:
+# tbl_trovate = calcola_e_aggiungi_correzioni(tbl_trovate, S_t, S_ref, N_tot)
+# =========================================================================

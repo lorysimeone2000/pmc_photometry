@@ -7,6 +7,7 @@ from matplotlib.colors import LogNorm
 from photutils.segmentation import SourceCatalog
 from photutils.aperture import aperture_photometry, CircularAperture
 import numpy as np
+import time
 import os
 import sys
 from tqdm import tqdm
@@ -38,6 +39,7 @@ from astropy.coordinates import Angle
 from shapely.geometry import Point, Polygon
 from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyUserWarning
+from scipy.ndimage import label
 
 # Eseguo l'import fondamentale per la mia portabilità
 from pathlib import Path
@@ -101,10 +103,11 @@ osservatorio = wgs84.latlon(lat_oss, lon_oss, elevation_m=alt_oss)
 # Definisco le mie run da analizzare
 RUN = [1, 2, 3]
 
+# Uso il mirror di Harvard per aggirare i blocchi IP del server principale francese
 vizier = Vizier(
     catalog="II/389/ps1_dr2",
     columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag'],
-    row_limit=-1
+    row_limit=-1,
 )
 
 # =============================================================================
@@ -112,17 +115,6 @@ vizier = Vizier(
 # =============================================================================
 
 if __name__ == "__main__":
-
-    # Carico il mio file contenente i risultati della somma dei pixel
-    file_somma_pixel = cerca_file_nel_progetto(BASE_DIR, "risultati_somma_pixel.csv")
-    S_ref = np.nan
-    df_somma_pixel = None
-    if file_somma_pixel is not None:
-        df_somma_pixel = pd.read_csv(file_somma_pixel)
-        # Cerco la mia S di riferimento (run 1, immagine 35)
-        riga_ref = df_somma_pixel[(df_somma_pixel['Run'] == 1) & (df_somma_pixel['im'] == 35)]
-        if not riga_ref.empty:
-            S_ref = riga_ref['Somma_Pixel_Esterni'].values[0]
 
     # Impongo le unità di misura per risolvere il mio errore di matching
     soglia_correlazione = 35 / 3600 * u.deg
@@ -274,12 +266,32 @@ if __name__ == "__main__":
 
                 hdu_list.close()
 
-                riquadro_esterno_vizier = vizier.query_region(
-                    coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
-                    radius=raggio_ricerca,
-                    column_filters={'gmag': f'<{15}'}
-                )
-                tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+                # Imposto un meccanismo di riprova in caso di errore di rete
+                tentativi_massimi = 5
+                attesa = 10
+
+                for tentativo in range(tentativi_massimi):
+                    try:
+                        # Eseguo la mia query su Vizier
+                        riquadro_esterno_vizier = vizier.query_region(
+                            coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
+                            radius=raggio_ricerca,
+                            column_filters={'gmag': f'<{15}'}
+                        )
+                        tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+
+                        # Esco dal ciclo se la mia query ha successo
+                        break
+                    except Exception as e:
+                        if tentativo < tentativi_massimi - 1:
+                            print(
+                                f"\nErrore di connessione a Vizier. Riprovo tra {attesa} secondi... (Tentativo {tentativo + 1}/{tentativi_massimi})")
+                            # Attendo prima di eseguire il mio prossimo tentativo
+                            time.sleep(attesa)
+                        else:
+                            print(
+                                f"\nImpossibile connettersi a Vizier dopo {tentativi_massimi} tentativi. Dettaglio errore: {e}")
+                            raise
 
                 distanze_hip = centro.separation(coords_hipparco_global)
 
@@ -369,41 +381,6 @@ if __name__ == "__main__":
             with fits.open(percorso_file, memmap=False) as hdu:
                 w = WCS(hdu[0].header)
                 header_date_obs = hdu[0].header['DATE-OBS']
-                N_tot = hdu[0].data.size
-
-            # Recupero la mia S(t) per calcolare le correzioni dei flussi di Fase 1
-            S_t = np.nan
-            if df_somma_pixel is not None:
-                r_S = df_somma_pixel[(df_somma_pixel['Run'] == run) & (df_somma_pixel['im'] == n)]
-                if not r_S.empty:
-                    S_t = r_S['Somma_Pixel_Esterni'].values[0]
-
-            for nome_flusso in ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper']:
-                if nome_flusso in df_trovate.columns:
-                    col_mult = f'flusso_{nome_flusso}_CORRETTO_Normalizzazione_Moltiplicativa'
-                    col_add = f'flusso_{nome_flusso}_CORRETTO_Correzione_Additiva_dell_Apertura'
-
-                    # Determino la mia area
-                    if nome_flusso == 'kron_manuale_seg' and 'area' in df_trovate.columns:
-                        area_arr = pd.to_numeric(df_trovate['area'], errors='coerce').values
-                    elif 'raggio_kron_aper' in df_trovate.columns:
-                        area_arr = np.pi * (pd.to_numeric(df_trovate['raggio_kron_aper'], errors='coerce').values) ** 2
-                    else:
-                        area_arr = 0.0
-
-                    flux_raw = pd.to_numeric(df_trovate[nome_flusso], errors='coerce').values
-
-                    if not np.isnan(S_t) and not np.isnan(S_ref):
-                        # Calcolo le mie correzioni per i flussi di Fase 1
-                        flux_mult = flux_raw * (S_ref / S_t)
-                        flux_add = flux_raw - (1.0 * area_arr * ((S_t - S_ref) / N_tot))
-                    else:
-                        flux_mult = np.full(len(flux_raw), np.nan)
-                        flux_add = np.full(len(flux_raw), np.nan)
-
-                    df_trovate[col_mult] = flux_mult
-                    df_trovate[col_add] = flux_add
-
             coords = w.pixel_to_world(df_trovate['xcentroid'], df_trovate['ycentroid'])
             df_trovate['RA_centroid'] = coords.ra.deg
             df_trovate['DEC_centroid'] = coords.dec.deg
@@ -615,15 +592,21 @@ if __name__ == "__main__":
             # converto l'oggetto Path in stringa per passarlo ad astropy
             path_fits = str(file_trovato)
 
-            with fits.open(path_fits, memmap=False) as hdu:
-                data_fits = hdu[0].data
-                N_tot = data_fits.size
-                _, median_bg, _ = sigma_clipped_stats(data_fits[::10, ::10], sigma=3.0)
-                data_sub = data_fits - median_bg
+            # Uso la funzione del mio modulo astrometria per elaborare il file
+            data_sub, median_bg, _ = elabora_file_fits(path_fits)
+
+            # Creo la mappa delle mie regioni connesse (8-connettività) cercando i miei pixel positivi
+            struttura_8_conn = np.ones((3, 3), dtype=int)
+            mask_positiva = data_sub > 0
+            mappa_espansa, _ = label(mask_positiva, structure=struttura_8_conn)
 
             raggi_fissi = []
             ids_presenti = df_frame['ID'].values
+
             flussi_calcolati = []
+            flussi_doppi = []
+            flussi_intera_seg = []
+            flussi_kron_intera_seg = []
 
             for idx_star, star_id in enumerate(ids_presenti):
                 r_globale = map_raggi_max.get(star_id, np.nan)
@@ -637,55 +620,68 @@ if __name__ == "__main__":
 
                 raggi_fissi.append(r_globale)
 
+                pos = (df_frame.at[idx_star, 'xcentroid'], df_frame.at[idx_star, 'ycentroid'])
+
                 # calcolo il flusso usando l'apertura circolare fissa
                 if r_globale > 0 and not np.isnan(r_globale):
-                    pos = (df_frame.at[idx_star, 'xcentroid'], df_frame.at[idx_star, 'ycentroid'])
                     aper = CircularAperture(pos, r=r_globale)
                     phot = aperture_photometry(data_sub, aper)
                     flussi_calcolati.append(phot['aperture_sum'][0])
+
+                    # Calcolo il flusso per la mia apertura con raggio doppio
+                    r_doppio = r_globale * 2
+                    aper_doppia = CircularAperture(pos, r=r_doppio)
+                    phot_doppia = aperture_photometry(data_sub, aper_doppia)
+                    flussi_doppi.append(phot_doppia['aperture_sum'][0])
                 else:
                     flussi_calcolati.append(np.nan)
+                    flussi_doppi.append(np.nan)
+
+                # Calcolo i flussi per la mia segmentazione intera espansa
+                flusso_seg = np.nan
+                flusso_kron_seg = np.nan
+
+                x_c_int = int(round(pos[0]))
+                y_c_int = int(round(pos[1]))
+
+                if 0 <= y_c_int < mappa_espansa.shape[0] and 0 <= x_c_int < mappa_espansa.shape[1]:
+                    id_etichetta = mappa_espansa[y_c_int, x_c_int]
+                    if id_etichetta > 0:
+                        # Estraggo i pixel della mia etichetta
+                        maschera = (mappa_espansa == id_etichetta)
+                        y_idx_mask, x_idx_mask = np.where(maschera)
+                        valori_pixel = data_sub[maschera]
+                        distanze_pix = np.hypot(x_idx_mask - pos[0], y_idx_mask - pos[1])
+
+                        # Sommo tutti i pixel della mia segmentazione espansa
+                        flusso_seg = np.sum(valori_pixel)
+
+                        # Calcolo il mio flusso kron usando la funzione esportata da astrometria
+                        flusso_kron_calc, _ = calcola_flusso_kron_completo(data_sub, pos[0], pos[1], valori_pixel,
+                                                                           distanze_pix)
+                        flusso_kron_seg = flusso_kron_calc
+
+                flussi_intera_seg.append(flusso_seg)
+                flussi_kron_intera_seg.append(flusso_kron_seg)
 
             df_frame['flusso_fisso_max_run'] = flussi_calcolati
             df_frame['raggio_fisso_max_run'] = raggi_fissi
 
-            # Recupero la mia immagine corrente e calcolo le correzioni per il flusso fisso
-            if 'img_index' in df_frame.columns:
-                im_corr = df_frame['img_index'].iloc[0]
-            else:
-                im_corr = int(str(file_csv.stem).split('_')[-1])
-
-            S_t = np.nan
-            if df_somma_pixel is not None:
-                r_S = df_somma_pixel[(df_somma_pixel['Run'] == run) & (df_somma_pixel['im'] == im_corr)]
-                if not r_S.empty:
-                    S_t = r_S['Somma_Pixel_Esterni'].values[0]
-
-            nome_flusso = 'flusso_fisso_max_run'
-            col_mult = f'flusso_{nome_flusso}_CORRETTO_Normalizzazione_Moltiplicativa'
-            col_add = f'flusso_{nome_flusso}_CORRETTO_Correzione_Additiva_dell_Apertura'
-
-            area_arr = np.pi * (np.array(raggi_fissi)) ** 2
-            flux_raw = np.array(flussi_calcolati)
-
-            if not np.isnan(S_t) and not np.isnan(S_ref):
-                # Calcolo le mie correzioni per il flusso fisso di Fase 3
-                flux_mult = flux_raw * (S_ref / S_t)
-                flux_add = flux_raw - (1.0 * area_arr * ((S_t - S_ref) / N_tot))
-            else:
-                flux_mult = np.full(len(flux_raw), np.nan)
-                flux_add = np.full(len(flux_raw), np.nan)
-
-            df_frame[col_mult] = flux_mult
-            df_frame[col_add] = flux_add
-
-            df_frame[col_mult] = df_frame[col_mult].map(lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
-            df_frame[col_add] = df_frame[col_add].map(lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
+            # Aggiungo le mie nuove colonne calcolate
+            df_frame['flusso_raggio_fisso_doppio'] = flussi_doppi
+            df_frame['flusso_intera_segmentazione'] = flussi_intera_seg
+            df_frame['flusso_kron_intera_segmentazione'] = flussi_kron_intera_seg
 
             # formatto le colonne a 2 cifre decimali
             df_frame['flusso_fisso_max_run'] = df_frame['flusso_fisso_max_run'].map(
                 lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
             df_frame['raggio_fisso_max_run'] = df_frame['raggio_fisso_max_run'].map(
+                lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
+            df_frame['flusso_raggio_fisso_doppio'] = df_frame['flusso_raggio_fisso_doppio'].map(
+                lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
+            df_frame['flusso_intera_segmentazione'] = df_frame['flusso_intera_segmentazione'].map(
+                lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
+            df_frame['flusso_kron_intera_segmentazione'] = df_frame['flusso_kron_intera_segmentazione'].map(
                 lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
 
             if 'label' in df_frame.columns:
@@ -807,15 +803,8 @@ if __name__ == "__main__":
         # =================================================================
 
         print("Calcolo statistiche di run e riorganizzazione colonne...")
-        cols_flux_base = ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper',
-                          'flusso_fisso_max_run']
-        cols_flux = []
-        for c in cols_flux_base:
-            cols_flux.append(c)
-            # Aggiungo i miei flussi corretti alla lista per le statistiche
-            cols_flux.append(f'flusso_{c}_CORRETTO_Normalizzazione_Moltiplicativa')
-            cols_flux.append(f'flusso_{c}_CORRETTO_Correzione_Additiva_dell_Apertura')
-
+        cols_flux = ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper', 'flusso_fisso_max_run',
+                     'flusso_raggio_fisso_doppio', 'flusso_intera_segmentazione', 'flusso_kron_intera_segmentazione']
         cols_flux_presenti = [c for c in cols_flux if c in run_df.columns]
         for c in cols_flux_presenti: run_df[c] = pd.to_numeric(run_df[c], errors='coerce')
 
@@ -893,5 +882,7 @@ if __name__ == "__main__":
             df_final_save = df_final_save[cols]
             # Salvo i miei file finali con conteggi locali
             salva_finale_locale(df_final_save, header_orig, file_path, num_falsi_positivi)
+
+
 
     print("\n--- ELABORAZIONE COMPLETATA CON SUCCESSO ---")

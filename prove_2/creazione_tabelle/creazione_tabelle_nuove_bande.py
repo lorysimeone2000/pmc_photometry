@@ -10,6 +10,7 @@ import numpy as np
 import time
 import os
 import sys
+import gc
 from tqdm import tqdm
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
@@ -567,29 +568,6 @@ if __name__ == "__main__":
             # aggiungo il fondo per pixel per usarlo nella fase 4
             df_frame['fondo_per_pixel'] = fondo_pp
 
-            # formatto le colonne a 2 cifre decimali
-            cols_to_format = [
-                'flusso_fisso_max_run', 'flusso_fisso_max_run_CORRETTO_Normalizzazione_Moltiplicativa',
-                'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura',
-                'flusso_fisso_max_run_FONDO_SOTTRATTO',
-                'raggio_fisso_max_run',
-                'flusso_raggio_fisso_doppio', 'flusso_raggio_fisso_doppio_CORRETTO_Normalizzazione_Moltiplicativa',
-                'flusso_raggio_fisso_doppio_CORRETTO_Correzione_Additiva_dell_Apertura',
-                'flusso_raggio_fisso_doppio_FONDO_SOTTRATTO',
-                'kron_manuale_aper_CORRETTO_Normalizzazione_Moltiplicativa',
-                'kron_manuale_aper_CORRETTO_Correzione_Additiva_dell_Apertura',
-                'kron_manuale_aper_FONDO_SOTTRATTO',
-                'kron_manuale_seg_CORRETTO_Normalizzazione_Moltiplicativa',
-                'somma_apertura_ultimo_pixel_CORRETTO_Normalizzazione_Moltiplicativa'
-            ]
-
-            for c in cols_to_format:
-                if c in df_frame.columns:
-                    df_frame[c] = df_frame[c].map(
-                        lambda x: '{:.2f}'.format(float(x)) if pd.notnull(x) and str(
-                            x).strip().lower() != 'nan' else 'NaN'
-                    )
-
             if 'label' in df_frame.columns:
                 df_frame.sort_values(by=['label', 'Corrispondenza'], inplace=True)
 
@@ -793,14 +771,6 @@ if __name__ == "__main__":
 
             stat_columns.extend([col_mean, col_std])
 
-        for c in nuovi_flussi_decorrelati + nuovi_flussi_ensemble:
-            run_df[c] = run_df[c].map(
-                lambda x: '{:.2f}'.format(float(x)) if pd.notnull(x) and str(x).strip().lower() != 'nan' else 'NaN'
-            )
-
-        for c in stat_columns: run_df[c] = run_df[c].map(
-            lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
-
         run_df['ID'] = run_df['ID'].astype(object)
 
         mask_no_match = run_df['Corrispondenza'] == 'NO'
@@ -819,102 +789,77 @@ if __name__ == "__main__":
             mappa_headers_globali[str(file_path)] = header_orig
 
     # =============================================================================
-    # FASE 5: Decorrelazione Globale delle Stelle (Allineamento Multi-Run)
+    # FASE 5: Decorrelazione Globale (Senza Formattazione Decimali)
     # =============================================================================
     if dati_tutte_le_run:
         print("\n--- FASE 5: Calcolo Decorrelazione Globale delle Stelle ---")
         df_totale = pd.concat(dati_tutte_le_run, ignore_index=True)
 
-        # Deframmento il dataframe iniziale per ottimizzare e liberare la RAM
-        df_totale = df_totale.copy()
+        # Libero immediatamente i riferimenti ai vecchi DataFrame per svuotare la RAM
+        del dati_tutte_le_run
+        gc.collect()
 
-        # determino le mie colonne base rimuovendo le stringhe o le statistiche per non doppiarle
+        # Determino le colonne su cui lavorare
         cols_base_flux = [c for c in df_totale.columns if ('flusso_' in c or 'somma_' in c or 'kron_' in c)]
         cols_tutti_flussi_glob = [c for c in cols_base_flux if not any(
             x in c for x in ['media_', 'std_', 'DECORRELAZIONE_STELLE', 'ripetizioni', 'raggio_'])]
 
         nuovi_flussi_globali = []
-        dizionario_nuove_colonne = {}
 
-        for c in tqdm(cols_tutti_flussi_glob):
+        for c in tqdm(cols_tutti_flussi_glob, desc="Decorrelazione Ensemble Globale"):
             new_col = f"{c}_DECORRELAZIONE_STELLE_GLOBALE"
             nuovi_flussi_globali.append(new_col)
 
-            # converto la mia colonna in formato numerico
-            flusso_numerico = pd.to_numeric(df_totale[c], errors='coerce')
+            # Calcolo la mediana globale per stella (su tutte le run)
+            mediane_stella_serie = df_totale.groupby('run_unique_id')[c].median()
+            mediane_per_riga = df_totale['run_unique_id'].map(mediane_stella_serie)
 
-            # calcolo la vera mediana su tutte le run combinate
-            mediane_stella_globale = flusso_numerico.groupby(df_totale['run_unique_id']).transform('median')
-
-            # calcolo il mio rapporto tra il flusso e la vera mediana globale
+            # Calcolo il rapporto relativo per riga
             with np.errstate(divide='ignore', invalid='ignore'):
-                rapporto_relativo = np.where(mediane_stella_globale > 0,
-                                             flusso_numerico / mediane_stella_globale,
-                                             np.nan)
+                rapporto_relativo = (df_totale[c] / mediane_per_riga)
 
-            # calcolo il fattore di correzione per l'immagine senza aggiungere colonne temporanee al dataframe
-            temp_rapporto_series = pd.Series(rapporto_relativo)
-            fattore_immagine = temp_rapporto_series.groupby(df_totale['original_file_path']).transform('median')
+            # Calcolo il fattore correttivo per immagine (mediana dei rapporti nell'immagine)
+            temp_df_corr = pd.DataFrame({'path': df_totale['original_file_path'], 'ratio': rapporto_relativo})
+            fattore_immagine_serie = temp_df_corr.groupby('path')['ratio'].median()
+            fattore_per_riga = df_totale['original_file_path'].map(fattore_immagine_serie)
 
-            # salvo il risultato nel dizionario temporaneo
-            dizionario_nuove_colonne[new_col] = flusso_numerico / fattore_immagine
+            # Creo la nuova colonna decorrelata
+            df_totale[new_col] = (df_totale[c] / fattore_per_riga)
 
-        # unisco tutte le nuove colonne calcolate al dataframe principale in un colpo solo (Zero frammentazione)
-        df_totale = pd.concat([df_totale, pd.DataFrame(dizionario_nuove_colonne)], axis=1)
+            # Calcolo le statistiche (Media e Std Error) sulla nuova colonna
+            df_totale[f'media_{new_col}'] = df_totale.groupby('run_unique_id')[new_col].transform('mean')
 
-        # calcolo la media e deviazione standard per le mie nuove colonne globali
-        stat_columns_globali = []
-        dizionario_statistiche = {}
+            # Calcolo std error: std / sqrt(count)
+            stats_agg = df_totale.groupby('run_unique_id')[new_col].agg(['std', 'count'])
+            std_err_serie = (stats_agg['std'] / np.sqrt(stats_agg['count']))
+            df_totale[f'std_{new_col}'] = df_totale['run_unique_id'].map(std_err_serie)
 
-        for c in nuovi_flussi_globali:
-            col_mean = f'media_{c}'
-            col_std = f'std_{c}'
+            # Pulisco i temporanei ad ogni ciclo di colonna
+            del temp_df_corr, rapporto_relativo, fattore_per_riga, mediane_per_riga
+            gc.collect()
 
-            # converto temporaneamente per calcolare le mie statistiche
-            flusso_num_globale = pd.to_numeric(df_totale[c], errors='coerce')
-
-            dizionario_statistiche[col_mean] = flusso_num_globale.groupby(df_totale['run_unique_id']).transform(
-                'mean')
-            stds_sample = flusso_num_globale.groupby(df_totale['run_unique_id']).transform('std')
-            counts_grouped = flusso_num_globale.groupby(df_totale['run_unique_id']).transform('count')
-            dizionario_statistiche[col_std] = stds_sample / np.sqrt(counts_grouped)
-
-            stat_columns_globali.extend([col_mean, col_std])
-
-        # unisco le statistiche al dataframe in un colpo solo
-        df_totale = pd.concat([df_totale, pd.DataFrame(dizionario_statistiche)], axis=1)
-
-        # formatto i miei nuovi calcoli a due cifre decimali
-        for c in nuovi_flussi_globali:
-            df_totale[c] = df_totale[c].map(
-                lambda x: '{:.2f}'.format(float(x)) if pd.notnull(x) and str(x).strip().lower() != 'nan' else 'NaN'
-            )
-        for c in stat_columns_globali:
-            df_totale[c] = df_totale[c].map(lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
-
-        # riordino e salvo tutti i miei file
+        # Riordino e salvo tutti i file (Salvataggio con precisione nativa)
         files_groups_globale = df_totale.groupby('original_file_path')
         run_repetition_counts_global = df_totale['run_unique_id'].value_counts()
 
-        for file_path, df_file in tqdm(files_groups_globale, desc="Salvataggio finale file FASE 5"):
+        for file_path, df_file in tqdm(files_groups_globale, desc="Salvataggio finale FASE 5"):
             header_orig = mappa_headers_globali[file_path]
             cols = df_file.columns.tolist()
 
-            # elimino le mie colonne temporanee necessarie solo allo script
+            # Rimuovo colonne tecniche
             for temp_c in ['file_index', 'original_file_path', 'original_idx', 'run_unique_id', 'run_number']:
                 if temp_c in cols: cols.remove(temp_c)
 
-            # sistemo la colonna delle ripetizioni calcolandola sull'insieme globale
-            col_rip_name = 'ripetizioni'
-            if col_rip_name in cols: cols.remove(col_rip_name)
-            df_file.loc[:, col_rip_name] = df_file['ID'].map(run_repetition_counts_global)
+            # Aggiorno ripetizioni globali
+            df_file = df_file.copy()
+            df_file['ripetizioni'] = df_file['ID'].map(run_repetition_counts_global)
+            if 'ripetizioni' not in cols:
+                if 'saturazione' in cols:
+                    cols.insert(cols.index('saturazione') + 1, 'ripetizioni')
+                else:
+                    cols.append('ripetizioni')
 
-            if 'saturazione' in cols:
-                cols.insert(cols.index('saturazione') + 1, col_rip_name)
-            else:
-                cols.append(col_rip_name)
-
-            # riordino le mie colonne statistiche globali accanto ai rispettivi flussi
+            # Posizionamento colonne statistiche accanto ai flussi
             for c_flux in nuovi_flussi_globali:
                 c_mean, c_std = f'media_{c_flux}', f'std_{c_flux}'
                 if c_flux in cols and c_mean in cols:
@@ -925,8 +870,8 @@ if __name__ == "__main__":
                     cols.insert(idx_flux + 2, c_std)
 
             df_final_save = df_file[cols]
-
             nome_solo = os.path.basename(str(file_path))
+
             with open(file_path, 'w') as f:
                 f.write("# Header FITS:\n")
                 f.write("# Numero di falsi positivi esclusi sicuramente: 0\n")
@@ -935,6 +880,7 @@ if __name__ == "__main__":
                         f.write(f"# {k}: {v}\n")
                 f.write(f"# NOME_FILE: {nome_solo}\n")
                 f.write("#\n")
+                # Nessuna limitazione decimale durante il to_csv
                 df_final_save.to_csv(f, index=False)
 
     print("\n--- ELABORAZIONE COMPLETATA CON SUCCESSO ---")

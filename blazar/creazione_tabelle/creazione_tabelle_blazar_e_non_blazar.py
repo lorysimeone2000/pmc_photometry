@@ -166,8 +166,10 @@ if __name__ == "__main__":
     # --- RICERCA FILE E SUDDIVISIONE RUN ---
     # =================================================================
     print(f"\n--- DEBUG ESTRAZIONE BLAZAR E CREAZIONE RUN ---")
-    # definisco le coordinate di Mrk 421
+
+    # definisco le coordinate di ENTRAMBI i target
     coords_mrk421 = SkyCoord(ra=166.1138 * u.deg, dec=38.2088 * u.deg, frame='icrs')
+    coords_crab = SkyCoord(ra=83.6331 * u.deg, dec=22.0145 * u.deg, frame='icrs')
     raggio_fov_tolleranza = 6 * u.deg
 
     PMC_DATA = cerca_cartella_nel_progetto(BASE_DIR, "PMC_DATA")
@@ -208,9 +210,12 @@ if __name__ == "__main__":
                                     coords_centro = SkyCoord(ra=ra_val, dec=dec_val, unit=(u.hourangle, u.deg),
                                                              frame='icrs')
 
-                                separazione = coords_centro.separation(coords_mrk421)
+                                # calcolo la distanza da ENTRAMBI i target
+                                separazione_mrk = coords_centro.separation(coords_mrk421)
+                                separazione_crab = coords_centro.separation(coords_crab)
 
-                                if separazione <= raggio_fov_tolleranza:
+                                # accetto il file se è vicino ad ALMENO UNO dei due target
+                                if separazione_mrk <= raggio_fov_tolleranza or separazione_crab <= raggio_fov_tolleranza:
                                     file_validi.append({
                                         'percorso_originale': percorso_file,
                                         'nome_file': percorso_file.name,
@@ -225,7 +230,7 @@ if __name__ == "__main__":
                     continue
 
     if not file_validi:
-        print("\nERRORE: Nessun file trovato.")
+        print("\nERRORE: Nessun file trovato nei paraggi dei target.")
         sys.exit()
 
     # ordino e creo i miei run

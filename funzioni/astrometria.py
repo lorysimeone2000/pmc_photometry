@@ -15,6 +15,7 @@ from astropy.table import Table, vstack
 # importo la funzione di ricerca interna al mio nuovo modulo
 from .utilita import cerca_file_nel_progetto
 
+
 def ottieni_coordinate_telescopio(nome_telescopio, base_dir):
     # passo base_dir come argomento altrimenti la funzione non sa dove cercare
     file_posizioni = cerca_file_nel_progetto(base_dir, "posizione_telescopi.txt")
@@ -35,6 +36,7 @@ def ottieni_coordinate_telescopio(nome_telescopio, base_dir):
     print(f"ATTENZIONE: Uso valori default per {nome_telescopio}.")
     return 28.3000, -16.505830555555555, 2370
 
+
 def scarica_tle_storici(tempo_astropy, username, password, cartella_output):
     data_osservazione = tempo_astropy.datetime
     data_inizio = (data_osservazione - timedelta(days=0.5)).strftime('%Y-%m-%d')
@@ -45,7 +47,7 @@ def scarica_tle_storici(tempo_astropy, username, password, cartella_output):
     if percorso_output.exists():
         print(f"TLE storici già presenti: {nome_file}")
         return str(percorso_output)
-        
+
     print(f"Scaricando i TLE storici da Space-Track per le date {data_inizio} -> {data_fine}...")
     login_url = "https://www.space-track.org/ajaxauth/login"
     query_url = f"https://www.space-track.org/basicspacedata/query/class/gp_history/EPOCH/{data_inizio}--{data_fine}/OBJECT_TYPE/PAYLOAD/format/tle"
@@ -55,7 +57,7 @@ def scarica_tle_storici(tempo_astropy, username, password, cartella_output):
         if risposta_login.status_code != 200:
             print("ERRORE: Login su Space-Track fallito.")
             return None
-        
+
         risposta_tle = session.get(query_url, stream=True)
         if risposta_tle.status_code == 200:
             testo_risposta = risposta_tle.text
@@ -70,6 +72,7 @@ def scarica_tle_storici(tempo_astropy, username, password, cartella_output):
             print(f"ERRORE: Download TLE fallito con codice HTTP {risposta_tle.status_code}")
             return None
 
+
 def elabora_file_fits(percorso_file_):
     with fits.open(percorso_file_, memmap=False) as hdu_list_:
         image_data_ = hdu_list_[0].data
@@ -77,6 +80,7 @@ def elabora_file_fits(percorso_file_):
         mean_, median_, std_ = sigma_clipped_stats(image_data_, sigma=3.0)
         image_data_ = image_data_ - median_
         return image_data_, median_, w_
+
 
 def calcola_flusso_kron_completo(data, xc, yc, valori_pixel, distanze_pixel, k=2.5, r_min=3.5):
     somma_intensita = np.sum(valori_pixel)
@@ -87,6 +91,7 @@ def calcola_flusso_kron_completo(data, xc, yc, valori_pixel, distanze_pixel, k=2
     aper = CircularAperture((xc, yc), r=r_kron_finale)
     phot = aperture_photometry(data, aper)
     return phot['aperture_sum'][0], r_kron_finale
+
 
 def tabella_catalogo(image_file_, tbl_vizier_cut, tbl_hipparco_run_clean):
     hdu_list_ = fits.open(image_file_)
@@ -101,7 +106,8 @@ def tabella_catalogo(image_file_, tbl_vizier_cut, tbl_hipparco_run_clean):
         'ID': tbl_vizier_cut['objID'],
         'RAJ2000': tbl_vizier_cut['RAJ2000'],
         'DEJ2000': tbl_vizier_cut['DEJ2000'],
-        'Mag': tbl_vizier_cut['gmag'],
+        # prendo la mia colonna Mag già normalizzata in fase di preprocessing
+        'Mag': tbl_vizier_cut['Mag'],
     }
 
     nome_catalogo_hipparco = np.array(["I/239/hip_main"] * len(tbl_hipparco_run_clean), dtype=object)
@@ -110,12 +116,13 @@ def tabella_catalogo(image_file_, tbl_vizier_cut, tbl_hipparco_run_clean):
         'ID': tbl_hipparco_run_clean['HIP'],
         'RAJ2000': tbl_hipparco_run_clean['_RAJ2000'],
         'DEJ2000': tbl_hipparco_run_clean['_DEJ2000'],
-        'Mag': tbl_hipparco_run_clean['Vmag'],
+        # prendo la mia colonna Mag già normalizzata in fase di preprocessing
+        'Mag': tbl_hipparco_run_clean['Mag'],
     }
 
     t1 = Table(colonne_vizier)
     t2 = Table(colonne_hipparco)
-    tbl_unita = vstack([t1, t2])
+    tbl_unita = vstack([t1, t2], metadata_conflicts='silent')
 
     coords = SkyCoord(ra=tbl_unita['RAJ2000'], dec=tbl_unita['DEJ2000'], unit=u.deg)
     x_pix, y_pix = wcs.world_to_pixel(coords)
@@ -123,6 +130,7 @@ def tabella_catalogo(image_file_, tbl_vizier_cut, tbl_hipparco_run_clean):
     mask_bordo = ((x_pix >= bordo) & (x_pix < (w - bordo)) & (y_pix >= bordo) & (y_pix < (h - bordo)))
     hdu_list_.close()
     return tbl_unita[mask_bordo]
+
 
 def esegui_fotometria_variabile(data, positions, raggi):
     flussi = []
@@ -134,6 +142,7 @@ def esegui_fotometria_variabile(data, positions, raggi):
         else:
             flussi.append(np.nan)
     return flussi
+
 
 def analisi_image_segmentation(percorso_file_, parametri_globali):
     data, fondo_iniziale, w = elabora_file_fits(percorso_file_)
@@ -201,20 +210,24 @@ def analisi_image_segmentation(percorso_file_, parametri_globali):
         dist_box = np.hypot(x_g - xc, y_g - yc)
         mask_circle = dist_box <= r_max_pix
 
-        fl_aper, r_used = calcola_flusso_kron_completo(data, xc, yc, cutout[mask_circle], dist_box[mask_circle], K_KRON, R_MIN_KRON)
+        fl_aper, r_used = calcola_flusso_kron_completo(data, xc, yc, cutout[mask_circle], dist_box[mask_circle], K_KRON,
+                                                       R_MIN_KRON)
         kron_manuale_aper.append(fl_aper)
         raggi_kron_aper.append(r_used)
 
         fl_seg, _ = calcola_flusso_kron_completo(data, xc, yc, valori_pixel, distanze_pix, K_KRON, R_MIN_KRON)
         kron_manuale_seg.append(fl_seg)
 
-        is_good = (np.sum(valori_pixel > soglia_assoluta) >= 3) and (np.sum(valori_pixel > soglia_relativa * prop.max_value) >= 2)
+        is_good = (np.sum(valori_pixel > soglia_assoluta) >= 3) and (
+                    np.sum(valori_pixel > soglia_relativa * prop.max_value) >= 2)
         mask_keep.append(is_good)
 
     tbl['kron_manuale_seg'] = kron_manuale_seg
     tbl['kron_manuale_aper'] = kron_manuale_aper
     tbl['raggio_kron_aper'] = raggi_kron_aper
-    tbl['somma_apertura_ultimo_pixel'] = esegui_fotometria_variabile(data, np.transpose((tbl['xcentroid'], tbl['ycentroid'])), lista_raggi_max)
+    tbl['somma_apertura_ultimo_pixel'] = esegui_fotometria_variabile(data,
+                                                                     np.transpose((tbl['xcentroid'], tbl['ycentroid'])),
+                                                                     lista_raggi_max)
 
     for col in ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper', 'raggio_kron_aper']:
         tbl[col].info.format = '%.2f'

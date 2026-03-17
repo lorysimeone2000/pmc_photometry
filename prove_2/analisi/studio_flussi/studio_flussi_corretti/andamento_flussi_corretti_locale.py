@@ -45,7 +45,7 @@ from funzioni.astrometria import *
 run_list = [1, 2, 3]  # definisco la lista delle run da analizzare
 base_path = BASE_DIR / "tabelle/tabelle_unite"
 
-KRON_TARGET = 300
+KRON_TARGET = 705
 
 # Indice del file nella lista da usare come riferimento per trovare l'ID della stella
 INDICE_IMMAGINE_RIFERIMENTO = 26
@@ -53,12 +53,12 @@ INDICE_RUN_DI_RIFERIMENTO = 1
 
 cartella_csv = os.path.join(base_path, f"tabelle_unite_run_{INDICE_RUN_DI_RIFERIMENTO}")
 
-# Verifica esistenza cartella
+# Verifico esistenza cartella
 if not os.path.exists(cartella_csv):
     print(f"Errore: La cartella {cartella_csv} non esiste.")
     exit()
 
-# Lista file ordinata
+# Creo lista file ordinata
 file_csv = sorted([f for f in os.listdir(cartella_csv) if f.endswith('.csv')])
 lista_percorsi_csv = [os.path.join(cartella_csv, file) for file in file_csv]
 
@@ -70,7 +70,7 @@ if not lista_percorsi_csv:
 
 print(f"--- FASE 1: Ricerca stella con Kron ~ {KRON_TARGET} nel file #{INDICE_IMMAGINE_RIFERIMENTO} ---")
 
-# Gestione indice fuori range
+# Gestisco indice fuori range
 if INDICE_IMMAGINE_RIFERIMENTO >= len(lista_percorsi_csv):
     INDICE_IMMAGINE_RIFERIMENTO = 0
     print("Indice riferimento fuori range, uso il primo file.")
@@ -79,8 +79,8 @@ path_ref = lista_percorsi_csv[INDICE_IMMAGINE_RIFERIMENTO]
 df_ref = pd.read_csv(path_ref, comment='#')
 tbl_ref = Table.from_pandas(df_ref)
 
-# Filtriamo solo le stelle che hanno una corrispondenza nel catalogo ('SI...')
-# Convertiamo in stringa per sicurezza prima di fare startswith
+# Filtro solo le stelle che hanno una corrispondenza nel catalogo ('SI...')
+# Converto in stringa per sicurezza prima di fare startswith
 
 mask_si = np.char.startswith(tbl_ref['Corrispondenza'].astype(str), 'SI')
 tbl_catalogate_ref = tbl_ref[mask_si]
@@ -89,16 +89,16 @@ if len(tbl_catalogate_ref) == 0:
     print("Nessuna stella catalogata trovata nel file di riferimento.")
     exit()
 
-# Calcola la differenza assoluta tra i flussi trovati e il target
+# Calcolo la differenza assoluta tra i flussi trovati e il target
 
 differenze = np.abs(tbl_catalogate_ref['kron_flux'] - KRON_TARGET)
 
-# Trova l'indice della differenza minima
+# Trovo l'indice della differenza minima
 
 idx_min = np.argmin(differenze)
 stella_ref = tbl_catalogate_ref[idx_min]
 
-# Salva l'ID univoco da cercare negli altri file
+# Salvo l'ID univoco da cercare negli altri file
 
 id_stella_target = stella_ref['ID']
 
@@ -124,13 +124,15 @@ for base in flussi_base:
     all_data[base] = []
     all_data[base + '_CORRETTO_Normalizzazione_Moltiplicativa'] = []
     all_data[base + '_CORRETTO_Correzione_Additiva_dell_Apertura'] = []
+    all_data[base + '_FONDO_SOTTRATTO'] = []
+    all_data[base + '_CORRETTO_LOCALE'] = []
 
 all_times = []
 
 # variabile per il tempo iniziale globale (t=0 alla prima immagine della prima run)
 t0_global = None
 
-# colori per distinguere le run nel grafico (per le bande verticali)
+# limiti temporali per distinguere le run nel grafico
 run_boundaries = []
 
 # --- CICLO SULLE RUN ---
@@ -196,12 +198,26 @@ for run in run_list:
                         all_data[col_add].append(stella_nel_frame[col_add][0])
                     else:
                         all_data[col_add].append(np.nan)
+
+                    col_fondo = base + '_FONDO_SOTTRATTO'
+                    if col_fondo in stella_nel_frame.colnames:
+                        all_data[col_fondo].append(stella_nel_frame[col_fondo][0])
+                    else:
+                        all_data[col_fondo].append(np.nan)
+
+                    col_locale = base + '_CORRETTO_LOCALE'
+                    if col_locale in stella_nel_frame.colnames:
+                        all_data[col_locale].append(stella_nel_frame[col_locale][0])
+                    else:
+                        all_data[col_locale].append(np.nan)
             else:
                 # inserisco nan per mantenere l'allineamento temporale se non trovo la stella
                 for base in flussi_base:
                     all_data[base].append(np.nan)
                     all_data[base + '_CORRETTO_Normalizzazione_Moltiplicativa'].append(np.nan)
                     all_data[base + '_CORRETTO_Correzione_Additiva_dell_Apertura'].append(np.nan)
+                    all_data[base + '_FONDO_SOTTRATTO'].append(np.nan)
+                    all_data[base + '_CORRETTO_LOCALE'].append(np.nan)
 
             all_times.append(tempo_relativo)
 
@@ -222,12 +238,14 @@ for run in run_list:
 
 times_arr = np.array(all_times)
 
+
 def calc_stats(arr, mask):
     """Calcolo le statistiche escludendo i nan e gli zeri."""
     if np.sum(mask) > 0:
         vals = arr[mask]
         return np.mean(vals), np.std(vals)
     return 0.0, 0.0
+
 
 print("\n=== GENERAZIONE GRAFICI ===")
 
@@ -236,13 +254,20 @@ for base in flussi_base:
     arr_base = np.array(all_data[base])
     col_molt = base + '_CORRETTO_Normalizzazione_Moltiplicativa'
     col_add = base + '_CORRETTO_Correzione_Additiva_dell_Apertura'
+    col_fondo = base + '_FONDO_SOTTRATTO'
+    col_locale = base + '_CORRETTO_LOCALE'
+
     arr_molt = np.array(all_data[col_molt])
     arr_add = np.array(all_data[col_add])
+    arr_fondo = np.array(all_data[col_fondo])
+    arr_locale = np.array(all_data[col_locale])
 
     # filtro per le statistiche (escludo gli zeri e i nan)
     mask_base = (arr_base > 0) & (~np.isnan(arr_base))
     mask_molt = (arr_molt > 0) & (~np.isnan(arr_molt))
     mask_add = (arr_add > 0) & (~np.isnan(arr_add))
+    mask_fondo = (arr_fondo > 0) & (~np.isnan(arr_fondo))
+    mask_locale = (arr_locale > 0) & (~np.isnan(arr_locale))
 
     # se non ho dati validi per questo flusso base, lo salto
     if np.sum(mask_base) == 0:
@@ -252,6 +277,8 @@ for base in flussi_base:
     media_base, std_base = calc_stats(arr_base, mask_base)
     media_molt, std_molt = calc_stats(arr_molt, mask_molt)
     media_add, std_add = calc_stats(arr_add, mask_add)
+    media_fondo, std_fondo = calc_stats(arr_fondo, mask_fondo)
+    media_locale, std_locale = calc_stats(arr_locale, mask_locale)
 
     plt.figure(figsize=(12, 7))
 
@@ -271,6 +298,18 @@ for base in flussi_base:
         plt.plot(times_arr[mask_add], arr_add[mask_add],
                  marker='o', linestyle='-', linewidth=0.8, markersize=3, alpha=0.7, color='green',
                  label=rf"Corr. Additiva (Avg: {media_add:.0f}, $\sigma$: {(std_add / media_add * 100):.2f}%)")
+
+    # plotto la curva corretta (Fondo Sottratto) se presente
+    if np.sum(mask_fondo) > 0:
+        plt.plot(times_arr[mask_fondo], arr_fondo[mask_fondo],
+                 marker='o', linestyle='-', linewidth=0.8, markersize=3, alpha=0.7, color='red',
+                 label=rf"Fondo Sottratto (Avg: {media_fondo:.0f}, $\sigma$: {(std_fondo / media_fondo * 100):.2f}%)")
+
+    # plotto la curva corretta (Corretto Locale) se presente
+    if np.sum(mask_locale) > 0:
+        plt.plot(times_arr[mask_locale], arr_locale[mask_locale],
+                 marker='o', linestyle='-', linewidth=0.8, markersize=3, alpha=0.7, color='purple',
+                 label=rf"Corretto Locale (Avg: {media_locale:.0f}, $\sigma$: {(std_locale / media_locale * 100):.2f}%)")
 
     # aggiungo linee verticali per separare le Run (estetica)
     for r_idx, (run_num, t_end) in enumerate(run_boundaries):
@@ -294,7 +333,8 @@ for base in flussi_base:
                      fontsize=8,
                      fontweight='bold')
 
-    plt.title(f'Andamento {base} e Correzioni\nAnalisi Multi-Run (1, 2, 3) - ID {id_stella_target}\nTarget ~ {KRON_TARGET} ADU')
+    plt.title(
+        f'Andamento {base} e Correzioni\nAnalisi Multi-Run (1, 2, 3) - ID {id_stella_target}\nTarget ~ {KRON_TARGET} ADU')
     plt.xlabel("Tempo dall'inizio della Run 1 (secondi)")
     plt.ylabel('Flusso (ADU)')
     plt.grid(True, linestyle='--', alpha=0.3)

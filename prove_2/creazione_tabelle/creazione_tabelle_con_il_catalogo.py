@@ -124,10 +124,10 @@ print(f"--- CONFIGURAZIONE SISTEMA ---")
 print(f"Cartella Base rilevata: {BASE_DIR}")
 print(f"------------------------------")
 
-# Inizializzo Vizier
+# inizializzo Vizier
 vizier = Vizier(
     catalog="II/389/ps1_dr2",
-    columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag'],
+    columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag'],
     row_limit=-1
 )
 
@@ -170,7 +170,7 @@ def tabella_catalogo(image_file_, tbl_vizier_in, tbl_hipparco_in):
         'ID': subset_vizier['objID'],
         'RAJ2000': subset_vizier['RAJ2000'],
         'DEJ2000': subset_vizier['DEJ2000'],
-        'Mag': subset_vizier['gmag'],
+        'Mag': subset_vizier['Mag'],
         'Catalogo': nome_catalogo_vizier
     }
 
@@ -180,17 +180,17 @@ def tabella_catalogo(image_file_, tbl_vizier_in, tbl_hipparco_in):
         'ID': subset_hipparco['HIP'],
         'RAJ2000': subset_hipparco['_RAJ2000'],
         'DEJ2000': subset_hipparco['_DEJ2000'],
-        'Mag': subset_hipparco['Vmag'],
+        'Mag': subset_hipparco['Mag'],
     }
 
     t1 = Table(colonne_vizier)
     t2 = Table(colonne_hipparco)
 
-    # mi costruisco la tabella astropy complessiva
-    tbl_unita_estesa = vstack([t1, t2])
+    # mi costruisco la tabella astropy complessiva silenziando i conflitti sui metadati
+    tbl_unita_estesa = vstack([t1, t2], metadata_conflicts='silent')
 
     if len(tbl_unita_estesa) > 0:
-        tbl_unita_estesa['Mag'].description = 'Magnitudine AB nel filtro g di Pan-STARRS'
+        tbl_unita_estesa['Mag'].description = 'Magnitudine unificata al sistema visibile (Johnson V)'
 
     if len(tbl_unita_estesa) == 0:
         hdu_list_.close()
@@ -439,38 +439,26 @@ for percorso_file_fits in file_list:
                                                       )  # ho messo un limite di magnitudine per non scaricare milioni di stelle
         tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
 
-        # --- RICERCA DINAMICA HIPPARCO ---
-        file_hipparco_path = cerca_file_nel_progetto(BASE_DIR, "hipparco.fit")
-        if file_hipparco_path is None:
-            print("ERRORE CRITICO: Catalogo 'hipparco.fit' non trovato.")
-            exit()
-        file_hipparco = str(file_hipparco_path)
+        # --- RICERCA DINAMICA HIPPARCO TRAMITE VIZIER ---
+        print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
+        vizier_hip = Vizier(
+            catalog="I/239/hip_main",
+            # estraggo le coordinate ICRS all'epoca J2000 esatte pre-calcolate da VizieR
+            columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],
+            row_limit=-1
+        )
+        risultato_hip = vizier_hip.query_constraints(Vmag="<16")
+        tbl_catalogo_hipparco = risultato_hip[0]
 
-        # Apro il catalogo in formato fit, lo faccio solo una volta
-        hdu_list_hipparco = fits.open(file_hipparco)
+        # rinomino le mie colonne ICRS J2000 per mantenere la compatibilità col resto dello script
+        if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
+            tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
+            tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
 
-        # I dati sono nella seconda estensione (V_SO_catalog), non nella prima
-        table_data = Table(hdu_list_hipparco[1].data)  # Uso l'indice 1 per la seconda estensione
+        print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
 
-        # non taglio preventivamente le stelle di Hipparco
-        tbl_catalogo_hipparco = table_data
-
-        hdu_list_hipparco.close()
-
-        # calcolo gli errori 3-SIGMA sommati (Hipparcos + Vizier)
-        dt = 2000.0 - 1991.25
-        sigma_ra_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco['e_RAICRS']) ** 2 + (
-                dt * np.nan_to_num(tbl_catalogo_hipparco['e_pmRA'])) ** 2) / 3600000.0
-        sigma_dec_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco['e_DEICRS']) ** 2 + (
-                dt * np.nan_to_num(tbl_catalogo_hipparco['e_pmDE'])) ** 2) / 3600000.0
-
-        sigma_hip_deg = np.sqrt(sigma_ra_deg ** 2 + sigma_dec_deg ** 2)
-        sigma_vizier_deg = 0.1 / 3600.0
-        sigma_totale_deg = np.sqrt(sigma_hip_deg ** 2 + sigma_vizier_deg ** 2)
-
-        exclusion_radii_deg = 3.0 * sigma_totale_deg
-        max_radius_deg = 1.2 / 3600.0
-        exclusion_radii_deg = np.maximum(exclusion_radii_deg, max_radius_deg)
+        # imposto la mia soglia fissa a 2.5 arcosecondi
+        exclusion_radii_deg = np.full(len(tbl_catalogo_hipparco), 2.5 / 3600.0)
 
         # creo l'oggetto SkyCoord globale per Hipparcos
         coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],
@@ -554,13 +542,22 @@ for percorso_file_fits in file_list:
 
         mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
 
-        tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco]
+        # uso copy() per svincolare i dati
+        tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco].copy()
         tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
 
         # applico il filtro magnitudine massima
         mag_max = 15
         tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[
-            tbl_riquadro_esterno_vizier_CLEAN['gmag'] < mag_max]
+            tbl_riquadro_esterno_vizier_CLEAN['gmag'] < mag_max].copy()
+
+        # --- UNIFICAZIONE MAGNITUDINI ---
+        # ridefinisco la mia colonna Mag per Pan-STARRS unendo gmag e rmag nel sistema visibile di Johnson
+        colore_g_r = tbl_vizier_cut['gmag'] - tbl_vizier_cut['rmag']
+        tbl_vizier_cut['Mag'] = tbl_vizier_cut['gmag'] - 0.587 * colore_g_r - 0.011
+
+        # ridefinisco la mia colonna Mag per Hipparcos usando direttamente la Vmag
+        tbl_hipparco_run_clean['Mag'] = tbl_hipparco_run_clean['Vmag']
 
         print("-----------------------------")
 

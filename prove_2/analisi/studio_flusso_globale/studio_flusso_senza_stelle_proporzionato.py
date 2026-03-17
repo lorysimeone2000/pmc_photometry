@@ -100,6 +100,7 @@ if __name__ == "__main__":
     # inizializzo i dizionari per salvare i dati temporali e i flussi
     tempi_assoluti = {}
     somme_pixel = {}
+    fondo_pixel_assoluti = {}
     tempo_zero_globale = None
 
     nome_params = 'parametri_image_segmentation.txt'
@@ -142,6 +143,7 @@ if __name__ == "__main__":
         # creo le liste temporanee per la run corrente
         tempi_run = []
         somme_run = []
+        fondo_pixel_run = []
 
         for n, percorso_file in enumerate(tqdm(file_list, desc=f"Analisi pixel Run {run}"), 1):
 
@@ -207,6 +209,9 @@ if __name__ == "__main__":
                 # divido la somma per il rapporto calcolato
                 somma_totale = somma_parziale / rapporto_pixel
 
+                # calcolo il fondo medio per singolo pixel non stellare
+                fondo_medio = somma_parziale / pixel_contati if pixel_contati > 0 else 0
+
                 # recupero l'orario di scatto e lo converto in un formato analizzabile
                 tempo_scatto = Time(header['DATE-OBS'], format='isot', scale='utc')
 
@@ -216,18 +221,22 @@ if __name__ == "__main__":
 
                 tempi_run.append(tempo_scatto)
                 somme_run.append(somma_totale)
+                fondo_pixel_run.append(fondo_medio)
 
         # salvo i risultati finali della mia run
         tempi_assoluti[run] = tempi_run
         somme_pixel[run] = somme_run
+        fondo_pixel_assoluti[run] = fondo_pixel_run
 
     # preparo e salvo i dati estratti nel file csv richiesto
     dati_per_csv = []
     for run in RUN:
         if run in tempi_assoluti and tempi_assoluti[run]:
             # ricavo il numero dell'immagine partendo da 1 per ogni run usando enumerate
-            for im_num, (t, s) in enumerate(zip(tempi_assoluti[run], somme_pixel[run]), start=1):
-                dati_per_csv.append({'Run': run, 'im': im_num, 'Tempo_UTC': t.isot, 'Somma_Pixel_Esterni': s})
+            for im_num, (t, s, f_p) in enumerate(zip(tempi_assoluti[run], somme_pixel[run], fondo_pixel_assoluti[run]),
+                                                 start=1):
+                dati_per_csv.append(
+                    {'Run': run, 'im': im_num, 'Tempo_UTC': t.isot, 'Somma_Pixel_Esterni': s, 'fondo_per_pixel': f_p})
 
     df_csv = pd.DataFrame(dati_per_csv)
     nome_file_csv = "risultati_somma_pixel.csv"
@@ -248,7 +257,7 @@ if __name__ == "__main__":
             minuti_trascorsi = [(t - tempo_zero_globale).sec / 60.0 for t in tempi_assoluti[run]]
 
             colore = colori[idx % len(colori)]
-            plt.plot(minuti_trascorsi, somme_pixel[run], marker='o', markersize=3,
+            plt.plot(minuti_trascorsi, fondo_pixel_assoluti[run], marker='o', markersize=3,
                      linestyle='-', linewidth=1.5, color=colore, label=f'Run {run}')
 
     # applico la mia formattazione grafica personalizzata
@@ -257,8 +266,10 @@ if __name__ == "__main__":
     else:
         plt.xlabel("Tempo in minuti", fontsize=12)
 
-    plt.ylabel("Somma Totale dei Pixel non stellari", fontsize=12)
-    plt.title("Variazione del conteggio totale dei pixel non stellari nel tempo sulle run di prova, normalizzati sul totale", fontsize=14)
+    plt.ylabel("Valore medio per pixel non stellare", fontsize=12)
+    plt.title(
+        "Variazione del valore medio dei pixel non stellari nel tempo sulle run di prova",
+        fontsize=14)
     plt.grid(True, linestyle='--', alpha=0.7)
     plt.legend(fontsize=11)
     plt.tight_layout()

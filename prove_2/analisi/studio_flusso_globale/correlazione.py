@@ -1,8 +1,9 @@
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
 import os
 import sys
+import matplotlib.pyplot as plt
+from scipy.stats import pearsonr
 from pathlib import Path
 from astropy.table import Table
 import warnings
@@ -10,7 +11,7 @@ from astropy.wcs import FITSFixedWarning
 from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyUserWarning
 
-# Gestisco i warning ignorandoli
+# gestisco i warning ignorandoli
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', message='.*failed to converge.*', category=UserWarning)
 warnings.simplefilter('ignore', category=FITSFixedWarning)
@@ -47,18 +48,18 @@ base_path = BASE_DIR / "tabelle/tabelle_unite"
 
 KRON_TARGET = 300
 
-# Indice del file nella lista da usare come riferimento per trovare l'ID della stella
+# indice del file nella lista da usare come riferimento per trovare l'ID della stella
 INDICE_IMMAGINE_RIFERIMENTO = 26
 INDICE_RUN_DI_RIFERIMENTO = 1
 
 cartella_csv = os.path.join(base_path, f"tabelle_unite_run_{INDICE_RUN_DI_RIFERIMENTO}")
 
-# Verifica esistenza cartella
+# verifico esistenza cartella
 if not os.path.exists(cartella_csv):
     print(f"Errore: La cartella {cartella_csv} non esiste.")
     exit()
 
-# Lista file ordinata
+# creo la lista dei file ordinata
 file_csv = sorted([f for f in os.listdir(cartella_csv) if f.endswith('.csv')])
 lista_percorsi_csv = [os.path.join(cartella_csv, file) for file in file_csv]
 
@@ -70,7 +71,7 @@ if not lista_percorsi_csv:
 
 print(f"--- FASE 1: Ricerca stella con Kron ~ {KRON_TARGET} nel file #{INDICE_IMMAGINE_RIFERIMENTO} ---")
 
-# Gestione indice fuori range
+# gestisco l'indice fuori range
 if INDICE_IMMAGINE_RIFERIMENTO >= len(lista_percorsi_csv):
     INDICE_IMMAGINE_RIFERIMENTO = 0
     print("Indice riferimento fuori range, uso il primo file.")
@@ -79,9 +80,7 @@ path_ref = lista_percorsi_csv[INDICE_IMMAGINE_RIFERIMENTO]
 df_ref = pd.read_csv(path_ref, comment='#')
 tbl_ref = Table.from_pandas(df_ref)
 
-# Filtriamo solo le stelle che hanno una corrispondenza nel catalogo ('SI...')
-# Convertiamo in stringa per sicurezza prima di fare startswith
-
+# filtro solo le stelle che hanno una corrispondenza nel catalogo ('SI...')
 mask_si = np.char.startswith(tbl_ref['Corrispondenza'].astype(str), 'SI')
 tbl_catalogate_ref = tbl_ref[mask_si]
 
@@ -89,21 +88,65 @@ if len(tbl_catalogate_ref) == 0:
     print("Nessuna stella catalogata trovata nel file di riferimento.")
     exit()
 
-# Calcola la differenza assoluta tra i flussi trovati e il target
-
+# calcolo la differenza assoluta tra i flussi trovati e il target
 differenze = np.abs(tbl_catalogate_ref['kron_flux'] - KRON_TARGET)
 
-# Trova l'indice della differenza minima
+# ordino le stelle partendo da quella con il flusso più vicino al target
+indici_ordinati = np.argsort(differenze)
 
-idx_min = np.argmin(differenze)
-stella_ref = tbl_catalogate_ref[idx_min]
+id_stella_target = None
+stella_ref = None
 
-# Salva l'ID univoco da cercare negli altri file
+print("Cerco una stella che sia presente almeno una volta in tutte le run...")
 
-id_stella_target = stella_ref['ID']
+# scorro le candidate per trovare la prima valida presente in tutte le run
+for idx in indici_ordinati:
+    candidata = tbl_catalogate_ref[idx]
+    cand_id = candidata['ID']
+
+    presente_in_tutte = True
+
+    # verifico la presenza della candidata in ogni singola run
+    for run in run_list:
+        cartella_run = os.path.join(base_path, f"tabelle_unite_run_{run}")
+        if not os.path.exists(cartella_run):
+            presente_in_tutte = False
+            break
+
+        files_run = sorted([f for f in os.listdir(cartella_run) if f.endswith('.csv')])
+        percorsi_run = [os.path.join(cartella_run, f) for f in files_run]
+
+        trovata_in_run = False
+
+        # cerco l'ID in almeno un file della run corrente
+        for percorso in percorsi_run:
+            try:
+                # leggo solo la colonna ID per velocizzare la ricerca
+                df_temp = pd.read_csv(percorso, usecols=['ID'], comment='#')
+                if cand_id in df_temp['ID'].values:
+                    trovata_in_run = True
+                    break
+            except Exception:
+                pass
+
+        # se non la trovo nella run attuale, scarto la stella e interrompo il ciclo
+        if not trovata_in_run:
+            presente_in_tutte = False
+            break
+
+    # se la trovo in tutte le run, salvo il suo ID e mi fermo
+    if presente_in_tutte:
+        id_stella_target = cand_id
+        stella_ref = candidata
+        print(f"Stella target trovata: ID {id_stella_target} (scostamento dal Kron target: {differenze[idx]:.2f})")
+        break
+
+if id_stella_target is None:
+    print("Errore: nessuna stella trovata che sia presente in tutte le run.")
+    exit()
 
 print(f"--- ANALISI MULTI-RUN (Run: {run_list}) ---")
-print(f"Target ID: {id_stella_target}")
+print(f"Target ID selezionato: {id_stella_target}")
 
 # --- STRUTTURE DATI GLOBALI ---
 
@@ -124,13 +167,14 @@ for base in flussi_base:
     all_data[base] = []
     all_data[base + '_CORRETTO_Normalizzazione_Moltiplicativa'] = []
     all_data[base + '_CORRETTO_Correzione_Additiva_dell_Apertura'] = []
+    all_data[base + '_FONDO_SOTTRATTO'] = []
 
 all_times = []
 
-# variabile per il tempo iniziale globale (t=0 alla prima immagine della prima run)
+# imposto la variabile per il tempo iniziale globale (t=0 alla prima immagine della prima run)
 t0_global = None
 
-# colori per distinguere le run nel grafico (per le bande verticali)
+# definisco i limiti delle run nel grafico (per le bande verticali)
 run_boundaries = []
 
 # --- CICLO SULLE RUN ---
@@ -196,12 +240,19 @@ for run in run_list:
                         all_data[col_add].append(stella_nel_frame[col_add][0])
                     else:
                         all_data[col_add].append(np.nan)
+
+                    col_fondo = base + '_FONDO_SOTTRATTO'
+                    if col_fondo in stella_nel_frame.colnames:
+                        all_data[col_fondo].append(stella_nel_frame[col_fondo][0])
+                    else:
+                        all_data[col_fondo].append(np.nan)
             else:
                 # inserisco nan per mantenere l'allineamento temporale se non trovo la stella
                 for base in flussi_base:
                     all_data[base].append(np.nan)
                     all_data[base + '_CORRETTO_Normalizzazione_Moltiplicativa'].append(np.nan)
                     all_data[base + '_CORRETTO_Correzione_Additiva_dell_Apertura'].append(np.nan)
+                    all_data[base + '_FONDO_SOTTRATTO'].append(np.nan)
 
             all_times.append(tempo_relativo)
 
@@ -209,7 +260,7 @@ for run in run_list:
             print(f"Errore nel file {os.path.basename(percorso_csv)}: {e}")
             pass
 
-        # feedback di caricamento
+        # aggiungo il feedback di caricamento
         if n == len(lista_percorsi_csv) - 1:
             print(f"  Elaborati {len(lista_percorsi_csv)} file...")
 
@@ -222,88 +273,95 @@ for run in run_list:
 
 times_arr = np.array(all_times)
 
-def calc_stats(arr, mask):
-    """Calcolo le statistiche escludendo i nan e gli zeri."""
-    if np.sum(mask) > 0:
-        vals = arr[mask]
-        return np.mean(vals), np.std(vals)
-    return 0.0, 0.0
+# carico il file contenente i risultati del fondo
+df_fondo = pd.read_csv('risultati_somma_pixel.csv')
 
-print("\n=== GENERAZIONE GRAFICI ===")
+# filtro il dataframe per includere tutte le run della lista e lo ordino
+df_run = df_fondo[df_fondo['Run'].isin(run_list)].sort_values(['Run', 'Tempo_UTC']).copy()
 
-# ciclo per iterare su tutti i flussi base e generare un grafico per ognuno
-for base in flussi_base:
-    arr_base = np.array(all_data[base])
-    col_molt = base + '_CORRETTO_Normalizzazione_Moltiplicativa'
-    col_add = base + '_CORRETTO_Correzione_Additiva_dell_Apertura'
-    arr_molt = np.array(all_data[col_molt])
-    arr_add = np.array(all_data[col_add])
+# estraggo l'array dei valori del fondo per pixel
+fondo = df_run['fondo_per_pixel'].values
 
-    # filtro per le statistiche (escludo gli zeri e i nan)
-    mask_base = (arr_base > 0) & (~np.isnan(arr_base))
-    mask_molt = (arr_molt > 0) & (~np.isnan(arr_molt))
-    mask_add = (arr_add > 0) & (~np.isnan(arr_add))
+# estraggo l'array del flusso richiesto unendo tutti i dati della stella
+flusso_stella = np.array(all_data['flusso_fisso_max_run'])
 
-    # se non ho dati validi per questo flusso base, lo salto
-    if np.sum(mask_base) == 0:
-        print(f"Nessun dato valido per {base}, salto il plot.")
-        continue
+# verifico che le lunghezze coincidano (in caso di file mancanti), troncando alla lunghezza minore
+lunghezza_minima = min(len(fondo), len(flusso_stella))
+fondo = fondo[:lunghezza_minima]
+flusso_stella = flusso_stella[:lunghezza_minima]
 
-    media_base, std_base = calc_stats(arr_base, mask_base)
-    media_molt, std_molt = calc_stats(arr_molt, mask_molt)
-    media_add, std_add = calc_stats(arr_add, mask_add)
+# creo una maschera booleana per rimuovere i NaN che impedirebbero il calcolo di Pearson
+maschera_validi = ~np.isnan(fondo) & ~np.isnan(flusso_stella)
+fondo_valido = fondo[maschera_validi]
+flusso_valido = flusso_stella[maschera_validi]
 
-    plt.figure(figsize=(12, 7))
+# estraggo l'array dei tempi corrispondente ai dati validi per tracciare la curva di luce
+tempi_validi = times_arr[:lunghezza_minima][maschera_validi]
 
-    # plotto la curva originale
-    plt.plot(times_arr[mask_base], arr_base[mask_base],
-             marker='o', linestyle='-', linewidth=0.8, markersize=3, alpha=0.7, color='blue',
-             label=rf"{base} (Avg: {media_base:.0f}, $\sigma$: {(std_base / media_base * 100):.2f}%)")
+# calcolo il fit lineare (z[0] è la pendenza m, z[1] è l'intercetta q)
+z = np.polyfit(fondo_valido, flusso_valido, 1)
+m_pendenza = z[0]
 
-    # plotto la curva corretta (Moltiplicativa) se presente
-    if np.sum(mask_molt) > 0:
-        plt.plot(times_arr[mask_molt], arr_molt[mask_molt],
-                 marker='o', linestyle='-', linewidth=0.8, markersize=3, alpha=0.7, color='orange',
-                 label=rf"Corr. Moltiplicativa (Avg: {media_molt:.0f}, $\sigma$: {(std_molt / media_molt * 100):.2f}%)")
+# calcolo il valore medio del fondo cielo
+fondo_medio = np.mean(fondo_valido)
 
-    # plotto la curva corretta (Additiva) se presente
-    if np.sum(mask_add) > 0:
-        plt.plot(times_arr[mask_add], arr_add[mask_add],
-                 marker='o', linestyle='-', linewidth=0.8, markersize=3, alpha=0.7, color='green',
-                 label=rf"Corr. Additiva (Avg: {media_add:.0f}, $\sigma$: {(std_add / media_add * 100):.2f}%)")
+# applico la decorrelazione lineare per correggere il flusso
+flusso_corretto = flusso_valido - m_pendenza * (fondo_valido - fondo_medio)
 
-    # aggiungo linee verticali per separare le Run (estetica)
-    for r_idx, (run_num, t_end) in enumerate(run_boundaries):
-        # non disegno la linea alla fine dell'ultima run
-        if r_idx < len(run_boundaries):
-            plt.axvline(x=t_end, color='gray', linestyle='--', alpha=0.5)
-            # etichetta Run
-            t_start_run = 0 if r_idx == 0 else run_boundaries[r_idx - 1][1]
-            t_center = (t_start_run + t_end) / 2
+# preparo la figura per visualizzare la correzione sulla curva di luce
+plt.figure(figsize=(12, 6))
 
-            # calcolo il centro dell'asse Y per posizionare la scritta
-            y_min, y_max = plt.ylim()
-            y_mid = (y_min + y_max) / 2
+# creo il grafico con i flussi originali e corretti
+plt.plot(tempi_validi, flusso_valido, marker='.', linewidth=1, linestyle='-', alpha=0.5, color='red',
+         label='Flusso Originale (non corretto)')
+plt.plot(tempi_validi, flusso_corretto, marker='.', linewidth=1, linestyle='-', alpha=0.8, color='green',
+         label='Flusso Corretto (detrending fondo)')
 
-            # scritta centrata
-            plt.text(t_end, y_mid, f"Fine Run {run_num}",
-                     rotation=90,
-                     horizontalalignment='center',
-                     verticalalignment='top',
-                     color='#333333',
-                     fontsize=8,
-                     fontweight='bold')
+# formatto le etichette e il titolo del grafico
+plt.title(f"Confronto Curva di Luce - Flusso_fisso_max_run (ID {id_stella_target})", fontsize=14)
+plt.xlabel("Tempo relativo (s)", fontsize=12)
+plt.ylabel("Flusso stellare", fontsize=12)
+plt.ylim(0, None)
+plt.legend(fontsize=11)
+plt.grid(True, linestyle='--', alpha=0.6)
 
-    plt.title(f'Andamento {base} e Correzioni\nAnalisi Multi-Run (1, 2, 3) - ID {id_stella_target}\nTarget ~ {KRON_TARGET} ADU')
-    plt.xlabel("Tempo dall'inizio della Run 1 (secondi)")
-    plt.ylabel('Flusso (ADU)')
-    plt.grid(True, linestyle='--', alpha=0.3)
-    plt.ylim(0, None)
-    plt.legend()
-    plt.tight_layout()
+# aggiungo linee verticali per separare visivamente le run se desiderato
+for run, t_end in run_boundaries[:-1]:
+    plt.axvline(x=t_end, color='black', linestyle=':', alpha=0.5)
 
-    file_grafico = f'andamento_{base}_{KRON_TARGET}.png'
-    plt.savefig(file_grafico, dpi=300)
-    plt.show()
+plt.tight_layout()
+plt.savefig("confronto_curva_di_luce_corretta.jpg", dpi=300)
 
-    print(f"Salvato grafico: {file_grafico}")
+# mostro il grafico a schermo
+plt.show()
+
+# calcolo il nuovo coefficiente di correlazione tra il fondo e il flusso corretto
+correlazione_corretta, p_value_corretto = pearsonr(fondo_valido, flusso_corretto)
+
+# stampo i risultati a terminale
+print(f"\nAnalisi post-correzione per le Run {run_list}:")
+print(f"Nuovo coefficiente di correlazione di Pearson (r): {correlazione_corretta:.4f}")
+print(f"Nuovo P-value: {p_value_corretto:.4e}")
+
+# preparo la figura per il nuovo grafico di dispersione
+plt.figure(figsize=(8, 6))
+
+# creo il grafico a dispersione con i dati corretti
+plt.scatter(fondo_valido, flusso_corretto, alpha=0.7, color='green', edgecolor='k')
+
+# calcolo e aggiungo la linea di tendenza (fit lineare di grado 1)
+z_corr = np.polyfit(fondo_valido, flusso_corretto, 1)
+p_corr = np.poly1d(z_corr)
+plt.plot(fondo_valido, p_corr(fondo_valido), "r--", linewidth=2, label=f'Trend lineare (r={correlazione_corretta:.4f})')
+
+# formatto le etichette e il titolo del grafico
+plt.title("Correlazione post-detrending tra Fondo Cielo e Flusso Corretto", fontsize=14)
+plt.xlabel("Fondo medio per pixel", fontsize=12)
+plt.ylabel("Flusso singola stella (corretto)", fontsize=12)
+plt.legend(fontsize=11)
+plt.grid(True, linestyle='--', alpha=0.6)
+plt.tight_layout()
+plt.savefig("correlazione_flusso_corretto.jpg", dpi=300)
+
+# mostro il grafico a schermo
+plt.show()

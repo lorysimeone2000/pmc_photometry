@@ -42,14 +42,6 @@ from astropy.utils.exceptions import AstropyUserWarning
 from scipy.ndimage import label
 from pathlib import Path
 
-'''
-# Importo il catalogo dei satelliti
-from skyfield.api import load, wgs84
-from astropy.time import Time
-import requests
-from datetime import timedelta
-'''
-
 # gestisco i warning ignorandoli
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', message='.*failed to converge.*', category=UserWarning)
@@ -72,7 +64,6 @@ def trova_cartella_base(nome_target="pmc_photometry"):
 
 
 BASE_DIR = trova_cartella_base("Lorenzo")
-
 PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
 
 if PERCORSO_FUNZIONI not in sys.path:
@@ -85,19 +76,6 @@ print(f"--- CONFIGURAZIONE SISTEMA ---")
 print(f"Cartella Base rilevata: {BASE_DIR}")
 print(f"Moduli esterni caricati con successo.")
 print(f"------------------------------")
-
-'''
-# 1. Inizializzo Skyfield
-ts = load.timescale()
-'''
-
-# 2. Imposto le coordinate del mio telescopio usando la mia funzione importata
-lat_oss, lon_oss, alt_oss = ottieni_coordinate_telescopio('ASTRI 1', BASE_DIR)
-
-'''
-# Creo il mio oggetto geografico wgs84
-osservatorio = wgs84.latlon(lat_oss, lon_oss, elevation_m=alt_oss)
-'''
 
 # definisco le mie run da analizzare
 RUN = [1, 2, 3]
@@ -131,74 +109,22 @@ if __name__ == "__main__":
     print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
     vizier_hip = Vizier(
         catalog="I/239/hip_main",
-        # estraggo le coordinate ICRS all'epoca J2000 esatte pre-calcolate da VizieR
         columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],
         row_limit=-1
     )
-    # prelevo tutte le stelle con magnitudine utile per evitare caricamenti eccessivi
     risultato_hip = vizier_hip.query_constraints(Vmag="<16")
     tbl_catalogo_hipparco = risultato_hip[0]
 
-    # rinomino le mie colonne ICRS J2000 per mantenere la compatibilità col resto dello script
     if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
         tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
         tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
     print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
 
-    # imposto la mia soglia fissa a 2.5 arcosecondi
     exclusion_radii_deg = np.full(len(tbl_catalogo_hipparco), 2.5 / 3600.0)
 
-    print(f"Raggio di merging tra i cataloghi: {np.mean(exclusion_radii_deg)}")
-
-    # creo il mio SkyCoord Hipparcos
     coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],
                                       dec=tbl_catalogo_hipparco['_DEJ2000'],
                                       unit=u.deg)
-
-    tuo_user = "lorenzo.simeone@studenti.unipg.it"
-    tua_password = "Cazzata_2002348"
-
-    '''
-    # =================================================================
-    # Eseguo il pre-calcolo globale dei miei satelliti
-    # =================================================================
-    print("\nPreparo il catalogo satelliti storici...")
-
-    file_fits_riferimento = None
-
-    # cerco un file fits di riferimento dalla mia prima run disponibile
-    for r in RUN:
-        cartella_run_temp = list(BASE_DIR.rglob(f"20250120_run{r}"))
-        if cartella_run_temp:
-            f_list = list(cartella_run_temp[0].glob('*.fit')) + list(cartella_run_temp[0].glob('*.fits')) + list(
-                cartella_run_temp[0].glob('*.FIT')) + list(cartella_run_temp[0].glob('*.FITS'))
-            if f_list:
-                file_fits_riferimento = f_list[0]
-                break
-
-    if file_fits_riferimento:
-        hdu_ref = fits.open(file_fits_riferimento)
-        tempo_ref_astropy = Time(hdu_ref[0].header['DATE-OBS'], format='isot', scale='utc')
-        hdu_ref.close()
-
-        cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR, 'tabelle')
-        if cartella_tabelle is None:
-            cartella_tabelle = BASE_DIR / "tabelle"
-        cartella_tabelle.mkdir(exist_ok=True)
-
-        percorso_tle = scarica_tle_storici(tempo_ref_astropy, tuo_user, tua_password, cartella_tabelle)
-
-        if percorso_tle:
-            satelliti_attivi = load.tle_file(percorso_tle)
-            print(f"Download satelliti avvenuto: {len(satelliti_attivi)} satelliti trovati")
-        else:
-            print("ATTENZIONE: Download fallito. Disabilito il filtro satelliti.")
-            satelliti_attivi = []
-    else:
-        print("ATTENZIONE: Nessun FITS trovato per determinare la data. Disabilito il filtro satelliti.")
-        satelliti_attivi = []
-    # =================================================================
-    '''
 
     # leggo il mio file risultati_somma_pixel.csv per impostare S_ref
     file_somma_pixel = cerca_file_nel_progetto(BASE_DIR, "risultati_somma_pixel.csv")
@@ -214,18 +140,14 @@ if __name__ == "__main__":
         s_ref = 1.0
 
     next_internal_id = 1
-
-    # inizializzo liste per la FASE 5 (Decorrelazione Globale)
     dati_tutte_le_run = []
     mappa_headers_globali = {}
 
-    # inizio il ciclo per ogni mia run
     for run in RUN:
         print(f"\n==================== ELABORAZIONE RUN {run} ====================")
         nome_cartella_run = f"20250120_run{run}"
         found_folders = list(BASE_DIR.rglob(nome_cartella_run))
         if not found_folders:
-            print(f"Run {run} non trovata, salto.")
             continue
         run_folder = found_folders[0]
 
@@ -236,32 +158,17 @@ if __name__ == "__main__":
 
         file_list = sorted([str(f) for f in file_list])
         if not file_list:
-            print(f"Nessun FITS in Run {run}, salto.")
             continue
 
-        # =============================================================================
-        # DEFINIZIONE E CREAZIONE AUTOMATICA PERCORSI DI OUTPUT (CORRETTO)
-        # =============================================================================
-        # sposto questo blocco fuori da ogni condizione restrittiva
         cartella_prove = BASE_DIR
         cartella_tabelle = cartella_prove / "tabelle"
-
-        # creo il percorso finale (mkdir con parents=True gestisce tutta la catena)
         output_dir = cartella_tabelle / "tabelle_unite" / f"tabelle_unite_run_{run}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        print(f"Cartella di output verificata/creata: {output_dir}")
-
-        # inizializzo le mie variabili di tracking a zero per ogni singola run
         global_tracker_coords = None
         global_tracker_labels = []
-        '''
-        contatore_satelliti = 0
-        contatore_satelliti_presenti = 0
-        '''
         file_csv_generati_nella_run = []
 
-        # inizio la fase 1 per creare le mie tabelle unite
         print(f"--- FASE 1: Segmentazione & Unione ({len(file_list)} files) ---")
 
         for n, percorso_file in enumerate(tqdm(file_list, desc=f"Fase 1 Run {run}"), 1):
@@ -269,53 +176,33 @@ if __name__ == "__main__":
                 hdu_list = fits.open(percorso_file)
                 w = WCS(hdu_list[0].header)
                 ra_c, dec_c = hdu_list[0].header["RA"], hdu_list[0].header["DEC"]
-
                 alto_destra = w.pixel_to_world(3071, 2047)
                 centro = SkyCoord(ra_c, dec_c, unit=u.deg)
-
                 raggio_ricerca = Angle(centro.separation(alto_destra) * 1.5, "deg")
-
                 hdu_list.close()
 
-                # imposto un meccanismo di riprova in caso di errore di rete
                 tentativi_massimi = 5
                 attesa = 10
-
                 for tentativo in range(tentativi_massimi):
                     try:
-                        # eseguo la mia query su Vizier
                         riquadro_esterno_vizier = vizier.query_region(
                             coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
                             radius=raggio_ricerca,
-                            column_filters={'gmag': f'<{15}'}
+                            column_filters={'rmag': f'<{15}'}
                         )
                         tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
-
-                        # esco dal ciclo se la mia query ha successo
                         break
                     except Exception as e:
                         if tentativo < tentativi_massimi - 1:
-                            print(
-                                f"\nErrore di connessione a Vizier. Riprovo tra {attesa} secondi... (Tentativo {tentativo + 1}/{tentativi_massimi})")
-                            # attendo prima di eseguire il mio prossimo tentativo
                             time.sleep(attesa)
                         else:
-                            print(
-                                f"\nImpossibile connettersi a Vizier dopo {tentativi_massimi} tentativi. Dettaglio errore: {e}")
                             raise
 
                 distanze_hip = centro.separation(coords_hipparco_global)
-
                 mask_hip_fov = distanze_hip < raggio_ricerca
-
                 tbl_hipparco_run_subset = tbl_catalogo_hipparco[mask_hip_fov]
                 coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
                 exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
-
-                # =================================================================
-                # Avvio il filtraggio competitivo a singola fase
-                # =================================================================
-                print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
 
                 coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
                                          dec=tbl_riquadro_esterno_vizier['DEJ2000'],
@@ -323,7 +210,6 @@ if __name__ == "__main__":
 
                 max_threshold_deg = np.max(exclusion_radii_run_subset)
                 seplimit = max_threshold_deg * u.deg
-
                 idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
 
                 if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
@@ -332,7 +218,6 @@ if __name__ == "__main__":
                     idx_hip_1, idx_viz_1 = idx_A, idx_B
 
                 mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
-
                 idx_hip_valid = idx_hip_1[mask_threshold]
                 idx_viz_valid = idx_viz_1[mask_threshold]
 
@@ -340,17 +225,13 @@ if __name__ == "__main__":
                 mask_keep_vizier = np.ones(len(tbl_riquadro_esterno_vizier), dtype=bool)
 
                 unique_hip_idx = np.unique(idx_hip_valid)
-
                 for i_hip in unique_hip_idx:
                     viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
-
                     if len(viz_matches) > 0:
-                        mag_viz_matches = np.nan_to_num(tbl_riquadro_esterno_vizier['gmag'][viz_matches], nan=99.0)
-
+                        mag_viz_matches = np.nan_to_num(tbl_riquadro_esterno_vizier['rmag'][viz_matches], nan=99.0)
                         idx_min_mag = np.argmin(mag_viz_matches)
                         best_viz_idx = viz_matches[idx_min_mag]
                         best_viz_mag = mag_viz_matches[idx_min_mag]
-
                         hip_mag = np.nan_to_num(tbl_hipparco_run_subset['Vmag'][i_hip], nan=99.0)
 
                         if best_viz_mag <= hip_mag:
@@ -358,26 +239,20 @@ if __name__ == "__main__":
                         else:
                             mask_keep_vizier[best_viz_idx] = False
 
-                hipparco_escluse = np.sum(~mask_keep_hipparco)
-                vizier_escluse = np.sum(~mask_keep_vizier)
-                print(f"Risolti {len(unique_hip_idx)} conflitti spaziali:")
-                print(f" -> Escluse {hipparco_escluse} stelle Hipparco (tenute Vizier perché più brillanti)")
-                print(f" -> Escluse {vizier_escluse} stelle Vizier (tenute Hipparco perché più brillanti)")
-
                 mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
-
-                # uso copy() per svincolare i dati ed evitare il SettingWithCopyWarning quando aggiungo le colonne
                 tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco].copy()
                 tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
 
+                # calcolo la mia magnitudine sintetica combinata usando rmag come base
+                colore_g_r_temp = tbl_riquadro_esterno_vizier_CLEAN['gmag'] - tbl_riquadro_esterno_vizier_CLEAN['rmag']
+                mag_sintetica_temp = tbl_riquadro_esterno_vizier_CLEAN['rmag'] - 0.587 * colore_g_r_temp - 0.011
                 tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[
-                    tbl_riquadro_esterno_vizier_CLEAN['gmag'] < magnitudine_massima].copy()
+                    mag_sintetica_temp < magnitudine_massima].copy()
 
-            # ridefinisco la mia colonna Mag per Pan-STARRS unendo gmag e rmag nel sistema visibile di Johnson
+            # applico la nuova formula lineare richiesta: rmag come base della combinazione
             colore_g_r = tbl_vizier_cut['gmag'] - tbl_vizier_cut['rmag']
-            tbl_vizier_cut['Mag'] = tbl_vizier_cut['gmag'] - 0.587 * colore_g_r - 0.011
+            tbl_vizier_cut['Mag'] = tbl_vizier_cut['rmag'] - 0.587 * colore_g_r - 0.011
 
-            # ridefinisco la mia colonna Mag per Hipparcos usando direttamente la Vmag
             tbl_hipparco_run_clean['Mag'] = tbl_hipparco_run_clean['Vmag']
 
             tbl_catalogate = tabella_catalogo(percorso_file, tbl_vizier_cut, tbl_hipparco_run_clean)
@@ -399,7 +274,6 @@ if __name__ == "__main__":
 
             with fits.open(percorso_file, memmap=False) as hdu:
                 w = WCS(hdu[0].header)
-                header_date_obs = hdu[0].header['DATE-OBS']
             coords = w.pixel_to_world(df_trovate['xcentroid'], df_trovate['ycentroid'])
             df_trovate['RA_centroid'] = coords.ra.deg
             df_trovate['DEC_centroid'] = coords.dec.deg
@@ -435,66 +309,42 @@ if __name__ == "__main__":
                     df_no = df_trovate.iloc[unmatched].copy()
                     df_no['Corrispondenza'] = 'NO'
                     for c in df_catalogate.columns: df_no[c] = np.nan
-
                     df_final = pd.concat([df_si, df_no], ignore_index=True)
-
                 else:
                     df_final = df_trovate.copy()
                     df_final['Corrispondenza'] = 'NO'
 
-            # =================================================================
-            # Avvio il mio blocco di tracking globale basato sulle coordinate
-            # =================================================================
-
-            # creo il mio array astropy garantendo che sia sempre 1D
             coords_obj_all = SkyCoord(ra=np.atleast_1d(df_final['RA_centroid'].values) * u.deg,
                                       dec=np.atleast_1d(df_final['DEC_centroid'].values) * u.deg)
             final_labels = np.empty(len(df_final), dtype=object)
 
             if global_tracker_coords is None:
-                # inizializzo direttamente il mio tracker con tutte le coordinate
                 global_tracker_coords = coords_obj_all
                 global_tracker_labels = [f"RA_{ra:.3f}DEC{dec:.3f}" for ra, dec in
                                          zip(coords_obj_all.ra.deg, coords_obj_all.dec.deg)]
                 final_labels[:] = global_tracker_labels
             else:
-                # eseguo il mio match vettorializzato su tutte le coordinate simultaneamente
                 idx_match, d2d, _ = coords_obj_all.match_to_catalog_sky(global_tracker_coords)
                 mask_match = d2d < dist_ripetizione
-
-                # assegno le mie etichette agli oggetti già noti
                 for i in np.where(mask_match)[0]:
                     final_labels[i] = global_tracker_labels[idx_match[i]]
-
-                # isolo i miei nuovi oggetti non trovati
                 nuovi_idx = np.where(~mask_match)[0]
                 if len(nuovi_idx) > 0:
                     nuove_coords = coords_obj_all[nuovi_idx]
                     nuove_labels = [f"RA_{ra:.3f}__DEC_{dec:.3f}" for ra, dec in
                                     zip(nuove_coords.ra.deg, nuove_coords.dec.deg)]
-
                     for i, l_idx in enumerate(nuovi_idx):
                         final_labels[l_idx] = nuove_labels[i]
-
-                    # aggiorno il mio catalogo globale estraendo i valori grezzi per evitare errori di rappresentazione
                     nuovi_ra = np.concatenate([global_tracker_coords.ra.deg, nuove_coords.ra.deg])
                     nuovi_dec = np.concatenate([global_tracker_coords.dec.deg, nuove_coords.dec.deg])
                     global_tracker_coords = SkyCoord(ra=nuovi_ra * u.deg, dec=nuovi_dec * u.deg)
-
                     global_tracker_labels.extend(nuove_labels)
 
             df_final['label'] = final_labels
-
-            # aggiungo le mie colonne identificative
             df_final['run_id'] = run
             df_final['img_index'] = n
 
-            # =================================================================
-            # Termino il mio blocco di tracking
-            # =================================================================
-
             if 'label' in df_final.columns: df_final.sort_values('label', inplace=True)
-
             cols = df_final.columns.tolist()
             if 'ID' in cols and 'Catalogo' in cols:
                 cols.remove('Catalogo')
@@ -503,7 +353,6 @@ if __name__ == "__main__":
             final_cols = df_final.columns.tolist()
             for c in ['run_id', 'img_index']:
                 if c in final_cols: final_cols.remove(c)
-
             if 'Corrispondenza' in final_cols:
                 idx_corr = final_cols.index('Corrispondenza')
                 final_cols.insert(idx_corr, 'img_index')
@@ -513,7 +362,6 @@ if __name__ == "__main__":
                 final_cols.insert(1, 'img_index')
 
             df_final = df_final[final_cols]
-
             file_out = output_dir / f'run_{run}_stelle_trovate_e_catalogate_immagine_{n:03d}.csv'
             salva_csv_con_header_fits(df_final, dict(fits.getheader(percorso_file)),
                                       file_out, str(percorso_file), parametri_caricati)

@@ -120,7 +120,7 @@ def freedman_diaconis_bins(data, num_images=1, max_bins=60):
 
 # --- INIZIO CODICE ---
 # Imposto la cartella base in modo dinamico
-BASE_DIR = trova_cartella_base("pmc_photometry")
+BASE_DIR = trova_cartella_base("Lorenzo")
 
 RUNS = [1, 2, 3]
 
@@ -139,7 +139,7 @@ print("Inizio scansione Run...")
 
 for run in RUNS:
     # Cerco dinamicamente la cartella tabelle_unite_run_X
-    nome_cartella_csv = f"tabelle_unite_run_{run}"
+    nome_cartella_csv = f"tabelle/tabelle_unite/tabelle_unite_run_{run}"
     cartella_csv_path = cerca_cartella_nel_progetto(BASE_DIR, nome_cartella_csv)
     if cartella_csv_path is None:
         print(f"AVVISO: Cartella '{nome_cartella_csv}' non trovata. Salto la run {run}.")

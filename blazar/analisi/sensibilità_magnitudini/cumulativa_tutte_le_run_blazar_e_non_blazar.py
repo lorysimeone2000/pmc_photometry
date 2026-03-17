@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from tqdm import tqdm
 import warnings
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 
 warnings.filterwarnings('ignore')
 
@@ -63,8 +65,8 @@ def freedman_diaconis_bins(data, num_images=1, max_bins=60):
 print("--- INIZIO CALCOLO DISTRIBUZIONE MEDIA (DATASET BLAZAR) ---")
 
 # definisco le cartelle bersaglio
-dir_unite = BASE_DIR / "tabelle_blazar" / "tabelle_unite"
-dir_cataloghi = BASE_DIR / "tabelle_blazar" / "tabelle_cataloghi"
+dir_unite = BASE_DIR / "tabelle_blazar_e_non_blazar" / "tabelle_unite"
+dir_cataloghi = BASE_DIR / "tabelle_blazar_e_non_blazar" / "tabelle_cataloghi"
 
 if not dir_unite.exists() or not dir_cataloghi.exists():
     print("ERRORE: Impossibile trovare le cartelle 'tabelle_unite' o 'tabelle_cataloghi' in blazar/tabelle/")
@@ -220,17 +222,20 @@ output_path = output_dir_grafici / "distribuzione_media_magnitudini_blazar.png"
 plt.savefig('distribuzione_media_magnitudini_blazar.png', dpi=300)
 print(f"Grafico salvato in: {output_path.relative_to(BASE_DIR)}")
 
-plt.show()
-
+plt.close()
 
 # =============================================================================
-# 4. GENERAZIONE GRAFICI PER SINGOLE IMMAGINI
+# 4. GENERAZIONE GRAFICI PER SINGOLE IMMAGINI DIVISE PER TARGET
 # =============================================================================
 
 print("\n--- INIZIO CALCOLO E PLOTTING SINGOLE IMMAGINI ---")
 
 # definisco la directory base per i nuovi grafici
 dir_output_singole = output_dir_grafici / "cumulativa_tutte_le_run"
+
+# imposto le coordinate di riferimento dei due target
+coord_mrk = SkyCoord(ra=166.1138 * u.deg, dec=38.2088 * u.deg, frame='icrs')
+coord_crab = SkyCoord(ra=83.6331 * u.deg, dec=22.0145 * u.deg, frame='icrs')
 
 # esploro nuovamente la cartella dei giorni per elaborare l'immagine singola
 for giorno_dir in sorted([d for d in dir_unite.iterdir() if d.is_dir()]):
@@ -256,12 +261,59 @@ for giorno_dir in sorted([d for d in dir_unite.iterdir() if d.is_dir()]):
         if num_file == 0:
             continue
 
-        # creo la sottocartella per il giorno e la run
-        out_run_dir = dir_output_singole / giorno_nome / run_nome
+        # analizzo la prima tabella della run per determinare a quale target puntano effettivamente le stelle
+        primo_file = csv_unite_list[0]
+        df_primo = pd.read_csv(primo_file, comment='#')
+
+        target_nome = "sconosciuto"
+
+        if not df_primo.empty and 'RA_centroid' in df_primo.columns and 'DEC_centroid' in df_primo.columns:
+            ra_val = df_primo['RA_centroid'].median()
+            dec_val = df_primo['DEC_centroid'].median()
+
+            try:
+                coord_centro = SkyCoord(ra=ra_val * u.deg, dec=dec_val * u.deg, frame='icrs')
+
+                # calcolo le distanze e decido il nome della cartella target
+                sep_mrk = coord_centro.separation(coord_mrk)
+                sep_crab = coord_centro.separation(coord_crab)
+
+                if sep_mrk < sep_crab:
+                    target_nome = "markarian"
+                else:
+                    target_nome = "crab"
+            except Exception:
+                pass
+        else:
+            # fallback all'header se la tabella è vuota
+            header_primo_file = leggi_header_da_csv(primo_file)
+            ra_val = header_primo_file.get('RA') or header_primo_file.get('RAJ2000') or header_primo_file.get('OBJ-RA')
+            dec_val = header_primo_file.get('DEC') or header_primo_file.get('DEJ2000') or header_primo_file.get(
+                'OBJ-DEC')
+
+            if ra_val is not None and dec_val is not None:
+                try:
+                    if isinstance(ra_val, (int, float)):
+                        coord_centro = SkyCoord(ra=ra_val * u.deg, dec=dec_val * u.deg, frame='icrs')
+                    else:
+                        coord_centro = SkyCoord(ra=ra_val, dec=dec_val, unit=(u.hourangle, u.deg), frame='icrs')
+
+                    sep_mrk = coord_centro.separation(coord_mrk)
+                    sep_crab = coord_centro.separation(coord_crab)
+
+                    if sep_mrk < sep_crab:
+                        target_nome = "markarian"
+                    else:
+                        target_nome = "crab"
+                except Exception:
+                    pass
+
+        # creo la sottocartella inserendo il livello del target tra giorno e run
+        out_run_dir = dir_output_singole / giorno_nome / target_nome / run_nome
         out_run_dir.mkdir(parents=True, exist_ok=True)
 
         # analizzo l'immagine per generare il suo grafico
-        for i in tqdm(range(num_file), desc=f"Plotting {giorno_nome} - {run_nome}"):
+        for i in tqdm(range(num_file), desc=f"Plotting {giorno_nome} - {run_nome} ({target_nome})"):
 
             if i % 20 != 0:
                 continue
@@ -339,3 +391,82 @@ for giorno_dir in sorted([d for d in dir_unite.iterdir() if d.is_dir()]):
 
             # chiudo la figura per evitare di saturare la RAM
             plt.close()
+
+# =============================================================================
+# 5. ANDAMENTO TEMPORALE DISTANZE DAI TARGET
+# =============================================================================
+
+print("\n--- GENERAZIONE GRAFICO DISTANZE TEMPORALI ---")
+
+from astropy.time import Time
+
+tempi_plot = []
+distanze_mrk_plot = []
+distanze_crab_plot = []
+
+# scorro di nuovo le cartelle per raccogliere le informazioni cronologiche
+for giorno_dir in sorted([d for d in dir_unite.iterdir() if d.is_dir()]):
+    for run_dir in sorted([d for d in giorno_dir.iterdir() if d.is_dir()]):
+        for file_csv in sorted(list(run_dir.glob("*.csv"))):
+            df_temp = pd.read_csv(file_csv, comment='#')
+            header_temp = leggi_header_da_csv(file_csv)
+
+            if not df_temp.empty and 'RA_centroid' in df_temp.columns and 'DEC_centroid' in df_temp.columns:
+                ra_val = df_temp['RA_centroid'].median()
+                dec_val = df_temp['DEC_centroid'].median()
+            else:
+                ra_val = header_temp.get('RA') or header_temp.get('RAJ2000') or header_temp.get('OBJ-RA')
+                dec_val = header_temp.get('DEC') or header_temp.get('DEJ2000') or header_temp.get('OBJ-DEC')
+
+            if ra_val is not None and dec_val is not None:
+                try:
+                    if isinstance(ra_val, (int, float)):
+                        coord_centro = SkyCoord(ra=ra_val * u.deg, dec=dec_val * u.deg, frame='icrs')
+                    else:
+                        coord_centro = SkyCoord(ra=ra_val, dec=dec_val, unit=(u.hourangle, u.deg), frame='icrs')
+
+                    # estraggo il tempo
+                    tempo_obs_str = header_temp.get('DATE-OBS')
+                    if tempo_obs_str:
+                        tempo = Time(tempo_obs_str).unix
+                    else:
+                        tempo = file_csv.stat().st_mtime
+
+                    tempi_plot.append(tempo)
+                    distanze_mrk_plot.append(coord_centro.separation(coord_mrk).deg)
+                    distanze_crab_plot.append(coord_centro.separation(coord_crab).deg)
+                except Exception:
+                    pass
+
+if tempi_plot:
+    # ordino i dati cronologicamente
+    dati_ordinati = sorted(zip(tempi_plot, distanze_mrk_plot, distanze_crab_plot), key=lambda x: x[0])
+    tempi_ord = np.array([x[0] for x in dati_ordinati])
+    dist_mrk_ord = np.array([x[1] for x in dati_ordinati])
+    dist_crab_ord = np.array([x[2] for x in dati_ordinati])
+
+    # calcolo i secondi trascorsi dalla prima immagine
+    tempi_sec = tempi_ord - tempi_ord[0]
+
+    plt.figure(figsize=(14, 8), dpi=300)
+
+    # traccio la distanza da markarian
+    plt.plot(tempi_sec, dist_mrk_ord, color='teal', marker='.', linestyle='-', linewidth=1.5,
+             label='Distanza da Markarian 421')
+
+    # traccio la distanza dalla crab
+    plt.plot(tempi_sec, dist_crab_ord, color='crimson', marker='.', linestyle='-', linewidth=1.5,
+             label='Distanza da Crab Nebula')
+
+    plt.xlabel('Tempo trascorso dalla prima immagine (secondi)', fontsize=12)
+    plt.ylabel('Distanza (Gradi)', fontsize=12)
+    plt.title('Andamento temporale della distanza dai target', fontsize=14)
+    plt.grid(True, which="both", linestyle='--', alpha=0.6)
+    plt.legend(fontsize=11)
+    plt.tight_layout()
+
+    out_dist_path = output_dir_grafici / "andamento_distanze_target.png"
+    plt.savefig(out_dist_path)
+    plt.show()
+    plt.close()
+    print(f"Grafico distanze salvato in: {out_dist_path.relative_to(BASE_DIR)}")

@@ -97,7 +97,7 @@ osservatorio = wgs84.latlon(lat_oss, lon_oss, elevation_m=alt_oss)
 
 vizier = Vizier(
     catalog="II/389/ps1_dr2",
-    columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag'],
+    columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag'],
     row_limit=-1
 )
 
@@ -319,7 +319,7 @@ if __name__ == "__main__":
                     riquadro_esterno_vizier = vizier.query_region(
                         coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
                         radius=raggio_ricerca,
-                        column_filters={'gmag': f'<{15}'}
+                        column_filters={'rmag': f'<{15}'}
                     )
                     tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
 
@@ -364,7 +364,7 @@ if __name__ == "__main__":
                         viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
 
                         if len(viz_matches) > 0:
-                            mag_viz_matches = np.nan_to_num(tbl_riquadro_esterno_vizier['gmag'][viz_matches], nan=99.0)
+                            mag_viz_matches = np.nan_to_num(tbl_riquadro_esterno_vizier['rmag'][viz_matches], nan=99.0)
 
                             idx_min_mag = np.argmin(mag_viz_matches)
                             best_viz_idx = viz_matches[idx_min_mag]
@@ -385,11 +385,20 @@ if __name__ == "__main__":
 
                     mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
 
-                    tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco]
+                    tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco].copy()
                     tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
 
+                    # calcolo la mia magnitudine sintetica combinata usando rmag come base
+                    colore_g_r_temp = tbl_riquadro_esterno_vizier_CLEAN['gmag'] - tbl_riquadro_esterno_vizier_CLEAN['rmag']
+                    mag_sintetica_temp = tbl_riquadro_esterno_vizier_CLEAN['rmag'] - 0.587 * colore_g_r_temp - 0.011
                     tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[
-                        tbl_riquadro_esterno_vizier_CLEAN['gmag'] < magnitudine_massima]
+                        mag_sintetica_temp < magnitudine_massima].copy()
+
+                    # applico la mia nuova formula lineare: rmag come base della combinazione
+                    colore_g_r = tbl_vizier_cut['gmag'] - tbl_vizier_cut['rmag']
+                    tbl_vizier_cut['Mag'] = tbl_vizier_cut['rmag'] - 0.587 * colore_g_r - 0.011
+
+                    tbl_hipparco_run_clean['Mag'] = tbl_hipparco_run_clean['Vmag']
 
                 tbl_catalogate = tabella_catalogo(percorso_file, tbl_vizier_cut, tbl_hipparco_run_clean)
                 tbl_trovate, _ = analisi_image_segmentation(percorso_file, parametri_caricati)

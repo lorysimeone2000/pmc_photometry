@@ -25,7 +25,7 @@ from photutils.segmentation import SourceFinder
 from photutils.detection import find_peaks
 from photutils.aperture import CircularAperture
 
-# Set up wcs
+# imposto il wcs
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 import astropy.coordinates as coord
@@ -40,10 +40,9 @@ from shapely.geometry import Point, Polygon
 # warning
 import warnings
 from astropy.io.fits.verify import VerifyWarning
-import warnings
 from astropy.wcs import FITSFixedWarning
 
-warnings.filterwarnings('ignore', category=FITSFixedWarning)  # Sopprime il warning FITSFixedWarning
+warnings.filterwarnings('ignore', category=FITSFixedWarning)  # sopprimo il warning FITSFixedWarning
 
 # --- IMPORT FONDAMENTALE PER LA PORTABILITÀ ---
 from pathlib import Path
@@ -64,12 +63,12 @@ def trova_cartella_base(nome_target="pmc_photometry"):
     """
     path_corrente = Path(__file__).resolve()
 
-    # Risaliamo fino a trovare la cartella target
+    # risalgo fino a trovare la cartella target
     for parent in [path_corrente] + list(path_corrente.parents):
         if parent.name == nome_target:
             return parent
 
-    # Fallback: se non la trova, usa la cartella dello script
+    # fallback: se non la trovo, uso la cartella dello script
     print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
     return path_corrente.parent
 
@@ -109,7 +108,7 @@ def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
     return cartelle_trovate[0]
 
 
-# Definisco la BASE_DIR dinamicamente
+# definisco la BASE_DIR dinamicamente
 BASE_DIR = trova_cartella_base("Lorenzo")
 
 PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
@@ -124,10 +123,10 @@ print(f"--- CONFIGURAZIONE SISTEMA ---")
 print(f"Cartella Base rilevata: {BASE_DIR}")
 print(f"------------------------------")
 
-# inizializzo Vizier
+# inizializzo Vizier estraendo tutte e 5 le bande necessarie
 vizier = Vizier(
     catalog="II/389/ps1_dr2",
-    columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag'],
+    columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag', 'imag', 'zmag', 'ymag'],
     row_limit=-1
 )
 
@@ -135,20 +134,19 @@ vizier = Vizier(
 def salva_csv_con_header_fits(dataframe, header_fits, filename, nome_file_fits):
     """Salva il DataFrame in CSV includendo l'header FITS come commenti"""
     with open(filename, 'w') as f:
-        # Scrivi l'header FITS come commenti
+        # scrivo l'header FITS come commenti
         f.write("# Header FITS:\n")
         for key, value in header_fits.items():
             f.write(f"# {key}: {value}\n")
         f.write(f"# PERCORSO_FILE: {nome_file_fits}\n")
-        f.write("#\n")  # Linea vuota per separare header dai dati
-        # Scrivi il DataFrame
+        f.write("#\n")  # linea vuota per separare header dai dati
+        # scrivo il DataFrame
         dataframe.to_csv(f, index=False)
 
 
 def tabella_catalogo(image_file_, tbl_vizier_in, tbl_hipparco_in):
     """
     Seleziona le stelle dei cataloghi unificati che rientrano nel riquadro dell'immagine.
-    Ottimizzata geometricamente per evitare rallentamenti.
     """
     hdu_list_ = fits.open(image_file_)
     wcs = WCS(hdu_list_[0].header)
@@ -219,21 +217,13 @@ def tabella_catalogo(image_file_, tbl_vizier_in, tbl_hipparco_in):
 def calcolo_distanze(tbl_trovate, tbl_catalogate, image_file):
     """
     Calcola le distanze dei centroidi rispetto alle stelle catalogate più vicine
-
-    Parameters:
-    tbl_trovate (Table): Tabella delle sorgenti trovate con image segmentation
-    tbl_catalogate (Table): Tabella delle stelle del catalogo
-    image_file (str): Percorso del file FITS
-
-    Returns:
-    array: elenco delle distanze minime di tutti i centroidi
     """
 
-    # Carica il WCS dall'immagine
+    # carico il WCS dall'immagine
     hdu_list = fits.open(image_file)
     w = WCS(hdu_list[0].header)
 
-    # Converti i centroidi pixel in coordinate celesti
+    # converto i centroidi pixel in coordinate celesti
     coords_trovate = w.pixel_to_world(tbl_trovate['xcentroid'], tbl_trovate['ycentroid'])
 
     # converto le coordinate catalogate in array numpy e gestisco le unità
@@ -248,17 +238,12 @@ def calcolo_distanze(tbl_trovate, tbl_catalogate, image_file):
             ra_values = np.array(tbl_catalogate['RAJ2000'])
             dec_values = np.array(tbl_catalogate['DEJ2000'])
 
-        '''
-        print(f"ra_values tipo: {type(ra_values)}, forma: {ra_values.shape}")
-        print(f"dec_values tipo: {type(dec_values)}, forma: {dec_values.shape}")
-        '''
-
         # creo SkyCoord con i valori puri specificando le unità
         coords_catalogate = SkyCoord(ra=ra_values * u.deg, dec=dec_values * u.deg)
 
     except Exception as e:
         print(f"Errore nell'approccio principale: {e}")
-        # APPROCCIO ALTERNATIVO: uso direttamente i valori senza moltiplicare per unità
+        # approccio alternativo: uso direttamente i valori senza moltiplicare per unità
         coords_catalogate = SkyCoord(ra=tbl_catalogate['RAJ2000'],
                                      dec=tbl_catalogate['DEJ2000'],
                                      unit=u.deg)
@@ -271,11 +256,9 @@ def calcolo_distanze(tbl_trovate, tbl_catalogate, image_file):
     righe_tabella_combinata = []  # lista per la tabella combinata
 
     for i, coord_trovata in enumerate(coords_trovate):
-        # calcolo la distanza da tutte le stelle catalogate
-        distanze_singola = coord_trovata.separation(
-            coords_catalogate)  # Calcola la distanza angolare tra la singola stella trovata
-        # (coord_trovata) e tutte le stelle del catalogo (coords_catalogate). Restituisce un array di distanze angolari.
-        # if i == 1: print(np.shape(distanze_singola))
+        # calcolo la distanza angolare tra la singola stella trovata e tutte le stelle del catalogo. Restituisco un array di distanze angolari.
+        distanze_singola = coord_trovata.separation(coords_catalogate)
+
         # trovo la distanza minima e l'indice della stella più vicina
         distanza_minima = np.min(distanze_singola)
 
@@ -290,33 +273,32 @@ def calcolo_distanze(tbl_trovate, tbl_catalogate, image_file):
 def converti_valore(valore):
     """
     Converte una stringa nel tipo di dato appropriato.
-    Prova in ordine: int, float, mantiene stringa se non è convertibile.
     """
     valore = valore.strip()
 
-    # Se è vuoto, restituisci stringa vuota
+    # se è vuoto, restituisco stringa vuota
     if not valore:
         return valore
 
-    # Prova a convertire in int
+    # provo a convertire in int
     try:
         return int(valore)
     except ValueError:
         pass
 
-    # Prova a convertire in float
+    # provo a convertire in float
     try:
         return float(valore)
     except ValueError:
         pass
 
-    # Prova a riconoscere booleani FITS
+    # provo a riconoscere booleani FITS
     if valore.upper() in ['T', 'TRUE', 'YES', 'Y']:
         return True
     elif valore.upper() in ['F', 'FALSE', 'NO', 'N']:
         return False
 
-    # Altrimenti restituisci la stringa originale
+    # altrimenti restituisco la stringa originale
     return valore
 
 
@@ -327,252 +309,312 @@ def leggi_header_da_csv(filename):
     with open(filename, 'r') as f:
         for line in f:
             if line.startswith('#') and ':' in line:
-                # Rimuovi il '#' e dividi chiave-valore
+                # rimuovo il '#' e divido chiave-valore
                 clean_line = line.strip()[1:].strip()
                 if clean_line and ': ' in clean_line:
                     key, value = clean_line.split(': ', 1)
                     header_dict[key] = converti_valore(value)
-            elif line.strip() == '#':  # Fine dell'header
+            elif line.strip() == '#':  # fine dell'header
                 break
 
     return header_dict
 
 
-run = int(input("Quale run vuoi elaborare: "))  # numero run: 1, 2 o 3
+# definisco le mie run da analizzare
+RUN = [1, 2, 3]
 
-# =============================================================================
-# RICERCA FILE DALLA CARTELLA RUN (NUOVA LOGICA)
-# =============================================================================
+# cerco il file contenente la curva di efficienza quantica per calcolare i pesi esatti
+file_curva_pmc = cerca_file_nel_progetto(BASE_DIR, "curva_PMC.csv")
+if file_curva_pmc is not None:
+    # leggo il dataframe della curva
+    df_curva = pd.read_csv(file_curva_pmc)
 
-# --- RICERCA CARTELLE RUN ---
-nome_cartella_run = f"20250120_run{run}"
-found_folders = list(BASE_DIR.rglob(nome_cartella_run))
+    # stabilisco i limiti di lunghezza d'onda delle singole bande
+    limiti_bande = {
+        'gmag': (400, 550),
+        'rmag': (550, 700),
+        'imag': (680, 840),
+        'zmag': (820, 920),
+        'ymag': (920, 1050)
+    }
 
-if not found_folders:
-    print(f"ERRORE: Cartella '{nome_cartella_run}' non trovata in nessuna sottocartella di {BASE_DIR}")
-    exit()
+    pesi_estratti = []
 
-run_folder = found_folders[0]
-if len(found_folders) > 1:
-    print(f"AVVISO: Trovate {len(found_folders)} cartelle. Uso la prima: {run_folder}")
+    # itero sulle bande per calcolare l'area sottesa alla curva per ciascun range
+    for nome_banda, (w_min, w_max) in limiti_bande.items():
+        # applico la maschera di taglio per l'intervallo corrente
+        maschera_w = (df_curva['Wavelength'] >= w_min) & (df_curva['Wavelength'] <= w_max)
+        # calcolo l'integrale tramite il metodo dei trapezi per estrarre la porzione di efficienza
+        area = np.trapz(df_curva['QE'][maschera_w], x=df_curva['Wavelength'][maschera_w])
+        pesi_estratti.append(area)
+
+    # converto in array e normalizzo in modo che la somma finale sia pari a 1
+    pesi_estratti = np.array(pesi_estratti)
+    pesi_ideali_globali = pesi_estratti / np.sum(pesi_estratti)
 else:
-    print(f"Cartella dati trovata: {run_folder.relative_to(BASE_DIR)}")
+    # imposto i pesi standard in caso di mancato ritrovamento del csv
+    pesi_ideali_globali = np.array([0.458, 0.326, 0.133, 0.055, 0.028])
 
-# Cerca i file FITS
-estensioni_valide = ['*.fit', '*.fits', '*.FIT', '*.FITS']
-file_list = []
-for ext in estensioni_valide:
-    file_list.extend(run_folder.glob(ext))
+# inizio il ciclo per ogni run
+for run in RUN:
+    print(f"\n==================== ELABORAZIONE RUN {run} ====================")
 
-file_list = sorted(file_list, key=lambda x: x.name)
-file_list = [str(f) for f in file_list]
+    # --- RICERCA CARTELLE RUN ---
+    nome_cartella_run = f"20250120_run{run}"
+    found_folders = list(BASE_DIR.rglob(nome_cartella_run))
 
-if not file_list:
-    print(f"ERRORE: Nessun file FITS trovato in {run_folder}")
-    exit()
-
-print(f"Trovati {len(file_list)} file da elaborare.")
-
-# =============================================================================
-# FINE RICERCA FILE
-# =============================================================================
-
-
-# --- GESTIONE DINAMICA CARTELLA OUTPUT ---
-cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR, "tabelle")
-if cartella_tabelle is None:
-    # Crea se non esiste in base_dir
-    cartella_tabelle = BASE_DIR / "tabelle"
-    cartella_tabelle.mkdir(exist_ok=True)
-
-# Crea sottocartella specifica
-output_dir = cartella_tabelle / "sorgenti_catalogate_run" / f"sorgenti_catalogate_run_{run}"
-output_dir.mkdir(parents=True, exist_ok=True)
-output_dir_str = str(output_dir)
-
-print(f"Cartella Output: {output_dir.relative_to(BASE_DIR)}")
-
-i = 0
-j = 0
-posizioni_lista = []  # lista che dovrà essere riempita con tutte le poszioni di tutte le tabelle
-distanze = []
-numero_stelle_catalogate = []
-tempo = []
-
-# inizializzo le variabili dei cataloghi puliti fuori dal ciclo
-tbl_vizier_cut = None
-tbl_hipparco_run_clean = None
-
-# Itera su tutti i file fits
-for percorso_file_fits in file_list:
-    i += 1
-    # Check esistenza file
-    if not os.path.exists(percorso_file_fits):
-        print(f"AVVISO: File non trovato, salto: {percorso_file_fits}")
+    if not found_folders:
+        print(
+            f"AVVISO: Cartella '{nome_cartella_run}' non trovata in nessuna sottocartella di {BASE_DIR}. Salto la run.")
         continue
 
-    hdu_list = fits.open(percorso_file_fits)
-    image_header = hdu_list[0].header
+    run_folder = found_folders[0]
+    if len(found_folders) > 1:
+        print(f"AVVISO: Trovate {len(found_folders)} cartelle. Uso la prima: {run_folder}")
+    else:
+        print(f"Cartella dati trovata: {run_folder.relative_to(BASE_DIR)}")
 
-    if i == 1:  # chiamo il sito una volta sola su un'immagine più grande per non mandarlo in down
+    # cerco i file FITS
+    estensioni_valide = ['*.fit', '*.fits', '*.FIT', '*.FITS']
+    file_list = []
+    for ext in estensioni_valide:
+        file_list.extend(run_folder.glob(ext))
 
-        # coordinate centro
-        ra_centro = image_header["RA"]
-        dec_centro = image_header["DEC"]
-        data = hdu_list[0].data
+    file_list = sorted(file_list, key=lambda x: x.name)
+    file_list = [str(f) for f in file_list]
 
-        w = WCS(hdu_list[0].header)  # creo un oggetto WCS usando l'header del file FITS
-        alto_destra = w.pixel_to_world(3071, 2047)
-        alto_sinistra = w.pixel_to_world(3071, 0)
-        basso_sinistra = w.pixel_to_world(0, 0)
-        basso_destra = w.pixel_to_world(0, 2047)
+    if not file_list:
+        print(f"AVVISO: Nessun file FITS trovato in {run_folder}. Salto la run.")
+        continue
 
-        centro = SkyCoord(ra_centro, dec_centro, unit=u.deg)
+    print(f"Trovati {len(file_list)} file da elaborare.")
 
-        # creo un riquadro esterno leggermente più grande
-        raggio_ricerca = Angle(centro.separation(alto_destra) * 1.5, "deg")
-        riquadro_esterno_vizier = vizier.query_region(coord.SkyCoord(ra=ra_centro, dec=dec_centro,
-                                                                     unit=(u.deg, u.deg),
-                                                                     frame='icrs'),
-                                                      radius=raggio_ricerca,
-                                                      column_filters={'gmag': f'<{15}'},
-                                                      )  # ho messo un limite di magnitudine per non scaricare milioni di stelle
-        tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+    # --- GESTIONE DINAMICA CARTELLA OUTPUT ---
+    cartella_tabelle = cerca_cartella_nel_progetto(BASE_DIR, "tabelle")
+    if cartella_tabelle is None:
+        # creo se non esiste in base_dir
+        cartella_tabelle = BASE_DIR / "tabelle"
+        cartella_tabelle.mkdir(exist_ok=True)
 
-        # --- RICERCA DINAMICA HIPPARCO TRAMITE VIZIER ---
-        print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
-        vizier_hip = Vizier(
-            catalog="I/239/hip_main",
-            # estraggo le coordinate ICRS all'epoca J2000 esatte pre-calcolate da VizieR
-            columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],
-            row_limit=-1
-        )
-        risultato_hip = vizier_hip.query_constraints(Vmag="<16")
-        tbl_catalogo_hipparco = risultato_hip[0]
+    # creo sottocartella specifica per la run corrente
+    output_dir = cartella_tabelle / "sorgenti_catalogate_run" / f"sorgenti_catalogate_run_{run}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir_str = str(output_dir)
 
-        # rinomino le mie colonne ICRS J2000 per mantenere la compatibilità col resto dello script
-        if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
-            tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
-            tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
+    print(f"Cartella Output: {output_dir.relative_to(BASE_DIR)}")
 
-        print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
+    i = 0
+    j = 0
+    posizioni_lista = []  # lista che dovrà essere riempita con tutte le poszioni di tutte le tabelle
+    distanze = []
+    numero_stelle_catalogate = []
+    tempo = []
 
-        # imposto la mia soglia fissa a 2.5 arcosecondi
-        exclusion_radii_deg = np.full(len(tbl_catalogo_hipparco), 2.5 / 3600.0)
+    # inizializzo le variabili dei cataloghi puliti fuori dal ciclo per la run
+    tbl_vizier_cut = None
+    tbl_hipparco_run_clean = None
 
-        # creo l'oggetto SkyCoord globale per Hipparcos
-        coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],
-                                          dec=tbl_catalogo_hipparco['_DEJ2000'],
-                                          unit=u.deg)
+    # itero su tutti i file fits
+    for percorso_file_fits in file_list:
+        i += 1
+        # controllo l'esistenza del file
+        if not os.path.exists(percorso_file_fits):
+            print(f"AVVISO: File non trovato, salto: {percorso_file_fits}")
+            continue
 
-        # filtro spazialmente Hipparcos per la run corrente
-        distanze_hip = centro.separation(coords_hipparco_global)
-        mask_hip_fov = distanze_hip < raggio_ricerca
+        hdu_list = fits.open(percorso_file_fits)
+        image_header = hdu_list[0].header
 
-        tbl_hipparco_run_subset = tbl_catalogo_hipparco[mask_hip_fov]
-        coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
-        exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
+        if i == 1:  # chiamo il sito una volta sola su un'immagine più grande per non mandarlo in down
 
-        # =================================================================
-        # --- FILTRAGGIO COMPETITIVO A SINGOLA FASE ---
-        # =================================================================
-        print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
+            # coordinate centro
+            ra_centro = image_header["RA"]
+            dec_centro = image_header["DEC"]
+            data = hdu_list[0].data
 
-        # preparo le coordinate Vizier
-        coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
-                                 dec=tbl_riquadro_esterno_vizier['DEJ2000'],
-                                 unit=u.deg)
+            w = WCS(hdu_list[0].header)  # creo un oggetto WCS usando l'header del file FITS
+            alto_destra = w.pixel_to_world(3071, 2047)
+            alto_sinistra = w.pixel_to_world(3071, 0)
+            basso_sinistra = w.pixel_to_world(0, 0)
+            basso_destra = w.pixel_to_world(0, 2047)
 
-        # ricavo il limite massimo di ricerca per coprire tutte le tolleranze
-        max_threshold_deg = np.max(exclusion_radii_run_subset)
-        seplimit = max_threshold_deg * u.deg
+            centro = SkyCoord(ra_centro, dec_centro, unit=u.deg)
 
-        # cerco tutte le stelle Vizier attorno a ogni stella Hipparcos
-        idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
+            # creo un riquadro esterno leggermente più grande
+            raggio_ricerca = Angle(centro.separation(alto_destra) * 1.5, "deg")
+            riquadro_esterno_vizier = vizier.query_region(coord.SkyCoord(ra=ra_centro, dec=dec_centro,
+                                                                         unit=(u.deg, u.deg),
+                                                                         frame='icrs'),
+                                                          radius=raggio_ricerca,
+                                                          column_filters={'rmag': f'<{15}'},
+                                                          )  # ho messo un limite di magnitudine per non scaricare milioni di stelle
+            tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
 
-        # implemento un controllo di sicurezza per aggirare l'inversione degli indici di astropy
-        if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
-            idx_viz_1, idx_hip_1 = idx_A, idx_B
-        else:
-            idx_hip_1, idx_viz_1 = idx_A, idx_B
+            # calcolo la magnitudine sintetica combinata per tutto il riquadro
+            bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
 
-        # applico la mia tolleranza dinamica esatta
-        mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
+            # recupero i pesi precedentemente calcolati in modo efficiente
+            pesi_ideali = pesi_ideali_globali
 
-        # filtro gli indici per tenere solo quelli entro la tolleranza
-        idx_hip_valid = idx_hip_1[mask_threshold]
-        idx_viz_valid = idx_viz_1[mask_threshold]
+            flussi = []
+            maschere_valide = []
 
-        # genero le maschere di mantenimento inizializzate a True
-        mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
-        mask_keep_vizier = np.ones(len(tbl_riquadro_esterno_vizier), dtype=bool)
+            for banda in bande:
+                colonna = tbl_riquadro_esterno_vizier[banda]
+                array_dati = colonna.filled(np.nan) if hasattr(colonna, 'filled') else np.array(colonna)
+                flusso = 10 ** (-0.4 * array_dati)
+                flussi.append(flusso)
+                maschere_valide.append(~np.isnan(flusso))
 
-        # estraggo gli indici univoci di Hipparcos che hanno almeno un match
-        unique_hip_idx = np.unique(idx_hip_valid)
+            flussi = np.array(flussi)
+            maschere_valide = np.array(maschere_valide)
+            array_pesi = pesi_ideali[:, None]
 
-        # --- TRUCCO DI VELOCIZZAZIONE ---
-        # estraggo le magnitudini in array numpy puri prima del ciclo per evitare l'overhead di Astropy
-        array_mag_vizier = np.nan_to_num(tbl_riquadro_esterno_vizier['gmag'].data, nan=99.0)
-        array_mag_hipparco = np.nan_to_num(tbl_hipparco_run_subset['Vmag'].data, nan=99.0)
+            pesi_attivi = array_pesi * maschere_valide
+            somma_pesi = np.sum(pesi_attivi, axis=0)
+            flussi_sicuri = np.nan_to_num(flussi)
+            flusso_pesato_totale = np.sum(flussi_sicuri * pesi_attivi, axis=0)
 
-        # itero su ogni stella Hipparcos coinvolta
-        for i_hip in unique_hip_idx:
-            # trovo gli indici delle stelle Vizier associate a questa specifica stella Hipparcos
-            viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
+            with np.errstate(divide='ignore', invalid='ignore'):
+                flusso_finale = flusso_pesato_totale / somma_pesi
+                mag_sintetica_globale = -2.5 * np.log10(flusso_finale)
 
-            if len(viz_matches) > 0:
-                # pesco le magnitudini in modo ultra-rapido dall'array numpy
-                mag_viz_matches = array_mag_vizier[viz_matches]
+            tbl_riquadro_esterno_vizier['Mag_sintetica'] = mag_sintetica_globale
 
-                # individuo la stella Vizier più luminosa (valore di magnitudine minore)
-                idx_min_mag = np.argmin(mag_viz_matches)
-                best_viz_idx = viz_matches[idx_min_mag]
-                best_viz_mag = mag_viz_matches[idx_min_mag]
+            # --- RICERCA DINAMICA HIPPARCO TRAMITE VIZIER ---
+            print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
+            vizier_hip = Vizier(
+                catalog="I/239/hip_main",
+                # estraggo le coordinate ICRS all'epoca J2000 esatte pre-calcolate da VizieR
+                columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],
+                row_limit=-1
+            )
+            risultato_hip = vizier_hip.query_constraints(Vmag="<16")
+            tbl_catalogo_hipparco = risultato_hip[0]
 
-                # pesco la magnitudine della stella Hipparcos in esame dall'array
-                hip_mag = array_mag_hipparco[i_hip]
+            # rinomino le mie colonne ICRS J2000 per mantenere la compatibilità col resto dello script
+            if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
+                tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
+                tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
 
-                # confronto e scarto solo la seconda più luminosa tra le due
-                if best_viz_mag <= hip_mag:
-                    # Vizier è più luminosa (o uguale), scarto la stella Hipparcos
-                    mask_keep_hipparco[i_hip] = False
-                else:
-                    # Hipparcos è più luminosa, scarto la Vizier più luminosa
-                    mask_keep_vizier[best_viz_idx] = False
+            print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
 
-        mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
+            # imposto la mia soglia fissa a 2.5 arcosecondi
+            exclusion_radii_deg = np.full(len(tbl_catalogo_hipparco), 2.5 / 3600.0)
 
-        # uso copy() per svincolare i dati
-        tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco].copy()
-        tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
+            # creo l'oggetto SkyCoord globale per Hipparcos
+            coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],
+                                              dec=tbl_catalogo_hipparco['_DEJ2000'],
+                                              unit=u.deg)
 
-        # applico il filtro magnitudine massima
-        mag_max = 15
-        tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[
-            tbl_riquadro_esterno_vizier_CLEAN['gmag'] < mag_max].copy()
+            # filtro spazialmente Hipparcos per la run corrente
+            distanze_hip = centro.separation(coords_hipparco_global)
+            mask_hip_fov = distanze_hip < raggio_ricerca
 
-        # --- UNIFICAZIONE MAGNITUDINI ---
-        # ridefinisco la mia colonna Mag per Pan-STARRS unendo gmag e rmag nel sistema visibile di Johnson
-        colore_g_r = tbl_vizier_cut['gmag'] - tbl_vizier_cut['rmag']
-        tbl_vizier_cut['Mag'] = tbl_vizier_cut['gmag'] - 0.587 * colore_g_r - 0.011
+            tbl_hipparco_run_subset = tbl_catalogo_hipparco[mask_hip_fov]
+            coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
+            exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
 
-        # ridefinisco la mia colonna Mag per Hipparcos usando direttamente la Vmag
-        tbl_hipparco_run_clean['Mag'] = tbl_hipparco_run_clean['Vmag']
+            # =================================================================
+            # --- FILTRAGGIO COMPETITIVO A SINGOLA FASE (AGGIUNTO) ---
+            # =================================================================
+            print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
 
-        print("-----------------------------")
+            # preparo le coordinate Vizier
+            coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
+                                     dec=tbl_riquadro_esterno_vizier['DEJ2000'],
+                                     unit=u.deg)
 
-    print(f"Elaborando {percorso_file_fits}")
-    print("\n")
+            # ricavo il limite massimo di ricerca per coprire tutte le tolleranze
+            max_threshold_deg = np.max(exclusion_radii_run_subset)
+            seplimit = max_threshold_deg * u.deg
 
-    tbl_catalogate = tabella_catalogo(percorso_file_fits, tbl_vizier_cut, tbl_hipparco_run_clean)
+            # cerco tutte le stelle Vizier attorno a ogni stella Hipparcos
+            idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
 
-    numero_stelle_catalogate.append(len(tbl_catalogate))
-    print(f"Trovate {len(tbl_catalogate)} stelle dei cataloghi nel riquadro {i}")
+            # implemento un controllo di sicurezza per aggirare l'inversione degli indici di astropy
+            if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
+                idx_viz_1, idx_hip_1 = idx_A, idx_B
+            else:
+                idx_hip_1, idx_viz_1 = idx_A, idx_B
 
-    # creo i file csv
-    dataframe = tbl_catalogate.to_pandas()
-    # Uso output_dir (Path object)
-    filename = output_dir / f'run_{run}_stelle_catalogate_immagine_{i:03d}.csv'
-    salva_csv_con_header_fits(dataframe, image_header, str(filename), percorso_file_fits)
+            # applico la mia tolleranza dinamica esatta
+            mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
 
-    # if i == 10: break
+            # filtro gli indici per tenere solo quelli entro la tolleranza
+            idx_hip_valid = idx_hip_1[mask_threshold]
+            idx_viz_valid = idx_viz_1[mask_threshold]
+
+            # genero le maschere di mantenimento inizializzate a True
+            mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
+            mask_keep_vizier = np.ones(len(tbl_riquadro_esterno_vizier), dtype=bool)
+
+            # estraggo gli indici univoci di Hipparcos che hanno almeno un match
+            unique_hip_idx = np.unique(idx_hip_valid)
+
+            # --- TRUCCO DI VELOCIZZAZIONE ---
+            # estraggo le magnitudini in array numpy puri prima del ciclo per evitare l'overhead di Astropy
+            array_mag_vizier = np.nan_to_num(tbl_riquadro_esterno_vizier['Mag_sintetica'].data, nan=99.0)
+            array_mag_hipparco = np.nan_to_num(tbl_hipparco_run_subset['Vmag'].data, nan=99.0)
+
+            # itero su ogni stella Hipparcos coinvolta
+            for i_hip in unique_hip_idx:
+                # trovo gli indici delle stelle Vizier associate a questa specifica stella Hipparcos
+                viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
+
+                if len(viz_matches) > 0:
+                    # pesco le magnitudini in modo ultra-rapido dall'array numpy
+                    mag_viz_matches = array_mag_vizier[viz_matches]
+
+                    # individuo la stella Vizier più luminosa (valore di magnitudine minore)
+                    idx_min_mag = np.argmin(mag_viz_matches)
+                    best_viz_idx = viz_matches[idx_min_mag]
+                    best_viz_mag = mag_viz_matches[idx_min_mag]
+
+                    # pesco la magnitudine della stella Hipparcos in esame dall'array
+                    hip_mag = array_mag_hipparco[i_hip]
+
+                    # confronto e scarto solo la seconda più luminosa tra le due
+                    if best_viz_mag <= hip_mag:
+                        # Vizier è più luminosa (o uguale), scarto la stella Hipparcos
+                        mask_keep_hipparco[i_hip] = False
+                    else:
+                        # Hipparcos è più luminosa, scarto la Vizier più luminosa
+                        mask_keep_vizier[best_viz_idx] = False
+
+            mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
+
+            # uso copy() per svincolare i dati
+            tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco].copy()
+            tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
+
+            # calcolo la mia magnitudine sintetica finale
+            mag_max = 15
+            with np.errstate(invalid='ignore'):
+                mask_taglio = tbl_riquadro_esterno_vizier_CLEAN['Mag_sintetica'] < mag_max
+            tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[mask_taglio].copy()
+
+            # --- UNIFICAZIONE MAGNITUDINI ---
+            # ridefinisco la mia colonna Mag per Pan-STARRS usando la magnitudine sintetica
+            tbl_vizier_cut['Mag'] = tbl_vizier_cut['Mag_sintetica']
+
+            # ridefinisco la mia colonna Mag per Hipparcos usando direttamente la Vmag
+            tbl_hipparco_run_clean['Mag'] = tbl_hipparco_run_clean['Vmag']
+
+            print("-----------------------------")
+
+        print(f"Elaborando {percorso_file_fits}")
+        print("\n")
+
+        tbl_catalogate = tabella_catalogo(percorso_file_fits, tbl_vizier_cut, tbl_hipparco_run_clean)
+
+        numero_stelle_catalogate.append(len(tbl_catalogate))
+        print(f"Trovate {len(tbl_catalogate)} stelle dei cataloghi nel riquadro {i}")
+
+        # creo i file csv
+        dataframe = tbl_catalogate.to_pandas()
+        # uso output_dir (Path object)
+        filename = output_dir / f'run_{run}_stelle_catalogate_immagine_{i:03d}.csv'
+        salva_csv_con_header_fits(dataframe, image_header, str(filename), percorso_file_fits)
+
+        # if i == 10: break

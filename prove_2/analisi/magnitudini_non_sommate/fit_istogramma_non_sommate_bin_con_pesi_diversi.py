@@ -86,8 +86,6 @@ for run in RUN_TO_ANALYZE:
                 'label', 'ID', 'Corrispondenza', 'Mag', 'saturazione',
                 'media_flusso_fisso_max_run', 'std_flusso_fisso_max_run',
                 'media_flusso_raggio_fisso_doppio', 'std_flusso_raggio_fisso_doppio',
-                'media_flusso_intera_segmentazione', 'std_flusso_intera_segmentazione',
-                'media_flusso_kron_intera_segmentazione', 'std_flusso_kron_intera_segmentazione'
             ]
 
             df_temp = pd.read_csv(f, comment='#', usecols=lambda c: c in cols_needed)
@@ -129,12 +127,8 @@ mask_valid = (
         (df_fit_potential['media_flusso_fisso_max_run'] > 0) &
         (df_fit_potential['media_flusso_fisso_max_run'] > 0) &
         (df_fit_potential['media_flusso_raggio_fisso_doppio'] > 0) &
-        (df_fit_potential['media_flusso_intera_segmentazione'] > 0) &
-        (df_fit_potential['media_flusso_kron_intera_segmentazione'] > 0) &
         (df_fit_potential['std_flusso_fisso_max_run'] > 0) &
         (df_fit_potential['std_flusso_raggio_fisso_doppio'] > 0) &
-        (df_fit_potential['std_flusso_intera_segmentazione'] > 0) &
-        (df_fit_potential['std_flusso_kron_intera_segmentazione'] > 0) &
         (df_fit_potential['std_flusso_fisso_max_run'] > 0)
 )
 df_fit_valid = df_fit_potential[mask_valid].copy()

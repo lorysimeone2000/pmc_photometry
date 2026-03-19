@@ -9,6 +9,7 @@ from photutils.aperture import aperture_photometry, CircularAperture
 import numpy as np
 import os
 import sys
+import gc
 from tqdm import tqdm
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
@@ -38,6 +39,7 @@ from astropy.coordinates import Angle
 from shapely.geometry import Point, Polygon
 from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyUserWarning
+import re
 
 # --- IMPORT FONDAMENTALE PER LA PORTABILITÀ ---
 from pathlib import Path
@@ -52,10 +54,12 @@ from datetime import timedelta
 from scipy.spatial import cKDTree
 
 # --- GESTIONE WARNING ---
+# ignoro i warning per mantenere pulito l'output
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', message='.*failed to converge.*', category=UserWarning)
 warnings.simplefilter('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', category=VerifyWarning)
+warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
 
 
 # =============================================================================
@@ -95,9 +99,10 @@ lat_oss, lon_oss, alt_oss = ottieni_coordinate_telescopio('ASTRI 1', BASE_DIR / 
 # creo l'oggetto geografico wgs84
 osservatorio = wgs84.latlon(lat_oss, lon_oss, elevation_m=alt_oss)
 
+# uso il mirror di Harvard scaricando le 5 bande fondamentali per simulare il sensore FLIR
 vizier = Vizier(
     catalog="II/389/ps1_dr2",
-    columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag'],
+    columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag', 'imag', 'zmag', 'ymag'],
     row_limit=-1
 )
 
@@ -124,20 +129,20 @@ if __name__ == "__main__":
     tbl_catalogo_hipparco = Table(hdu_list_hipparco[1].data)
     hdu_list_hipparco.close()
 
-    # Calcolo gli errori propagati al J2000
+    # calcolo gli errori propagati al J2000
     dt = 2000.0 - 1991.25
     sigma_ra_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco['e_RAICRS']) ** 2 + (
             dt * np.nan_to_num(tbl_catalogo_hipparco['e_pmRA'])) ** 2) / 3600000.0
     sigma_dec_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco['e_DEICRS']) ** 2 + (
             dt * np.nan_to_num(tbl_catalogo_hipparco['e_pmDE'])) ** 2) / 3600000.0
 
-    # Errore radiale totale Hipparcos
+    # errore radiale totale Hipparcos
     sigma_hip_deg = np.sqrt(sigma_ra_deg ** 2 + sigma_dec_deg ** 2)
 
-    # Errore stimato Vizier
+    # errore stimato Vizier
     sigma_vizier_deg = 0.1 / 3600.0
 
-    # Sommo in quadratura i due cataloghi
+    # sommo in quadratura i due cataloghi
     sigma_totale_deg = np.sqrt(sigma_hip_deg ** 2 + sigma_vizier_deg ** 2)
 
     # 3-SIGMA
@@ -146,10 +151,54 @@ if __name__ == "__main__":
 
     print(f"Raggio di merging tra i cataloghi: {np.mean(exclusion_radii_deg)}")
 
-    # Creo lo SkyCoord Hipparcos
+    # creo lo SkyCoord Hipparcos
     coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],
                                       dec=tbl_catalogo_hipparco['_DEJ2000'],
                                       unit=u.deg)
+
+    # cerco il file contenente la curva di efficienza quantica per calcolare i pesi esatti
+    file_curva_pmc = cerca_file_nel_progetto(BASE_DIR, "curva_PMC.csv")
+    if file_curva_pmc is not None:
+        # leggo il dataframe della curva
+        df_curva = pd.read_csv(file_curva_pmc)
+
+        # stabilisco i limiti di lunghezza d'onda delle singole bande
+        limiti_bande = {
+            'gmag': (400, 550),
+            'rmag': (550, 700),
+            'imag': (680, 840),
+            'zmag': (820, 920),
+            'ymag': (920, 1050)
+        }
+
+        pesi_estratti = []
+
+        # itero sulle bande per calcolare l'area sottesa alla curva per ciascun range
+        for nome_banda, (w_min, w_max) in limiti_bande.items():
+            # applico la maschera di taglio per l'intervallo corrente
+            maschera_w = (df_curva['Wavelength'] >= w_min) & (df_curva['Wavelength'] <= w_max)
+            # calcolo l'integrale tramite il metodo dei trapezi per estrarre la porzione di efficienza
+            area = np.trapz(df_curva['QE'][maschera_w], x=df_curva['Wavelength'][maschera_w])
+            pesi_estratti.append(area)
+
+        # converto in array e normalizzo in modo che la somma finale sia pari a 1
+        pesi_estratti = np.array(pesi_estratti)
+        pesi_ideali_globali = pesi_estratti / np.sum(pesi_estratti)
+    else:
+        # imposto i pesi standard in caso di mancato ritrovamento del csv
+        pesi_ideali_globali = np.array([0.458, 0.326, 0.133, 0.055, 0.028])
+
+    file_somma_pixel = cerca_file_nel_progetto(BASE_DIR, "risultati_somma_pixel.csv")
+    if file_somma_pixel:
+        df_somma_pixel = pd.read_csv(file_somma_pixel)
+        s_ref_df = df_somma_pixel[(df_somma_pixel['Run'] == 1) & (df_somma_pixel['im'] == 35)]
+        if not s_ref_df.empty:
+            s_ref = s_ref_df['Somma_Pixel_Esterni'].values[0]
+        else:
+            s_ref = 1.0
+    else:
+        df_somma_pixel = None
+        s_ref = 1.0
 
     tutti_i_file_csv_generati = []
     tuo_user = "lorenzo.simeone@studenti.unipg.it"
@@ -225,6 +274,7 @@ if __name__ == "__main__":
             output_dir.mkdir(parents=True, exist_ok=True)
 
             print(f"Cartella di output: {output_dir}")
+            file_csv_generati_nella_run = []
 
             # --- FASE 1: CREAZIONE TABELLE UNITE ---
             print(f"--- FASE 1: Segmentazione & Unione ({len(file_list)} files) ---")
@@ -244,10 +294,40 @@ if __name__ == "__main__":
 
                     riquadro_esterno_vizier = vizier.query_region(
                         coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
-                        radius=raggio_ricerca,
-                        column_filters={'gmag': f'<{15}'}
+                        radius=raggio_ricerca
                     )
                     tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+
+                    # CALCOLO MAGNITUDINE SINTETICA FLIR
+                    bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
+
+                    # recupero i pesi precedentemente calcolati in modo efficiente
+                    pesi_ideali = pesi_ideali_globali
+
+                    flussi = []
+                    maschere_valide = []
+
+                    for banda in bande:
+                        colonna = tbl_riquadro_esterno_vizier[banda]
+                        array_dati = colonna.filled(np.nan) if hasattr(colonna, 'filled') else np.array(colonna)
+                        flusso = 10 ** (-0.4 * array_dati)
+                        flussi.append(flusso)
+                        maschere_valide.append(~np.isnan(flusso))
+
+                    flussi = np.array(flussi)
+                    maschere_valide = np.array(maschere_valide)
+                    array_pesi = pesi_ideali[:, None]
+
+                    pesi_attivi = array_pesi * maschere_valide
+                    somma_pesi = np.sum(pesi_attivi, axis=0)
+                    flussi_sicuri = np.nan_to_num(flussi)
+                    flusso_pesato_totale = np.sum(flussi_sicuri * pesi_attivi, axis=0)
+
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        flusso_finale = flusso_pesato_totale / somma_pesi
+                        mag_sintetica_globale = -2.5 * np.log10(flusso_finale)
+
+                    tbl_riquadro_esterno_vizier['Mag_sintetica'] = mag_sintetica_globale
 
                     distanze_hip = centro.separation(coords_hipparco_global)
 
@@ -290,7 +370,8 @@ if __name__ == "__main__":
                         viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
 
                         if len(viz_matches) > 0:
-                            mag_viz_matches = np.nan_to_num(tbl_riquadro_esterno_vizier['gmag'][viz_matches], nan=99.0)
+                            mag_viz_matches = np.nan_to_num(tbl_riquadro_esterno_vizier['Mag_sintetica'][viz_matches],
+                                                            nan=99.0)
 
                             idx_min_mag = np.argmin(mag_viz_matches)
                             best_viz_idx = viz_matches[idx_min_mag]
@@ -311,11 +392,15 @@ if __name__ == "__main__":
 
                     mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
 
-                    tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco]
+                    tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco].copy()
                     tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
 
-                    tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[
-                        tbl_riquadro_esterno_vizier_CLEAN['gmag'] < magnitudine_massima]
+                    with np.errstate(invalid='ignore'):
+                        mask_taglio = tbl_riquadro_esterno_vizier_CLEAN['Mag_sintetica'] < magnitudine_massima
+                    tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[mask_taglio].copy()
+
+                tbl_vizier_cut['Mag'] = tbl_vizier_cut['Mag_sintetica']
+                tbl_hipparco_run_clean['Mag'] = tbl_hipparco_run_clean['Vmag']
 
                 tbl_catalogate = tabella_catalogo(percorso_file, tbl_vizier_cut, tbl_hipparco_run_clean)
                 tbl_trovate, _ = analisi_image_segmentation(percorso_file, parametri_caricati)
@@ -397,7 +482,7 @@ if __name__ == "__main__":
                             tolleranza_satellite = 3 / 60 * u.deg
                             mask_is_satellite = d2d_sat < tolleranza_satellite
 
-                            # Elimino i falsi positivi causati dai satelliti
+                            # elimino i falsi positivi causati dai satelliti
                             contatore_satelliti = contatore_satelliti + np.sum(mask_is_satellite)
                             contatore_satelliti_presenti = contatore_satelliti_presenti + len(catalogo_satelliti)'''
 
@@ -500,6 +585,7 @@ if __name__ == "__main__":
 
             for f in file_csv_list:
                 tutti_i_file_csv_generati.append((f, run_name))
+                file_csv_generati_nella_run.append((f, run_name))
 
             all_ids = []
             all_radii = []
@@ -563,43 +649,322 @@ if __name__ == "__main__":
                     _, median_bg, _ = sigma_clipped_stats(data_fits[::10, ::10], sigma=3.0)
                     data_sub = data_fits - median_bg
 
+                img_idx = df_frame['img_index'].iloc[0] if 'img_index' in df_frame.columns else int(
+                    nome_fits.split('.')[0][-3:])
+
+                # estraggo il numero della run dalla stringa per i calcoli dei pixel
+                match_run = re.search(r'run_?(\d+)', run_name, re.IGNORECASE)
+                run_idx = int(match_run.group(1)) if match_run else 1
+
+                fondo_pp = 0.0
+                if df_somma_pixel is not None:
+                    s_t_df = df_somma_pixel[(df_somma_pixel['Run'] == run_idx) & (df_somma_pixel['im'] == img_idx)]
+                    if not s_t_df.empty:
+                        s_t = s_t_df['Somma_Pixel_Esterni'].values[0]
+                        if 'fondo_per_pixel' in s_t_df.columns:
+                            fondo_pp = s_t_df['fondo_per_pixel'].values[0]
+                    else:
+                        s_t = s_ref
+                else:
+                    s_t = s_ref
+
+                n_tot = data_sub.size
+                molt_corr = s_ref / s_t if s_t != 0 else 1.0
+                diff_s = s_ref - s_t
+
+                if 'kron_manuale_aper' in df_frame.columns and 'raggio_kron_aper' in df_frame.columns:
+                    df_frame['kron_manuale_aper_CORRETTO_Normalizzazione_Moltiplicativa'] = pd.to_numeric(
+                        df_frame['kron_manuale_aper'], errors='coerce') * molt_corr
+                    df_frame['kron_manuale_aper_CORRETTO_Correzione_Additiva_dell_Apertura'] = pd.to_numeric(
+                        df_frame['kron_manuale_aper'], errors='coerce') + (np.pi * pd.to_numeric(
+                        df_frame['raggio_kron_aper'], errors='coerce') ** 2 / n_tot) * diff_s
+
+                if 'kron_manuale_seg' in df_frame.columns:
+                    df_frame['kron_manuale_seg_CORRETTO_Normalizzazione_Moltiplicativa'] = pd.to_numeric(
+                        df_frame['kron_manuale_seg'], errors='coerce') * molt_corr
+
+                if 'somma_apertura_ultimo_pixel' in df_frame.columns:
+                    df_frame['somma_apertura_ultimo_pixel_CORRETTO_Normalizzazione_Moltiplicativa'] = pd.to_numeric(
+                        df_frame['somma_apertura_ultimo_pixel'], errors='coerce') * molt_corr
+
                 raggi_fissi = []
                 ids_presenti = df_frame['ID'].values
+
                 flussi_calcolati = []
+                flussi_calcolati_molt = []
+                flussi_calcolati_add = []
+                flussi_calcolati_fondo_sottratto = []
+
+                flussi_doppi = []
+                flussi_doppi_molt = []
+                flussi_doppi_add = []
+                flussi_doppi_fondo_sottratto = []
+
+                flussi_kron_manuale_aper_fondo_sottratto = []
 
                 for idx_star, star_id in enumerate(ids_presenti):
                     r_globale = map_raggi_max.get(star_id, np.nan)
+
                     if np.isnan(r_globale) or r_globale <= 0:
                         if 'raggio_kron_aper' in df_frame.columns:
                             r_globale = df_frame.at[idx_star, 'raggio_kron_aper']
                         else:
                             r_globale = np.nan
+
                     raggi_fissi.append(r_globale)
 
+                    pos = (df_frame.at[idx_star, 'xcentroid'], df_frame.at[idx_star, 'ycentroid'])
+
                     if r_globale > 0 and not np.isnan(r_globale):
-                        pos = (df_frame.at[idx_star, 'xcentroid'], df_frame.at[idx_star, 'ycentroid'])
                         aper = CircularAperture(pos, r=r_globale)
                         phot = aperture_photometry(data_sub, aper)
-                        flussi_calcolati.append(phot['aperture_sum'][0])
+                        fl_calcolato = phot['aperture_sum'][0]
+                        flussi_calcolati.append(fl_calcolato)
+
+                        flussi_calcolati_molt.append(fl_calcolato * molt_corr)
+                        flussi_calcolati_add.append(fl_calcolato + (np.pi * r_globale ** 2 / n_tot) * diff_s)
+                        fl_sottratto = fl_calcolato - (fondo_pp * aper.area)
+                        flussi_calcolati_fondo_sottratto.append(fl_sottratto)
+
+                        r_doppio = r_globale * 2
+                        aper_doppia = CircularAperture(pos, r=r_doppio)
+                        phot_doppia = aperture_photometry(data_sub, aper_doppia)
+                        fl_doppio = phot_doppia['aperture_sum'][0]
+                        flussi_doppi.append(fl_doppio)
+
+                        flussi_doppi_molt.append(fl_doppio * molt_corr)
+                        flussi_doppi_add.append(fl_doppio + (np.pi * r_doppio ** 2 / n_tot) * diff_s)
+                        fl_doppio_sottratto = fl_doppio - (fondo_pp * aper_doppia.area)
+                        flussi_doppi_fondo_sottratto.append(fl_doppio_sottratto)
                     else:
                         flussi_calcolati.append(np.nan)
+                        flussi_calcolati_molt.append(np.nan)
+                        flussi_calcolati_add.append(np.nan)
+                        flussi_calcolati_fondo_sottratto.append(np.nan)
 
-                df_frame['flusso_fisso_max_run'] = flussi_calcolati
+                        flussi_doppi.append(np.nan)
+                        flussi_doppi_molt.append(np.nan)
+                        flussi_doppi_add.append(np.nan)
+                        flussi_doppi_fondo_sottratto.append(np.nan)
+
+                    if 'kron_manuale_aper' in df_frame.columns and 'raggio_kron_aper' in df_frame.columns:
+                        r_kron_man = pd.to_numeric(df_frame.at[idx_star, 'raggio_kron_aper'], errors='coerce')
+                        fl_kron_man = pd.to_numeric(df_frame.at[idx_star, 'kron_manuale_aper'], errors='coerce')
+                        if pd.notnull(r_kron_man) and r_kron_man > 0 and pd.notnull(fl_kron_man):
+                            fl_kron_man_sottr = fl_kron_man - (fondo_pp * (np.pi * r_kron_man ** 2))
+                            flussi_kron_manuale_aper_fondo_sottratto.append(fl_kron_man_sottr)
+                        else:
+                            flussi_kron_manuale_aper_fondo_sottratto.append(np.nan)
+
                 df_frame['raggio_fisso_max_run'] = raggi_fissi
 
-                df_frame['flusso_fisso_max_run'] = df_frame['flusso_fisso_max_run'].map(
-                    lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
-                df_frame['raggio_fisso_max_run'] = df_frame['raggio_fisso_max_run'].map(
-                    lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
+                df_frame['flusso_fisso_max_run'] = flussi_calcolati
+                df_frame['flusso_fisso_max_run_CORRETTO_Normalizzazione_Moltiplicativa'] = flussi_calcolati_molt
+                df_frame['flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura'] = flussi_calcolati_add
+                df_frame['flusso_fisso_max_run_FONDO_SOTTRATTO'] = flussi_calcolati_fondo_sottratto
 
-                if 'label' in df_frame.columns: df_frame.sort_values(by=['label', 'Corrispondenza'], inplace=True)
+                df_frame['flusso_raggio_fisso_doppio'] = flussi_doppi
+                df_frame['flusso_raggio_fisso_doppio_CORRETTO_Normalizzazione_Moltiplicativa'] = flussi_doppi_molt
+                df_frame['flusso_raggio_fisso_doppio_CORRETTO_Correzione_Additiva_dell_Apertura'] = flussi_doppi_add
+                df_frame['flusso_raggio_fisso_doppio_FONDO_SOTTRATTO'] = flussi_doppi_fondo_sottratto
+
+                if 'kron_manuale_aper' in df_frame.columns and 'raggio_kron_aper' in df_frame.columns:
+                    df_frame['kron_manuale_aper_FONDO_SOTTRATTO'] = flussi_kron_manuale_aper_fondo_sottratto
+
+                df_frame['fondo_per_pixel'] = fondo_pp
+
+                if 'label' in df_frame.columns:
+                    df_frame.sort_values(by=['label', 'Corrispondenza'], inplace=True)
+
                 salva_csv_con_header_aggiornato(df_frame, header_info, file_csv)
 
+            # =============================================================================
+            # Avvio la fase 4 per calcolare statistiche e decorrelazioni sulla mia run corrente
+            # =============================================================================
+            print(f"\n--- FASE 4: Statistiche Locali e Decorrelazioni per {run_name} ---")
+
+            if not file_csv_generati_nella_run:
+                continue
+
+            lista_df_run = []
+            file_csv_generati_nella_run = sorted(file_csv_generati_nella_run, key=lambda x: str(x[0]))
+
+            for idx_file, (file_csv, run_number_val) in enumerate(
+                    tqdm(file_csv_generati_nella_run, desc="Lettura Dati Run")):
+                df_temp = pd.read_csv(file_csv, comment='#')
+                df_temp['file_index'] = idx_file
+                df_temp['run_number'] = run_number_val
+                df_temp['original_file_path'] = str(file_csv)
+                df_temp['original_idx'] = df_temp.index
+                lista_df_run.append(df_temp)
+
+            run_df = pd.concat(lista_df_run, ignore_index=True)
+            run_df['run_unique_id'] = np.nan
+            run_df['run_unique_id'] = run_df['run_unique_id'].astype(object)
+
+            mask_si = run_df['Corrispondenza'].str.startswith('SI', na=False)
+            run_df.loc[mask_si, 'run_unique_id'] = "CAT_" + run_df.loc[mask_si, 'ID'].astype(str)
+
+            mask_no = run_df['Corrispondenza'] == 'NO'
+            df_no_run = run_df[mask_no].copy()
+            df_no_run.sort_values('file_index', inplace=True)
+
+            known_clusters_coords_run = []
+            known_clusters_ids_run = []
+            threshold_deg_run = 35 / 3600
+            unique_files_run = df_no_run['file_index'].unique()
+
+            # imposto localmente per iterare sui NO
+            next_internal_id_run = 1
+            no_mapping_run = {}
+
+            for f_idx in tqdm(unique_files_run, desc="Matching oggetti NO (Intra-Run)"):
+                subset = df_no_run[df_no_run['file_index'] == f_idx]
+                if subset.empty: continue
+                coords_subset = SkyCoord(ra=subset['RA_centroid'].values * u.deg,
+                                         dec=subset['DEC_centroid'].values * u.deg)
+                indices_subset = subset.index.tolist()
+
+                if not known_clusters_coords_run:
+                    for i, (ra, dec) in enumerate(zip(subset['RA_centroid'], subset['DEC_centroid'])):
+                        cid = f"INT_{next_internal_id_run}"
+                        known_clusters_coords_run.append((ra, dec))
+                        known_clusters_ids_run.append(cid)
+                        no_mapping_run[indices_subset[i]] = cid
+                        next_internal_id_run += 1
+                else:
+                    cluster_sc = SkyCoord(known_clusters_coords_run, unit=u.deg)
+                    idx_cluster, d2d, _ = coords_subset.match_to_catalog_sky(cluster_sc)
+                    for i, (match_idx, dist, ra_curr, dec_curr) in enumerate(
+                            zip(idx_cluster, d2d, subset['RA_centroid'], subset['DEC_centroid'])):
+                        global_idx = indices_subset[i]
+                        if dist.deg <= threshold_deg_run:
+                            no_mapping_run[global_idx] = known_clusters_ids_run[match_idx]
+                            known_clusters_coords_run[match_idx] = (ra_curr, dec_curr)
+                        else:
+                            cid = f"INT_{next_internal_id_run}"
+                            known_clusters_ids_run.append(cid)
+                            known_clusters_coords_run.append((ra_curr, dec_curr))
+                            no_mapping_run[global_idx] = cid
+                            next_internal_id_run += 1
+
+            for idx, uid in no_mapping_run.items(): run_df.at[idx, 'run_unique_id'] = uid
+
+            run_df['da_eliminare_temporale'] = False
+            mask_no_temp = run_df['Corrispondenza'] == 'NO'
+
+            for uid, group in run_df[mask_no_temp].groupby('run_unique_id'):
+                indici_file = group['file_index'].values
+                for idx_row, f_idx in zip(group.index, indici_file):
+                    vicini = [x for x in indici_file if x != f_idx and abs(x - f_idx) <= 2]
+                    if len(vicini) == 0:
+                        run_df.at[idx_row, 'da_eliminare_temporale'] = True
+
+            run_df = run_df[~run_df['da_eliminare_temporale']].drop(columns=['da_eliminare_temporale'])
+
+            conteggi_aggiornati_run = run_df['run_unique_id'].value_counts()
+            id_da_scartare_run = conteggi_aggiornati_run[conteggi_aggiornati_run < 2].index
+
+            mask_da_scartare_rip_run = (run_df['Corrispondenza'] == 'NO') & (
+                run_df['run_unique_id'].isin(id_da_scartare_run))
+            run_df = run_df[~mask_da_scartare_rip_run]
+
+            cols_flux = ['somma_apertura_ultimo_pixel',
+                         'somma_apertura_ultimo_pixel_CORRETTO_Normalizzazione_Moltiplicativa',
+                         'kron_manuale_seg', 'kron_manuale_seg_CORRETTO_Normalizzazione_Moltiplicativa',
+                         'kron_manuale_aper', 'kron_manuale_aper_CORRETTO_Normalizzazione_Moltiplicativa',
+                         'kron_manuale_aper_CORRETTO_Correzione_Additiva_dell_Apertura',
+                         'kron_manuale_aper_FONDO_SOTTRATTO',
+                         'flusso_fisso_max_run', 'flusso_fisso_max_run_CORRETTO_Normalizzazione_Moltiplicativa',
+                         'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura',
+                         'flusso_fisso_max_run_FONDO_SOTTRATTO',
+                         'flusso_raggio_fisso_doppio',
+                         'flusso_raggio_fisso_doppio_CORRETTO_Normalizzazione_Moltiplicativa',
+                         'flusso_raggio_fisso_doppio_CORRETTO_Correzione_Additiva_dell_Apertura',
+                         'flusso_raggio_fisso_doppio_FONDO_SOTTRATTO']
+
+            cols_flux_presenti_run = [c for c in cols_flux if c in run_df.columns]
+            for c in cols_flux_presenti_run: run_df[c] = pd.to_numeric(run_df[c], errors='coerce')
+
+            run_df['fondo_per_pixel'] = pd.to_numeric(run_df.get('fondo_per_pixel', np.nan), errors='coerce')
+            nuovi_flussi_decorrelati = []
+
+            for c in cols_flux_presenti_run:
+                new_col = f"{c}_DECORRELAZIONE_LINEARE"
+                run_df[new_col] = np.nan
+                nuovi_flussi_decorrelati.append(new_col)
+
+                for uid, group in run_df.groupby('run_unique_id'):
+                    idx = group.index
+                    F = group[c].values
+                    B = group['fondo_per_pixel'].values
+                    mask_valid = ~np.isnan(F) & ~np.isnan(B)
+
+                    if np.sum(mask_valid) > 1 and np.std(B[mask_valid]) > 1e-12:
+                        F_v = F[mask_valid]
+                        B_v = B[mask_valid]
+                        m, q = np.polyfit(B_v, F_v, 1)
+                        B_mean = np.mean(B_v)
+                        F_corr = F_v - m * (B_v - B_mean)
+                        run_df.loc[idx[mask_valid], new_col] = F_corr
+                    else:
+                        run_df.loc[idx[mask_valid], new_col] = F[mask_valid]
+
+            cols_tutti_flussi = cols_flux_presenti_run + nuovi_flussi_decorrelati
+            nuovi_flussi_ensemble = []
+
+            for c in cols_tutti_flussi:
+                new_col = f"{c}_DECORRELAZIONE_STELLE"
+                run_df[new_col] = np.nan
+                nuovi_flussi_ensemble.append(new_col)
+
+                mediane_stella = run_df.groupby('run_unique_id')[c].transform('median')
+
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    rapporto_relativo = np.where(mediane_stella > 0, run_df[c] / mediane_stella, np.nan)
+
+                run_df['temp_rapporto'] = rapporto_relativo
+                fattore_immagine = run_df.groupby('file_index')['temp_rapporto'].transform('median')
+                run_df[new_col] = run_df[c] / fattore_immagine
+
+            if 'temp_rapporto' in run_df.columns:
+                run_df.drop(columns=['temp_rapporto'], inplace=True)
+
+            cols_tutti_flussi.extend(nuovi_flussi_ensemble)
+            grouped_per_run_id = run_df.groupby(['run_unique_id'])
+            stat_columns_run = []
+
+            for c in cols_tutti_flussi:
+                col_mean = f'media_{c}'
+                col_std = f'std_{c}'
+                run_df[col_mean] = grouped_per_run_id[c].transform('mean')
+                stds_sample = grouped_per_run_id[c].transform('std')
+                counts_grouped = grouped_per_run_id[c].transform('count')
+                run_df[col_std] = stds_sample / np.sqrt(counts_grouped)
+                stat_columns_run.extend([col_mean, col_std])
+
+            run_df['ID'] = run_df['ID'].astype(object)
+            mask_no_match = run_df['Corrispondenza'] == 'NO'
+            run_df.loc[mask_no_match, 'ID'] = run_df.loc[mask_no_match, 'run_unique_id']
+            files_groups_run = run_df.groupby('original_file_path')
+
+            # salvo le modifiche intra-run nei CSV per poterle recuperare nella Fase globale
+            for file_path, df_file in tqdm(files_groups_run, desc="Salvataggio Fase 4"):
+                df_final_save = df_file.copy()
+                header_orig = leggi_header_da_csv(file_path)
+
+                cols = df_final_save.columns.tolist()
+                for temp_c in ['file_index', 'original_file_path', 'original_idx', 'run_unique_id', 'run_number']:
+                    if temp_c in cols: cols.remove(temp_c)
+
+                df_final_save = df_final_save[cols]
+                salva_csv_con_header_aggiornato(df_final_save, header_orig, file_path)
+
     # =============================================================================
-    # FASE FINALE GLOBALE: STATISTICHE E ID SU TUTTE LE RUN
+    # FASE 5 FINALE GLOBALE: STATISTICHE E DECORRELAZIONE GLOBALE SU TUTTE LE RUN
     # =============================================================================
     print("\n==================== FASE FINALE GLOBALE (TUTTE LE RUN) ====================")
-    print(f"Elaborazione di {len(tutti_i_file_csv_generati)} file totali...")
+    print(f"Elaborazione di {len(tutti_i_file_csv_generati)} file totali per decorrelazione d'insieme...")
 
     if not tutti_i_file_csv_generati:
         print("Nessun file generato. Esco.")
@@ -631,7 +996,7 @@ if __name__ == "__main__":
 
     known_clusters_coords = []
     known_clusters_ids = []
-    threshold_deg = 35 / 3600  # Aggiornato col nuovo valore corretto
+    threshold_deg = 35 / 3600
     unique_files = df_no['file_index'].unique()
     next_internal_id = 1
     no_mapping = {}
@@ -657,10 +1022,9 @@ if __name__ == "__main__":
                     zip(idx_cluster, d2d, subset['RA_centroid'], subset['DEC_centroid'])):
                 global_idx = indices_subset[i]
 
-                # Applicata la modifica per aggiornare la memoria e risolvere il doppio append
+                # aggiorno la mia memoria per risolvere il doppio append e seguire lo spostamento
                 if dist.deg <= threshold_deg:
                     no_mapping[global_idx] = known_clusters_ids[match_idx]
-                    # Aggiorno le coordinate in memoria per seguire lo spostamento
                     known_clusters_coords[match_idx] = (ra_curr, dec_curr)
                 else:
                     cid = f"INT_{next_internal_id}"
@@ -672,9 +1036,9 @@ if __name__ == "__main__":
     for idx, uid in no_mapping.items(): big_df.at[idx, 'run_unique_id'] = uid
 
     # =================================================================
-    # FILTRO TEMPORALE E FILTRO RIPETIZIONI (< 2)
+    # FILTRO TEMPORALE E FILTRO RIPETIZIONI (< 2) GLOBALE
     # =================================================================
-    print("Eseguo il filtraggio temporale e delle ripetizioni minime...")
+    print("Eseguo il filtraggio temporale e delle ripetizioni minime globale...")
 
     # 1. applico il filtro di prossimità temporale (+/- 2 immagini)
     big_df['da_eliminare_temporale'] = False
@@ -699,29 +1063,51 @@ if __name__ == "__main__":
     # creo la maschera ed elimino i NO con meno di 2 ripetizioni totali
     mask_da_scartare_rip = (big_df['Corrispondenza'] == 'NO') & (big_df['run_unique_id'].isin(id_da_scartare))
     big_df = big_df[~mask_da_scartare_rip]
+
     # =================================================================
+    print("Calcolo decorrelazione d'insieme globale sulle singole run unite...")
 
-    print("Calcolo statistiche globali e riorganizzazione colonne...")
-    cols_flux = ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper', 'flusso_fisso_max_run']
-    cols_flux_presenti = [c for c in cols_flux if c in big_df.columns]
-    for c in cols_flux_presenti: big_df[c] = pd.to_numeric(big_df[c], errors='coerce')
+    cols_base_flux = [c for c in big_df.columns if ('flusso_' in c or 'somma_' in c or 'kron_' in c)]
+    cols_tutti_flussi_glob = [c for c in cols_base_flux if not any(
+        x in c for x in ['media_', 'std_', 'DECORRELAZIONE_STELLE', 'ripetizioni', 'raggio_'])]
 
-    grouped_per_run = big_df.groupby(['run_unique_id', 'run_number'])
+    for c in cols_tutti_flussi_glob: big_df[c] = pd.to_numeric(big_df[c], errors='coerce')
 
-    stat_columns = []
-    for c in cols_flux_presenti:
+    nuovi_flussi_globali = []
+
+    for c in tqdm(cols_tutti_flussi_glob, desc="Decorrelazione Ensemble Globale"):
+        new_col = f"{c}_DECORRELAZIONE_STELLE_GLOBALE"
+        nuovi_flussi_globali.append(new_col)
+
+        mediane_stella_serie = big_df.groupby('run_unique_id')[c].median()
+        mediane_per_riga = big_df['run_unique_id'].map(mediane_stella_serie)
+
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rapporto_relativo = (big_df[c] / mediane_per_riga)
+
+        temp_df_corr = pd.DataFrame({'path': big_df['original_file_path'], 'ratio': rapporto_relativo})
+        fattore_immagine_serie = temp_df_corr.groupby('path')['ratio'].median()
+        fattore_per_riga = big_df['original_file_path'].map(fattore_immagine_serie)
+
+        big_df[new_col] = (big_df[c] / fattore_per_riga)
+        big_df[f'media_{new_col}'] = big_df.groupby('run_unique_id')[new_col].transform('mean')
+
+        stats_agg = big_df.groupby('run_unique_id')[new_col].agg(['std', 'count'])
+        std_err_serie = (stats_agg['std'] / np.sqrt(stats_agg['count']))
+        big_df[f'std_{new_col}'] = big_df['run_unique_id'].map(std_err_serie)
+
+        del temp_df_corr, rapporto_relativo, fattore_per_riga, mediane_per_riga
+        gc.collect()
+
+    # Ricalcolo medie e deviazioni standard globali originali sui flussi base senza formattazione
+    grouped_per_run_glob = big_df.groupby('run_unique_id')
+    for c in cols_tutti_flussi_glob:
         col_mean = f'media_{c}'
         col_std = f'std_{c}'
-
-        big_df[col_mean] = grouped_per_run[c].transform('mean')
-
-        stds_sample = grouped_per_run[c].transform('std')
-        counts_grouped = grouped_per_run[c].transform('count')
+        big_df[col_mean] = grouped_per_run_glob[c].transform('mean')
+        stds_sample = grouped_per_run_glob[c].transform('std')
+        counts_grouped = grouped_per_run_glob[c].transform('count')
         big_df[col_std] = stds_sample / np.sqrt(counts_grouped)
-
-        stat_columns.extend([col_mean, col_std])
-
-    for c in stat_columns: big_df[c] = big_df[c].map(lambda x: '{:.2f}'.format(x) if pd.notnull(x) else 'NaN')
 
     big_df['ID'] = big_df['ID'].astype(object)
 
@@ -737,7 +1123,7 @@ if __name__ == "__main__":
             f.write("# Header FITS:\n")
             f.write(f"# Numero di falsi positivi esclusi sicuramente: {fp_count}\n")
             for k, v in header_dict.items():
-                if k != 'PERCORSO_FILE':
+                if k != 'PERCORSO_FILE' and k != 'NOME_FILE' and not k.startswith("Numero di falsi"):
                     f.write(f"# {k}: {v}\n")
             f.write(f"# NOME_FILE: {nome_solo}\n")
             f.write("#\n")
@@ -746,12 +1132,9 @@ if __name__ == "__main__":
 
     global_repetition_counts = big_df['run_unique_id'].value_counts()
 
-    for file_path, df_file in tqdm(files_groups, desc="Salvataggio file globali aggiornati"):
-
-        current_run_num = df_file['run_number'].iloc[0]
+    for file_path, df_file in tqdm(files_groups, desc="Salvataggio finale FASE 5"):
 
         col_rip_name = 'ripetizioni'
-
         df_file[col_rip_name] = df_file['run_unique_id'].map(global_repetition_counts)
 
         df_final_save = df_file.copy()
@@ -769,7 +1152,8 @@ if __name__ == "__main__":
         else:
             cols.append(col_rip_name)
 
-        for c_flux in cols_flux_presenti:
+        # ordino le colonne
+        for c_flux in nuovi_flussi_globali + cols_tutti_flussi_glob:
             c_mean, c_std = f'media_{c_flux}', f'std_{c_flux}'
             if c_flux in cols and c_mean in cols:
                 cols.remove(c_mean)

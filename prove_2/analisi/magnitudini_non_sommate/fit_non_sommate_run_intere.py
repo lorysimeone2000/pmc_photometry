@@ -284,7 +284,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             plt.tight_layout()
 
             # salvo il mio grafico
-            out_file = f"fit_globale_{flusso}_style.png"
+            out_file = f"FIT_GLOBALE_{flusso}_style.png"
             plt.savefig(out_file, dpi=300)
             print(f"Grafico salvato: {out_file}")
             plt.show()

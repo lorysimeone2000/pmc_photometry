@@ -43,6 +43,10 @@ from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyUserWarning
 from scipy.ndimage import label
 from pathlib import Path
+import socket
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # gestisco i warning ignorandoli
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
@@ -82,11 +86,119 @@ print(f"------------------------------")
 # definisco le mie run da analizzare
 RUN = [1, 2, 3]
 
-# uso il mirror di Harvard scaricando le 5 bande fondamentali per simulare il sensore FLIR
-vizier = Vizier(
+# =============================================================================
+# CONFIGURAZIONE VIZIER CON IP DIRETTI (BY-PASS DNS)
+# =============================================================================
+
+# Dizionario dei server VizieR con i loro IP
+VIZIER_SERVERS = {
+    'harvard': ('vizier.cfa.harvard.edu', '131.174.189.58'),
+    'strasbourg': ('vizier.cds.unistra.fr', '134.158.235.155'),
+    'strasbourg_alt': ('vizier.u-strasbg.fr', '134.158.235.155'),
+}
+
+
+def setup_vizier_with_ip(catalog, columns, server_key='harvard'):
+    """
+    Configura Vizier usando IP diretto invece del nome host.
+    """
+    server_name, server_ip = VIZIER_SERVERS[server_key]
+
+    print(f"Configurazione Vizier con server: {server_name} ({server_ip})")
+
+    # Crea Vizier con l'IP diretto
+    vizier = Vizier(
+        catalog=catalog,
+        columns=columns,
+        row_limit=-1,
+    )
+
+    # Imposta il server usando l'IP diretto
+    vizier.VIZIER_SERVER = server_ip
+    vizier.TIMEOUT = 120
+
+    # Configura session con retry
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    # Assegna la sessione configurata
+    vizier._session = session
+
+    return vizier
+
+
+def test_vizier_connection(server_key='harvard'):
+    """
+    Testa la connessione a un server VizieR specifico.
+    """
+    server_name, server_ip = VIZIER_SERVERS[server_key]
+
+    print(f"Test connessione a {server_name} ({server_ip})...")
+
+    try:
+        # Test connessione TCP di base
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        result = sock.connect_ex((server_ip, 443))
+        sock.close()
+
+        if result == 0:
+            print(f"✓ Connessione TCP a {server_ip}:443 riuscita")
+
+            # Test con curl/requests
+            test_url = f"https://{server_ip}/viz-bin/votable"
+            response = requests.get(test_url, timeout=10, verify=False)
+            if response.status_code == 200:
+                print(f"✓ Connessione HTTP a {server_name} riuscita")
+                return True
+            else:
+                print(f"✗ HTTP error: {response.status_code}")
+                return False
+        else:
+            print(f"✗ Connessione TCP fallita: {result}")
+            return False
+
+    except Exception as e:
+        print(f"✗ Errore di connessione: {e}")
+        return False
+
+
+# Testa e seleziona il miglior server disponibile
+def get_best_vizier_server():
+    """
+    Trova il miglior server VizieR disponibile.
+    """
+    available_servers = []
+
+    for key in VIZIER_SERVERS.keys():
+        if test_vizier_connection(key):
+            available_servers.append(key)
+
+    if available_servers:
+        print(f"Server disponibili: {available_servers}")
+        return available_servers[0]  # Restituisce il primo disponibile
+    else:
+        print("ATTENZIONE: Nessun server VizieR raggiungibile!")
+        print("Uso server Harvard come default (tentativo cieco)...")
+        return 'harvard'
+
+
+# Seleziona il miglior server
+BEST_SERVER = get_best_vizier_server()
+print(f"Server selezionato: {BEST_SERVER}")
+
+# Configura Vizier per Pan-STARRS con IP diretto
+vizier = setup_vizier_with_ip(
     catalog="II/389/ps1_dr2",
     columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag', 'imag', 'zmag', 'ymag'],
-    row_limit=-1,
+    server_key=BEST_SERVER
 )
 
 # =============================================================================
@@ -107,13 +219,41 @@ if __name__ == "__main__":
     parametri_caricati = leggi_file_parametri(file_parametri)
 
     print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
-    vizier_hip = Vizier(
+
+    # Configura Vizier per Hipparcos con IP diretto
+    vizier_hip = setup_vizier_with_ip(
         catalog="I/239/hip_main",
         columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],
-        row_limit=-1
+        server_key=BEST_SERVER
     )
-    risultato_hip = vizier_hip.query_constraints(Vmag="<16")
-    tbl_catalogo_hipparco = risultato_hip[0]
+
+    # Prova a scaricare con retry automatici
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            print(f"Tentativo {attempt + 1}/{max_attempts}...")
+            risultato_hip = vizier_hip.query_constraints(Vmag="<16")
+
+            if not risultato_hip or len(risultato_hip) == 0:
+                print("Nessun risultato ottenuto")
+                if attempt < max_attempts - 1:
+                    time.sleep(10)
+                    continue
+                else:
+                    raise ValueError("Nessun dato ricevuto da VizieR")
+
+            tbl_catalogo_hipparco = risultato_hip[0]
+            break
+
+        except Exception as e:
+            print(f"Errore: {e}")
+            if attempt < max_attempts - 1:
+                print(f"Riprovo tra 10 secondi...")
+                time.sleep(10)
+            else:
+                print("ERRORE: Impossibile scaricare Hipparcos dopo 3 tentativi.")
+                print("Verifica la connessione di rete o contatta l'amministratore di sistema.")
+                sys.exit(1)
 
     if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
         tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
@@ -192,7 +332,7 @@ if __name__ == "__main__":
             continue
 
         cartella_prove = BASE_DIR
-        cartella_tabelle = cartella_prove / "tabelle_cazzata"
+        cartella_tabelle = cartella_prove / "tabelle"
         output_dir = cartella_tabelle / "tabelle_unite" / f"tabelle_unite_run_{run}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -224,6 +364,8 @@ if __name__ == "__main__":
                         break
                     except Exception as e:
                         if tentativo < tentativi_massimi - 1:
+                            print(f"\nErrore: {e}")
+                            print(f"Riprovo tra {attesa} secondi... (Tentativo {tentativo + 1}/{tentativi_massimi})")
                             time.sleep(attesa)
                         else:
                             raise

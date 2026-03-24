@@ -111,12 +111,19 @@ if __name__ == "__main__":
         exit()
     parametri_caricati = leggi_file_parametri(file_parametri)
 
+    # configuro e interrogo il catalogo globale Hipparcos direttamente da VizieR
     print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
     vizier_hip = Vizier(
         catalog="I/239/hip_main",
+        # estraggo le coordinate ICRS all'epoca J2000 esatte pre-calcolate da VizieR
         columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],
         row_limit=-1
     )
+
+    # forzo astroquery a usare il mirror americano anche per il catalogo Hipparcos
+    vizier_hip.VIZIER_SERVER = 'vizier.cfa.harvard.edu'
+
+    # prelevo tutte le stelle con magnitudine utile per evitare caricamenti eccessivi
     risultato_hip = vizier_hip.query_constraints(Vmag="<16")
     tbl_catalogo_hipparco = risultato_hip[0]
 

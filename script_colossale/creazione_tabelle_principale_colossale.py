@@ -90,10 +90,10 @@ print(f"Cartella Base rilevata: {BASE_DIR}")
 print(f"Moduli esterni caricati con successo.")
 print(f"------------------------------")
 
-# 1. Inizializzo Skyfield
+# 1. inizializzo Skyfield
 ts = load.timescale()
 
-# 2. Imposto le coordinate del mio telescopio usando la funzione importata
+# 2. imposto le coordinate del mio telescopio usando la funzione importata
 lat_oss, lon_oss, alt_oss = ottieni_coordinate_telescopio('ASTRI 1', BASE_DIR / "pmc_photometry")
 
 # creo l'oggetto geografico wgs84
@@ -410,10 +410,11 @@ if __name__ == "__main__":
 
                 all_cols = df_trovate.columns.tolist()
                 cols_keep = ['label', 'xcentroid', 'ycentroid', 'area', 'max_value']
-                for c in ['saturazione', 'kron_flux']:
+                for c in ['saturazione']:
                     if c in all_cols: cols_keep.append(c)
-                extra_flux = ['kron_manuale_seg', 'kron_manuale_aper', 'somma_apertura_ultimo_pixel',
-                              'raggio_kron_aper']
+
+                # tengo solamente il raggio calcolato in fase 1 ed elimino i flussi superflui
+                extra_flux = ['raggio_kron_aper']
                 for c in extra_flux:
                     if c in all_cols: cols_keep.append(c)
 
@@ -669,38 +670,13 @@ if __name__ == "__main__":
                     s_t = s_ref
 
                 n_tot = data_sub.size
-                molt_corr = s_ref / s_t if s_t != 0 else 1.0
                 diff_s = s_ref - s_t
-
-                if 'kron_manuale_aper' in df_frame.columns and 'raggio_kron_aper' in df_frame.columns:
-                    df_frame['kron_manuale_aper_CORRETTO_Normalizzazione_Moltiplicativa'] = pd.to_numeric(
-                        df_frame['kron_manuale_aper'], errors='coerce') * molt_corr
-                    df_frame['kron_manuale_aper_CORRETTO_Correzione_Additiva_dell_Apertura'] = pd.to_numeric(
-                        df_frame['kron_manuale_aper'], errors='coerce') + (np.pi * pd.to_numeric(
-                        df_frame['raggio_kron_aper'], errors='coerce') ** 2 / n_tot) * diff_s
-
-                if 'kron_manuale_seg' in df_frame.columns:
-                    df_frame['kron_manuale_seg_CORRETTO_Normalizzazione_Moltiplicativa'] = pd.to_numeric(
-                        df_frame['kron_manuale_seg'], errors='coerce') * molt_corr
-
-                if 'somma_apertura_ultimo_pixel' in df_frame.columns:
-                    df_frame['somma_apertura_ultimo_pixel_CORRETTO_Normalizzazione_Moltiplicativa'] = pd.to_numeric(
-                        df_frame['somma_apertura_ultimo_pixel'], errors='coerce') * molt_corr
 
                 raggi_fissi = []
                 ids_presenti = df_frame['ID'].values
 
-                flussi_calcolati = []
-                flussi_calcolati_molt = []
+                # mantengo solo il flusso che mi serve per arrivare alla correzione globale
                 flussi_calcolati_add = []
-                flussi_calcolati_fondo_sottratto = []
-
-                flussi_doppi = []
-                flussi_doppi_molt = []
-                flussi_doppi_add = []
-                flussi_doppi_fondo_sottratto = []
-
-                flussi_kron_manuale_aper_fondo_sottratto = []
 
                 for idx_star, star_id in enumerate(ids_presenti):
                     r_globale = map_raggi_max.get(star_id, np.nan)
@@ -719,57 +695,16 @@ if __name__ == "__main__":
                         aper = CircularAperture(pos, r=r_globale)
                         phot = aperture_photometry(data_sub, aper)
                         fl_calcolato = phot['aperture_sum'][0]
-                        flussi_calcolati.append(fl_calcolato)
 
-                        flussi_calcolati_molt.append(fl_calcolato * molt_corr)
+                        # calcolo direttamente la sola correzione additiva
                         flussi_calcolati_add.append(fl_calcolato + (np.pi * r_globale ** 2 / n_tot) * diff_s)
-                        fl_sottratto = fl_calcolato - (fondo_pp * aper.area)
-                        flussi_calcolati_fondo_sottratto.append(fl_sottratto)
-
-                        r_doppio = r_globale * 2
-                        aper_doppia = CircularAperture(pos, r=r_doppio)
-                        phot_doppia = aperture_photometry(data_sub, aper_doppia)
-                        fl_doppio = phot_doppia['aperture_sum'][0]
-                        flussi_doppi.append(fl_doppio)
-
-                        flussi_doppi_molt.append(fl_doppio * molt_corr)
-                        flussi_doppi_add.append(fl_doppio + (np.pi * r_doppio ** 2 / n_tot) * diff_s)
-                        fl_doppio_sottratto = fl_doppio - (fondo_pp * aper_doppia.area)
-                        flussi_doppi_fondo_sottratto.append(fl_doppio_sottratto)
                     else:
-                        flussi_calcolati.append(np.nan)
-                        flussi_calcolati_molt.append(np.nan)
                         flussi_calcolati_add.append(np.nan)
-                        flussi_calcolati_fondo_sottratto.append(np.nan)
-
-                        flussi_doppi.append(np.nan)
-                        flussi_doppi_molt.append(np.nan)
-                        flussi_doppi_add.append(np.nan)
-                        flussi_doppi_fondo_sottratto.append(np.nan)
-
-                    if 'kron_manuale_aper' in df_frame.columns and 'raggio_kron_aper' in df_frame.columns:
-                        r_kron_man = pd.to_numeric(df_frame.at[idx_star, 'raggio_kron_aper'], errors='coerce')
-                        fl_kron_man = pd.to_numeric(df_frame.at[idx_star, 'kron_manuale_aper'], errors='coerce')
-                        if pd.notnull(r_kron_man) and r_kron_man > 0 and pd.notnull(fl_kron_man):
-                            fl_kron_man_sottr = fl_kron_man - (fondo_pp * (np.pi * r_kron_man ** 2))
-                            flussi_kron_manuale_aper_fondo_sottratto.append(fl_kron_man_sottr)
-                        else:
-                            flussi_kron_manuale_aper_fondo_sottratto.append(np.nan)
 
                 df_frame['raggio_fisso_max_run'] = raggi_fissi
 
-                df_frame['flusso_fisso_max_run'] = flussi_calcolati
-                df_frame['flusso_fisso_max_run_CORRETTO_Normalizzazione_Moltiplicativa'] = flussi_calcolati_molt
+                # assegno unicamente questo flusso
                 df_frame['flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura'] = flussi_calcolati_add
-                df_frame['flusso_fisso_max_run_FONDO_SOTTRATTO'] = flussi_calcolati_fondo_sottratto
-
-                df_frame['flusso_raggio_fisso_doppio'] = flussi_doppi
-                df_frame['flusso_raggio_fisso_doppio_CORRETTO_Normalizzazione_Moltiplicativa'] = flussi_doppi_molt
-                df_frame['flusso_raggio_fisso_doppio_CORRETTO_Correzione_Additiva_dell_Apertura'] = flussi_doppi_add
-                df_frame['flusso_raggio_fisso_doppio_FONDO_SOTTRATTO'] = flussi_doppi_fondo_sottratto
-
-                if 'kron_manuale_aper' in df_frame.columns and 'raggio_kron_aper' in df_frame.columns:
-                    df_frame['kron_manuale_aper_FONDO_SOTTRATTO'] = flussi_kron_manuale_aper_fondo_sottratto
 
                 df_frame['fondo_per_pixel'] = fondo_pp
 
@@ -779,9 +714,9 @@ if __name__ == "__main__":
                 salva_csv_con_header_aggiornato(df_frame, header_info, file_csv)
 
             # =============================================================================
-            # Avvio la fase 4 per calcolare statistiche e decorrelazioni sulla mia run corrente
+            # Avvio la fase 4 per calcolare statistiche e ID per la mia singola run corrente
             # =============================================================================
-            print(f"\n--- FASE 4: Statistiche Locali e Decorrelazioni per {run_name} ---")
+            print(f"\n--- FASE 4: Statistiche Locali e Ripetizioni per {run_name} ---")
 
             if not file_csv_generati_nella_run:
                 continue
@@ -869,79 +804,14 @@ if __name__ == "__main__":
                 run_df['run_unique_id'].isin(id_da_scartare_run))
             run_df = run_df[~mask_da_scartare_rip_run]
 
-            cols_flux = ['somma_apertura_ultimo_pixel',
-                         'somma_apertura_ultimo_pixel_CORRETTO_Normalizzazione_Moltiplicativa',
-                         'kron_manuale_seg', 'kron_manuale_seg_CORRETTO_Normalizzazione_Moltiplicativa',
-                         'kron_manuale_aper', 'kron_manuale_aper_CORRETTO_Normalizzazione_Moltiplicativa',
-                         'kron_manuale_aper_CORRETTO_Correzione_Additiva_dell_Apertura',
-                         'kron_manuale_aper_FONDO_SOTTRATTO',
-                         'flusso_fisso_max_run', 'flusso_fisso_max_run_CORRETTO_Normalizzazione_Moltiplicativa',
-                         'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura',
-                         'flusso_fisso_max_run_FONDO_SOTTRATTO',
-                         'flusso_raggio_fisso_doppio',
-                         'flusso_raggio_fisso_doppio_CORRETTO_Normalizzazione_Moltiplicativa',
-                         'flusso_raggio_fisso_doppio_CORRETTO_Correzione_Additiva_dell_Apertura',
-                         'flusso_raggio_fisso_doppio_FONDO_SOTTRATTO']
+            print("Riorganizzazione colonne...")
+            # tengo traccia solo del flusso base richiesto e rimuovo tutti gli step di decorrelazione locale
+            cols_flux = ['flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura']
 
             cols_flux_presenti_run = [c for c in cols_flux if c in run_df.columns]
             for c in cols_flux_presenti_run: run_df[c] = pd.to_numeric(run_df[c], errors='coerce')
 
             run_df['fondo_per_pixel'] = pd.to_numeric(run_df.get('fondo_per_pixel', np.nan), errors='coerce')
-            nuovi_flussi_decorrelati = []
-
-            for c in cols_flux_presenti_run:
-                new_col = f"{c}_DECORRELAZIONE_LINEARE"
-                run_df[new_col] = np.nan
-                nuovi_flussi_decorrelati.append(new_col)
-
-                for uid, group in run_df.groupby('run_unique_id'):
-                    idx = group.index
-                    F = group[c].values
-                    B = group['fondo_per_pixel'].values
-                    mask_valid = ~np.isnan(F) & ~np.isnan(B)
-
-                    if np.sum(mask_valid) > 1 and np.std(B[mask_valid]) > 1e-12:
-                        F_v = F[mask_valid]
-                        B_v = B[mask_valid]
-                        m, q = np.polyfit(B_v, F_v, 1)
-                        B_mean = np.mean(B_v)
-                        F_corr = F_v - m * (B_v - B_mean)
-                        run_df.loc[idx[mask_valid], new_col] = F_corr
-                    else:
-                        run_df.loc[idx[mask_valid], new_col] = F[mask_valid]
-
-            cols_tutti_flussi = cols_flux_presenti_run + nuovi_flussi_decorrelati
-            nuovi_flussi_ensemble = []
-
-            for c in cols_tutti_flussi:
-                new_col = f"{c}_DECORRELAZIONE_STELLE"
-                run_df[new_col] = np.nan
-                nuovi_flussi_ensemble.append(new_col)
-
-                mediane_stella = run_df.groupby('run_unique_id')[c].transform('median')
-
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    rapporto_relativo = np.where(mediane_stella > 0, run_df[c] / mediane_stella, np.nan)
-
-                run_df['temp_rapporto'] = rapporto_relativo
-                fattore_immagine = run_df.groupby('file_index')['temp_rapporto'].transform('median')
-                run_df[new_col] = run_df[c] / fattore_immagine
-
-            if 'temp_rapporto' in run_df.columns:
-                run_df.drop(columns=['temp_rapporto'], inplace=True)
-
-            cols_tutti_flussi.extend(nuovi_flussi_ensemble)
-            grouped_per_run_id = run_df.groupby(['run_unique_id'])
-            stat_columns_run = []
-
-            for c in cols_tutti_flussi:
-                col_mean = f'media_{c}'
-                col_std = f'std_{c}'
-                run_df[col_mean] = grouped_per_run_id[c].transform('mean')
-                stds_sample = grouped_per_run_id[c].transform('std')
-                counts_grouped = grouped_per_run_id[c].transform('count')
-                run_df[col_std] = stds_sample / np.sqrt(counts_grouped)
-                stat_columns_run.extend([col_mean, col_std])
 
             run_df['ID'] = run_df['ID'].astype(object)
             mask_no_match = run_df['Corrispondenza'] == 'NO'
@@ -1079,27 +949,31 @@ if __name__ == "__main__":
         new_col = f"{c}_DECORRELAZIONE_STELLE_GLOBALE"
         nuovi_flussi_globali.append(new_col)
 
-        mediane_stella_serie = big_df.groupby('run_unique_id')[c].median()
-        mediane_per_riga = big_df['run_unique_id'].map(mediane_stella_serie)
+        # estraggo il primo valore registrato per ogni oggetto e lo imposto come mio riferimento
+        primo_flusso_stella_serie = big_df.groupby('run_unique_id')[c].first()
+        riferimento_per_riga = big_df['run_unique_id'].map(primo_flusso_stella_serie)
 
         with np.errstate(divide='ignore', invalid='ignore'):
-            rapporto_relativo = (big_df[c] / mediane_per_riga)
+            rapporto_relativo = (big_df[c] / riferimento_per_riga)
 
         temp_df_corr = pd.DataFrame({'path': big_df['original_file_path'], 'ratio': rapporto_relativo})
         fattore_immagine_serie = temp_df_corr.groupby('path')['ratio'].median()
         fattore_per_riga = big_df['original_file_path'].map(fattore_immagine_serie)
 
         big_df[new_col] = (big_df[c] / fattore_per_riga)
+
+        # calcolo la media e la deviazione standard rispetto alla mia nuova colonna
         big_df[f'media_{new_col}'] = big_df.groupby('run_unique_id')[new_col].transform('mean')
 
         stats_agg = big_df.groupby('run_unique_id')[new_col].agg(['std', 'count'])
         std_err_serie = (stats_agg['std'] / np.sqrt(stats_agg['count']))
         big_df[f'std_{new_col}'] = big_df['run_unique_id'].map(std_err_serie)
 
-        del temp_df_corr, rapporto_relativo, fattore_per_riga, mediane_per_riga
+        # elimino le variabili temporanee per liberare la mia memoria
+        del temp_df_corr, rapporto_relativo, fattore_per_riga, riferimento_per_riga
         gc.collect()
 
-    # Ricalcolo medie e deviazioni standard globali originali sui flussi base senza formattazione
+    # ricalcolo medie e deviazioni standard globali originali sui flussi base senza formattazione
     grouped_per_run_glob = big_df.groupby('run_unique_id')
     for c in cols_tutti_flussi_glob:
         col_mean = f'media_{c}'
@@ -1152,15 +1026,21 @@ if __name__ == "__main__":
         else:
             cols.append(col_rip_name)
 
-        # ordino le colonne
+        # elimino la colonna base per lasciare solamente quella richiesta
+        colonna_base = 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura'
+        if colonna_base in cols:
+            cols.remove(colonna_base)
+
+        # ordino le mie colonne
         for c_flux in nuovi_flussi_globali + cols_tutti_flussi_glob:
-            c_mean, c_std = f'media_{c_flux}', f'std_{c_flux}'
-            if c_flux in cols and c_mean in cols:
-                cols.remove(c_mean)
-                cols.remove(c_std)
-                idx_flux = cols.index(c_flux)
-                cols.insert(idx_flux + 1, c_mean)
-                cols.insert(idx_flux + 2, c_std)
+            if c_flux in cols:
+                c_mean, c_std = f'media_{c_flux}', f'std_{c_flux}'
+                if c_mean in cols:
+                    cols.remove(c_mean)
+                    cols.remove(c_std)
+                    idx_flux = cols.index(c_flux)
+                    cols.insert(idx_flux + 1, c_mean)
+                    cols.insert(idx_flux + 2, c_std)
 
         df_final_save = df_final_save[cols]
         salva_finale_global(df_final_save, header_orig, file_path, num_falsi_positivi)

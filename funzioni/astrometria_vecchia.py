@@ -17,6 +17,7 @@ from .utilita import cerca_file_nel_progetto
 
 
 def ottieni_coordinate_telescopio(nome_telescopio, base_dir):
+    # passo base_dir come argomento altrimenti la funzione non sa dove cercare
     file_posizioni = cerca_file_nel_progetto(base_dir, "posizione_telescopi.txt")
     if file_posizioni:
         with open(file_posizioni, 'r') as f:
@@ -81,13 +82,15 @@ def elabora_file_fits(percorso_file_):
         return image_data_, median_, w_
 
 
-# estraggo solamente la logica per calcolare il raggio
-def calcola_raggio_kron(valori_pixel, distanze_pixel, k=2.5, r_min=3.5):
+def calcola_flusso_kron_completo(data, xc, yc, valori_pixel, distanze_pixel, k=2.5, r_min=3.5):
     somma_intensita = np.sum(valori_pixel)
-    if somma_intensita <= 0: return np.nan
+    if somma_intensita <= 0: return np.nan, np.nan
     somma_momenti = np.sum(valori_pixel * distanze_pixel)
     r_1 = somma_momenti / somma_intensita
-    return max(k * r_1, r_min)
+    r_kron_finale = max(k * r_1, r_min)
+    aper = CircularAperture((xc, yc), r=r_kron_finale)
+    phot = aperture_photometry(data, aper)
+    return phot['aperture_sum'][0], r_kron_finale
 
 
 def tabella_catalogo(image_file_, tbl_vizier_cut, tbl_hipparco_run_clean):
@@ -103,6 +106,7 @@ def tabella_catalogo(image_file_, tbl_vizier_cut, tbl_hipparco_run_clean):
         'ID': tbl_vizier_cut['objID'],
         'RAJ2000': tbl_vizier_cut['RAJ2000'],
         'DEJ2000': tbl_vizier_cut['DEJ2000'],
+        # prendo la mia colonna Mag già normalizzata in fase di preprocessing
         'Mag': tbl_vizier_cut['Mag'],
     }
 
@@ -112,6 +116,7 @@ def tabella_catalogo(image_file_, tbl_vizier_cut, tbl_hipparco_run_clean):
         'ID': tbl_hipparco_run_clean['HIP'],
         'RAJ2000': tbl_hipparco_run_clean['_RAJ2000'],
         'DEJ2000': tbl_hipparco_run_clean['_DEJ2000'],
+        # prendo la mia colonna Mag già normalizzata in fase di preprocessing
         'Mag': tbl_hipparco_run_clean['Mag'],
     }
 
@@ -125,6 +130,18 @@ def tabella_catalogo(image_file_, tbl_vizier_cut, tbl_hipparco_run_clean):
     mask_bordo = ((x_pix >= bordo) & (x_pix < (w - bordo)) & (y_pix >= bordo) & (y_pix < (h - bordo)))
     hdu_list_.close()
     return tbl_unita[mask_bordo]
+
+
+def esegui_fotometria_variabile(data, positions, raggi):
+    flussi = []
+    for (xc, yc), r in zip(positions, raggi):
+        if r > 0 and not np.isnan(r):
+            aper = CircularAperture((xc, yc), r=r)
+            phot = aperture_photometry(data, aper)
+            flussi.append(phot['aperture_sum'][0])
+        else:
+            flussi.append(np.nan)
+    return flussi
 
 
 def analisi_image_segmentation(percorso_file_, parametri_globali):
@@ -143,8 +160,7 @@ def analisi_image_segmentation(percorso_file_, parametri_globali):
 
     if len(tbl) == 0: return tbl, parametri_globali
 
-    # mantengo il format solo per i centroidi
-    for col in ['xcentroid', 'ycentroid']:
+    for col in ['xcentroid', 'ycentroid', 'kron_flux']:
         tbl[col].info.format = '.2f'
 
     mean, median, std = sigma_clipped_stats(data, sigma=3.0)
@@ -155,14 +171,15 @@ def analisi_image_segmentation(percorso_file_, parametri_globali):
     soglia_assoluta, soglia_relativa = 2.5, 0.05
     bordo, ny, nx = 7, data.shape[0], data.shape[1]
 
-    # svuoto la memoria dai vettori dei flussi inutilizzati
-    lista_raggi_max, raggi_kron_aper, mask_keep = [], [], []
+    lista_raggi_max, kron_manuale_seg, kron_manuale_aper, raggi_kron_aper, mask_keep = [], [], [], [], []
 
     for prop in cat:
         xc, yc = prop.xcentroid, prop.ycentroid
         if not ((xc >= bordo) and (xc < nx - bordo) and (yc >= bordo) and (yc < ny - bordo)):
-            lista_raggi_max.append(0.5)
-            raggi_kron_aper.append(np.nan)
+            lista_raggi_max.append(0.5);
+            kron_manuale_seg.append(np.nan)
+            kron_manuale_aper.append(np.nan);
+            raggi_kron_aper.append(np.nan);
             mask_keep.append(False)
             continue
 
@@ -170,8 +187,10 @@ def analisi_image_segmentation(percorso_file_, parametri_globali):
         valori_pixel = data[prop.slices][segment_map.data[prop.slices] == prop.label]
 
         if len(valori_pixel) == 0:
-            lista_raggi_max.append(0.5)
-            raggi_kron_aper.append(np.nan)
+            lista_raggi_max.append(0.5);
+            kron_manuale_seg.append(np.nan)
+            kron_manuale_aper.append(np.nan);
+            raggi_kron_aper.append(np.nan);
             mask_keep.append(False)
             continue
 
@@ -191,16 +210,27 @@ def analisi_image_segmentation(percorso_file_, parametri_globali):
         dist_box = np.hypot(x_g - xc, y_g - yc)
         mask_circle = dist_box <= r_max_pix
 
-        # estraggo solamente il raggio che mi serve
-        r_used = calcola_raggio_kron(cutout[mask_circle], dist_box[mask_circle], K_KRON, R_MIN_KRON)
+        fl_aper, r_used = calcola_flusso_kron_completo(data, xc, yc, cutout[mask_circle], dist_box[mask_circle], K_KRON,
+                                                       R_MIN_KRON)
+        kron_manuale_aper.append(fl_aper)
         raggi_kron_aper.append(r_used)
+
+        fl_seg, _ = calcola_flusso_kron_completo(data, xc, yc, valori_pixel, distanze_pix, K_KRON, R_MIN_KRON)
+        kron_manuale_seg.append(fl_seg)
 
         is_good = (np.sum(valori_pixel > soglia_assoluta) >= 3) and (
                     np.sum(valori_pixel > soglia_relativa * prop.max_value) >= 2)
         mask_keep.append(is_good)
 
+    tbl['kron_manuale_seg'] = kron_manuale_seg
+    tbl['kron_manuale_aper'] = kron_manuale_aper
     tbl['raggio_kron_aper'] = raggi_kron_aper
-    tbl['raggio_kron_aper'].info.format = '%.2f'
+    tbl['somma_apertura_ultimo_pixel'] = esegui_fotometria_variabile(data,
+                                                                     np.transpose((tbl['xcentroid'], tbl['ycentroid'])),
+                                                                     lista_raggi_max)
+
+    for col in ['somma_apertura_ultimo_pixel', 'kron_manuale_seg', 'kron_manuale_aper', 'raggio_kron_aper']:
+        tbl[col].info.format = '%.2f'
 
     tbl_filtrato = tbl[mask_keep]
     if len(tbl_filtrato) > 0: tbl_filtrato['label'] = np.arange(1, len(tbl_filtrato) + 1)

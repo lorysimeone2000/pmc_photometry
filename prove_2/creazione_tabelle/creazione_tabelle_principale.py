@@ -7,11 +7,6 @@ from matplotlib.colors import LogNorm
 from photutils.segmentation import SourceCatalog
 from photutils.aperture import aperture_photometry, CircularAperture
 import numpy as np
-import scipy.integrate as integrate
-import scipy
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 import time
 import os
 import sys
@@ -111,19 +106,12 @@ if __name__ == "__main__":
         exit()
     parametri_caricati = leggi_file_parametri(file_parametri)
 
-    # configuro e interrogo il catalogo globale Hipparcos direttamente da VizieR
     print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
     vizier_hip = Vizier(
         catalog="I/239/hip_main",
-        # estraggo le coordinate ICRS all'epoca J2000 esatte pre-calcolate da VizieR
         columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],
         row_limit=-1
     )
-
-    # forzo astroquery a usare il mirror americano anche per il catalogo Hipparcos
-    vizier_hip.VIZIER_SERVER = 'vizier.cfa.harvard.edu'
-
-    # prelevo tutte le stelle con magnitudine utile per evitare caricamenti eccessivi
     risultato_hip = vizier_hip.query_constraints(Vmag="<16")
     tbl_catalogo_hipparco = risultato_hip[0]
 
@@ -240,7 +228,7 @@ if __name__ == "__main__":
                         else:
                             raise
 
-                # CALCOLO MAGNITUDINE SINTETICA FLIR
+                # calcolo la magnitudine sintetica FLIR
                 bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
 
                 # recupero i pesi precedentemente calcolati in modo efficiente
@@ -277,13 +265,22 @@ if __name__ == "__main__":
                 coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
                 exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
 
+                # avvio il filtraggio competitivo a singola fase Vizier vs Hipparcos
+                print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
+
                 coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
                                          dec=tbl_riquadro_esterno_vizier['DEJ2000'],
                                          unit=u.deg)
 
                 max_threshold_deg = np.max(exclusion_radii_run_subset)
                 seplimit = max_threshold_deg * u.deg
-                idx_hip_1, idx_viz_1, d2d_1, _ = search_around_sky(coords_hipparco_run_subset, coords_vizier, seplimit)
+
+                idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
+
+                if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
+                    idx_viz_1, idx_hip_1 = idx_A, idx_B
+                else:
+                    idx_hip_1, idx_viz_1 = idx_A, idx_B
 
                 mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
                 idx_hip_valid = idx_hip_1[mask_threshold]
@@ -293,16 +290,20 @@ if __name__ == "__main__":
                 mask_keep_vizier = np.ones(len(tbl_riquadro_esterno_vizier), dtype=bool)
 
                 unique_hip_idx = np.unique(idx_hip_valid)
+
                 array_mag_vizier = np.nan_to_num(tbl_riquadro_esterno_vizier['Mag_sintetica'].data, nan=99.0)
                 array_mag_hipparco = np.nan_to_num(tbl_hipparco_run_subset['Vmag'].data, nan=99.0)
 
                 for i_hip in unique_hip_idx:
                     viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
+
                     if len(viz_matches) > 0:
                         mag_viz_matches = array_mag_vizier[viz_matches]
+
                         idx_min_mag = np.argmin(mag_viz_matches)
                         best_viz_idx = viz_matches[idx_min_mag]
                         best_viz_mag = mag_viz_matches[idx_min_mag]
+
                         hip_mag = array_mag_hipparco[i_hip]
 
                         if hip_mag < 9.0:
@@ -311,6 +312,12 @@ if __name__ == "__main__":
                             mask_keep_hipparco[i_hip] = False
                         else:
                             mask_keep_vizier[best_viz_idx] = False
+
+                hipparco_escluse = np.sum(~mask_keep_hipparco)
+                vizier_escluse = np.sum(~mask_keep_vizier)
+                print(f"Risolti {len(unique_hip_idx)} conflitti spaziali:")
+                print(f" -> Escluse {hipparco_escluse} stelle Hipparco (tenute Vizier perché più brillanti)")
+                print(f" -> Escluse {vizier_escluse} stelle Vizier (tenute Hipparco perché più brillanti)")
 
                 mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
                 tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco].copy()
@@ -360,7 +367,7 @@ if __name__ == "__main__":
                     c_cat = SkyCoord(ra=df_catalogate['RAJ2000'].values * u.deg,
                                      dec=df_catalogate['DEJ2000'].values * u.deg)
 
-                    # assegnazione corretta degli indici
+                    # assegno correttamente gli indici
                     idx_cat, idx_trov, d2d, _ = search_around_sky(c_cat, coords, soglia_correlazione)
 
                     matches = pd.DataFrame(
@@ -670,6 +677,9 @@ if __name__ == "__main__":
     if dati_tutte_le_run:
         print("\n--- FASE 5: Calcolo Decorrelazione Globale delle Stelle ---")
         df_totale = pd.concat(dati_tutte_le_run, ignore_index=True)
+
+        # deframmento il dataframe iniziale per ottimizzare e liberare la RAM
+        df_totale = df_totale.copy()
         del dati_tutte_le_run
         gc.collect()
 
@@ -679,35 +689,56 @@ if __name__ == "__main__":
             x in c for x in ['media_', 'std_', 'DECORRELAZIONE_STELLE', 'ripetizioni', 'raggio_'])]
 
         nuovi_flussi_globali = []
+        dizionario_nuove_colonne = {}
 
         for c in tqdm(cols_tutti_flussi_glob, desc="Decorrelazione Ensemble Globale"):
             new_col = f"{c}_DECORRELAZIONE_STELLE_GLOBALE"
             nuovi_flussi_globali.append(new_col)
 
+            # converto la mia colonna in formato numerico
+            flusso_numerico = pd.to_numeric(df_totale[c], errors='coerce')
+
             # trovo il primo valore registrato per ogni oggetto e lo imposto come mio riferimento
-            primo_flusso_stella_serie = df_totale.groupby('run_unique_id')[c].first()
-            riferimento_per_riga = df_totale['run_unique_id'].map(primo_flusso_stella_serie)
+            primo_flusso_stella_globale = flusso_numerico.groupby(df_totale['run_unique_id']).transform('first')
 
+            # calcolo il mio rapporto tra il flusso e il primo valore di riferimento
             with np.errstate(divide='ignore', invalid='ignore'):
-                rapporto_relativo = (df_totale[c] / riferimento_per_riga)
+                rapporto_relativo = np.where(primo_flusso_stella_globale > 0,
+                                             flusso_numerico / primo_flusso_stella_globale,
+                                             np.nan)
 
-            temp_df_corr = pd.DataFrame({'path': df_totale['original_file_path'], 'ratio': rapporto_relativo})
-            fattore_immagine_serie = temp_df_corr.groupby('path')['ratio'].median()
-            fattore_per_riga = df_totale['original_file_path'].map(fattore_immagine_serie)
+            # calcolo il fattore di correzione per l'immagine senza aggiungere colonne temporanee al dataframe
+            temp_rapporto_series = pd.Series(rapporto_relativo)
+            fattore_immagine = temp_rapporto_series.groupby(df_totale['original_file_path']).transform('median')
 
-            df_totale[new_col] = (df_totale[c] / fattore_per_riga)
+            # salvo il risultato nel dizionario temporaneo
+            dizionario_nuove_colonne[new_col] = flusso_numerico / fattore_immagine
 
-            # calcolo la media e la deviazione standard rispetto alla mia nuova colonna
-            df_totale[f'media_{new_col}'] = df_totale.groupby('run_unique_id')[new_col].transform('mean')
+        # unisco tutte le nuove colonne calcolate al dataframe principale in un colpo solo (Zero frammentazione)
+        df_totale = pd.concat([df_totale, pd.DataFrame(dizionario_nuove_colonne)], axis=1)
 
-            stats_agg = df_totale.groupby('run_unique_id')[new_col].agg(['std', 'count'])
-            std_err_serie = (stats_agg['std'] / np.sqrt(stats_agg['count']))
-            df_totale[f'std_{new_col}'] = df_totale['run_unique_id'].map(std_err_serie)
+        # calcolo la media e deviazione standard per le mie nuove colonne globali
+        stat_columns_globali = []
+        dizionario_statistiche = {}
 
-            # elimino le variabili temporanee per liberare la mia memoria
-            del temp_df_corr, rapporto_relativo, fattore_per_riga, riferimento_per_riga
-            gc.collect()
+        for c in nuovi_flussi_globali:
+            col_mean = f'media_{c}'
+            col_std = f'std_{c}'
 
+            # converto temporaneamente per calcolare le mie statistiche
+            flusso_num_globale = pd.to_numeric(df_totale[c], errors='coerce')
+
+            dizionario_statistiche[col_mean] = flusso_num_globale.groupby(df_totale['run_unique_id']).transform('mean')
+            stds_sample = flusso_num_globale.groupby(df_totale['run_unique_id']).transform('std')
+            counts_grouped = flusso_num_globale.groupby(df_totale['run_unique_id']).transform('count')
+            dizionario_statistiche[col_std] = stds_sample / np.sqrt(counts_grouped)
+
+            stat_columns_globali.extend([col_mean, col_std])
+
+        # unisco le statistiche al dataframe in un colpo solo
+        df_totale = pd.concat([df_totale, pd.DataFrame(dizionario_statistiche)], axis=1)
+
+        # riordino e salvo tutti i miei file
         files_groups_globale = df_totale.groupby('original_file_path')
         run_repetition_counts_global = df_totale['run_unique_id'].value_counts()
 

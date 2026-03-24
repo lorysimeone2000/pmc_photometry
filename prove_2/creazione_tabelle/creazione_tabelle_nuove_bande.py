@@ -228,7 +228,7 @@ if __name__ == "__main__":
                         else:
                             raise
 
-                # CALCOLO MAGNITUDINE SINTETICA FLIR
+                # calcolo la magnitudine sintetica FLIR
                 bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
 
                 # recupero i pesi precedentemente calcolati in modo efficiente
@@ -265,13 +265,21 @@ if __name__ == "__main__":
                 coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
                 exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
 
+                # avvio il filtraggio competitivo a singola fase Vizier vs Hipparcos
+                print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
                 coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
                                          dec=tbl_riquadro_esterno_vizier['DEJ2000'],
                                          unit=u.deg)
 
                 max_threshold_deg = np.max(exclusion_radii_run_subset)
                 seplimit = max_threshold_deg * u.deg
-                idx_hip_1, idx_viz_1, d2d_1, _ = search_around_sky(coords_hipparco_run_subset, coords_vizier, seplimit)
+
+                idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
+
+                if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
+                    idx_viz_1, idx_hip_1 = idx_A, idx_B
+                else:
+                    idx_hip_1, idx_viz_1 = idx_A, idx_B
 
                 mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
                 idx_hip_valid = idx_hip_1[mask_threshold]
@@ -299,6 +307,12 @@ if __name__ == "__main__":
                             mask_keep_hipparco[i_hip] = False
                         else:
                             mask_keep_vizier[best_viz_idx] = False
+
+                hipparco_escluse = np.sum(~mask_keep_hipparco)
+                vizier_escluse = np.sum(~mask_keep_vizier)
+                print(f"Risolti {len(unique_hip_idx)} conflitti spaziali:")
+                print(f" -> Escluse {hipparco_escluse} stelle Hipparco (tenute Vizier perché più brillanti)")
+                print(f" -> Escluse {vizier_escluse} stelle Vizier (tenute Hipparco perché più brillanti)")
 
                 mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
                 tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco].copy()
@@ -347,7 +361,7 @@ if __name__ == "__main__":
                     c_cat = SkyCoord(ra=df_catalogate['RAJ2000'].values * u.deg,
                                      dec=df_catalogate['DEJ2000'].values * u.deg)
 
-                    # assegnazione corretta degli indici
+                    # assegno correttamente gli indici
                     idx_cat, idx_trov, d2d, _ = search_around_sky(c_cat, coords, soglia_correlazione)
 
                     matches = pd.DataFrame(
@@ -790,6 +804,9 @@ if __name__ == "__main__":
     if dati_tutte_le_run:
         print("\n--- FASE 5: Calcolo Decorrelazione Globale delle Stelle ---")
         df_totale = pd.concat(dati_tutte_le_run, ignore_index=True)
+
+        # deframmento il dataframe iniziale per ottimizzare e liberare la RAM
+        df_totale = df_totale.copy()
         del dati_tutte_le_run
         gc.collect()
 
@@ -798,31 +815,56 @@ if __name__ == "__main__":
             x in c for x in ['media_', 'std_', 'DECORRELAZIONE_STELLE', 'ripetizioni', 'raggio_'])]
 
         nuovi_flussi_globali = []
+        dizionario_nuove_colonne = {}
 
         for c in tqdm(cols_tutti_flussi_glob, desc="Decorrelazione Ensemble Globale"):
             new_col = f"{c}_DECORRELAZIONE_STELLE_GLOBALE"
             nuovi_flussi_globali.append(new_col)
 
-            mediane_stella_serie = df_totale.groupby('run_unique_id')[c].median()
-            mediane_per_riga = df_totale['run_unique_id'].map(mediane_stella_serie)
+            # converto la mia colonna in formato numerico
+            flusso_numerico = pd.to_numeric(df_totale[c], errors='coerce')
 
+            # calcolo la vera mediana su tutte le run combinate
+            mediane_stella_globale = flusso_numerico.groupby(df_totale['run_unique_id']).transform('median')
+
+            # calcolo il mio rapporto tra il flusso e la vera mediana globale
             with np.errstate(divide='ignore', invalid='ignore'):
-                rapporto_relativo = (df_totale[c] / mediane_per_riga)
+                rapporto_relativo = np.where(mediane_stella_globale > 0,
+                                             flusso_numerico / mediane_stella_globale,
+                                             np.nan)
 
-            temp_df_corr = pd.DataFrame({'path': df_totale['original_file_path'], 'ratio': rapporto_relativo})
-            fattore_immagine_serie = temp_df_corr.groupby('path')['ratio'].median()
-            fattore_per_riga = df_totale['original_file_path'].map(fattore_immagine_serie)
+            # calcolo il fattore di correzione per l'immagine senza aggiungere colonne temporanee al dataframe
+            temp_rapporto_series = pd.Series(rapporto_relativo)
+            fattore_immagine = temp_rapporto_series.groupby(df_totale['original_file_path']).transform('median')
 
-            df_totale[new_col] = (df_totale[c] / fattore_per_riga)
-            df_totale[f'media_{new_col}'] = df_totale.groupby('run_unique_id')[new_col].transform('mean')
+            # salvo il risultato nel dizionario temporaneo
+            dizionario_nuove_colonne[new_col] = flusso_numerico / fattore_immagine
 
-            stats_agg = df_totale.groupby('run_unique_id')[new_col].agg(['std', 'count'])
-            std_err_serie = (stats_agg['std'] / np.sqrt(stats_agg['count']))
-            df_totale[f'std_{new_col}'] = df_totale['run_unique_id'].map(std_err_serie)
+        # unisco tutte le nuove colonne calcolate al dataframe principale in un colpo solo (Zero frammentazione)
+        df_totale = pd.concat([df_totale, pd.DataFrame(dizionario_nuove_colonne)], axis=1)
 
-            del temp_df_corr, rapporto_relativo, fattore_per_riga, mediane_per_riga
-            gc.collect()
+        # calcolo la media e deviazione standard per le mie nuove colonne globali
+        stat_columns_globali = []
+        dizionario_statistiche = {}
 
+        for c in nuovi_flussi_globali:
+            col_mean = f'media_{c}'
+            col_std = f'std_{c}'
+
+            # converto temporaneamente per calcolare le mie statistiche
+            flusso_num_globale = pd.to_numeric(df_totale[c], errors='coerce')
+
+            dizionario_statistiche[col_mean] = flusso_num_globale.groupby(df_totale['run_unique_id']).transform('mean')
+            stds_sample = flusso_num_globale.groupby(df_totale['run_unique_id']).transform('std')
+            counts_grouped = flusso_num_globale.groupby(df_totale['run_unique_id']).transform('count')
+            dizionario_statistiche[col_std] = stds_sample / np.sqrt(counts_grouped)
+
+            stat_columns_globali.extend([col_mean, col_std])
+
+        # unisco le statistiche al dataframe in un colpo solo
+        df_totale = pd.concat([df_totale, pd.DataFrame(dizionario_statistiche)], axis=1)
+
+        # riordino e salvo tutti i miei file
         files_groups_globale = df_totale.groupby('original_file_path')
         run_repetition_counts_global = df_totale['run_unique_id'].value_counts()
 
@@ -830,10 +872,13 @@ if __name__ == "__main__":
             header_orig = mappa_headers_globali[file_path]
             cols = df_file.columns.tolist()
 
+            # elimino le mie colonne temporanee necessarie solo allo script
             for temp_c in ['file_index', 'original_file_path', 'original_idx', 'run_unique_id', 'run_number']:
                 if temp_c in cols: cols.remove(temp_c)
 
             df_file = df_file.copy()
+
+            # sistemo la colonna delle ripetizioni calcolandola sull'insieme globale
             df_file['ripetizioni'] = df_file['ID'].map(run_repetition_counts_global)
             if 'ripetizioni' not in cols:
                 if 'saturazione' in cols:
@@ -841,6 +886,7 @@ if __name__ == "__main__":
                 else:
                     cols.append('ripetizioni')
 
+            # riordino le mie colonne statistiche globali accanto ai rispettivi flussi
             for c_flux in nuovi_flussi_globali:
                 c_mean, c_std = f'media_{c_flux}', f'std_{c_flux}'
                 if c_flux in cols and c_mean in cols:

@@ -89,227 +89,6 @@ vizier = Vizier(
     row_limit=-1,
 )
 
-
-def stampa_descrizioni_colonne_ps1():
-    """
-    Stampa tutte le informazioni disponibili per le colonne di magnitudine
-    del catalogo Pan-STARRS DR2.
-    """
-    from astroquery.vizier import Vizier
-    import pandas as pd
-
-    print("\n" + "=" * 80)
-    print("ANALISI COMPLETA COLONNE MAGNITUDINE - PAN-STARRS DR2 (II/389/ps1_dr2)")
-    print("=" * 80)
-
-    # Recupera il catalogo
-    print("\n1. Scaricamento metadati del catalogo...")
-    catalogo = Vizier.get_catalogs("II/389/ps1_dr2")[0]
-
-    # Colori di magnitudine da analizzare
-    bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
-    bande_err = ['e_gmag', 'e_rmag', 'e_imag', 'e_zmag', 'e_ymag']
-    bande_std = ['gmagStd', 'rmagStd', 'imagStd', 'zmagStd', 'ymagStd']
-
-    tutte_colonne = bande + bande_err + bande_std
-
-    print("\n2. Analisi dettagliata per colonna:")
-    print("-" * 80)
-
-    risultati = {}
-
-    for col_name in tutte_colonne:
-        if col_name in catalogo.columns:
-            print(f"\n>>> COLONNA: {col_name}")
-            print("-" * 50)
-
-            # Ottieni la colonna
-            col = catalogo[col_name]
-
-            # Stampa tutte le informazioni disponibili
-            print(f"  Descrizione: {col.description if hasattr(col, 'description') else 'N/A'}")
-            print(f"  Unità: {col.unit if hasattr(col, 'unit') else 'N/A'}")
-            print(f"  Formato: {col.format if hasattr(col, 'format') else 'N/A'}")
-
-            # Meta dati
-            if hasattr(col, 'meta'):
-                print(f"  Meta dati:")
-                for key, value in col.meta.items():
-                    print(f"    {key}: {value}")
-
-            # UCD
-            if hasattr(col, 'meta') and 'ucd' in col.meta:
-                print(f"  UCD: {col.meta['ucd']}")
-
-            # Cerca informazioni sulla lunghezza d'onda
-            desc = col.description if hasattr(col, 'description') else ""
-            if desc:
-                # Cerca pattern di lunghezza d'onda
-                import re
-                # Cerca pattern come "4866Å", "4866 A", "4866A", "4866 nm"
-                patterns = [
-                    r'(\d+)\s*[ÅA]',  # 4866Å o 4866A
-                    r'(\d+)\s*nm',  # 4866 nm
-                    r'(\d+)\s*microns',  # 0.486 microns
-                    r'(\d+\.?\d*)\s*μm',  # 0.486 μm
-                ]
-
-                for pattern in patterns:
-                    matches = re.findall(pattern, desc)
-                    if matches:
-                        print(f"  Lunghezza d'onda trovata: {matches[0]} Å")
-                        break
-
-            risultati[col_name] = {
-                'description': desc,
-                'ucd': col.meta.get('ucd', 'N/A') if hasattr(col, 'meta') else 'N/A'
-            }
-        else:
-            print(f"\n>>> COLONNA: {col_name} - NON TROVATA nel catalogo")
-
-    print("\n" + "=" * 80)
-    print("RIASSUNTO UCD TROVATI:")
-    print("=" * 80)
-    for col_name, info in risultati.items():
-        print(f"{col_name:10s} -> UCD: {info['ucd']}")
-
-    print("\n" + "=" * 80)
-
-    return risultati
-
-
-def scarica_intervalli_bande_ps1_da_descrizioni():
-    """
-    Scarica gli intervalli delle bande Pan-STARRS DR2 estraendo
-    le lunghezze d'onda centrali dalle descrizioni delle colonne.
-    """
-    from astroquery.vizier import Vizier
-    import re
-
-    print("\n" + "=" * 70)
-    print("SCARICAMENTO INTERVALLI BANDE PAN-STARRS DR2")
-    print("=" * 70)
-
-    # Recupera il catalogo
-    catalogo = Vizier.get_catalogs("II/389/ps1_dr2")[0]
-
-    # FWHM delle bande Pan-STARRS da Tonry+ 2012
-    fwhm_nm = {
-        'gmag': 137,
-        'rmag': 140,
-        'imag': 130,
-        'zmag': 104,
-        'ymag': 83
-    }
-
-    # Valori di fallback validi (in nm)
-    fallback_validi = {
-        'gmag': 486.6,
-        'rmag': 621.5,
-        'imag': 754.5,
-        'zmag': 867.9,
-        'ymag': 963.3
-    }
-
-    # Pattern per estrarre la lunghezza d'onda centrale - ORDINE IMPORTANTE!
-    # Prima cerco il pattern con {AA} che è specifico per gmag
-    patterns = [
-        r'\((\d+)\s*\{AA\}\)',  # (4866{AA}) - specifico per gmag
-        r'\((\d+)\s*A\)',  # (6215A)
-        r'(\d+)\s*[ÅA]',  # 4866Å o 4866A
-        r'(\d+)\s*nm',  # 4866 nm
-    ]
-
-    bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
-    limiti_bande = {}
-
-    print("\nEstrazione lunghezze d'onda dalle descrizioni:")
-    print("-" * 70)
-
-    for banda in bande:
-        if banda in catalogo.columns:
-            col = catalogo[banda]
-            descrizione = col.description if hasattr(col, 'description') else ""
-
-            print(f"\n{banda}:")
-            print(f"  Descrizione: {descrizione}")
-
-            # Estrai la lunghezza d'onda centrale
-            lambda_centro = None
-
-            # prima prova a trovare il pattern specifico per questa banda
-            if banda == 'gmag':
-                # cerco specificamente il pattern con {AA}
-                match = re.search(r'\((\d+)\s*\{AA\}\)', descrizione)
-                if match:
-                    valore = float(match.group(1))
-                    lambda_centro = valore / 10.0
-                    # raddoppio le parentesi graffe per non farle interpretare come variabile
-                    print(f"  -> Lunghezza d'onda estratta (pattern {{AA}}): {valore:.0f} Å = {lambda_centro:.1f} nm")
-
-            # se non trovato, provo tutti i pattern
-            if lambda_centro is None:
-                for pattern in patterns:
-                    match = re.search(pattern, descrizione)
-                    if match:
-                        valore = float(match.group(1))
-                        # verifico che il valore sia in un range plausibile (300-2000 nm o 3000-20000 Å)
-                        # aggiungo la 'r' per rendere la stringa raw ed evitare il SyntaxWarning
-                        if '{AA}' in pattern or 'Å' in pattern or pattern.endswith(r'A\)') or pattern.endswith('[ÅA]'):
-                            # è in Å, converto in nm
-                            lambda_centro = valore / 10.0
-                            print(f"  -> Lunghezza d'onda estratta: {valore:.0f} Å = {lambda_centro:.1f} nm")
-                        else:
-                            lambda_centro = valore
-                            print(f"  -> Lunghezza d'onda estratta: {lambda_centro:.1f} nm")
-                        break
-
-            # Verifica che il valore sia plausibile (tra 300 e 2000 nm)
-            if lambda_centro is not None:
-                if lambda_centro < 300 or lambda_centro > 2000:
-                    print(f"  -> ATTENZIONE: Valore {lambda_centro:.1f} nm non plausibile! Uso fallback.")
-                    lambda_centro = fallback_validi.get(banda, 500.0)
-            else:
-                print(f"  -> ATTENZIONE: Nessuna lunghezza d'onda trovata! Uso fallback.")
-                lambda_centro = fallback_validi.get(banda, 500.0)
-                print(f"  -> Valore di fallback: {lambda_centro:.1f} nm")
-
-            # Calcola l'intervallo usando 1.5×FWHM (copia ~93% della risposta)
-            fwhm = fwhm_nm.get(banda, 100)
-            fattore = 0.75  # 1.5×FWHM / 2 = 0.75×FWHM per lato
-            w_min = int(round(lambda_centro - fwhm * fattore))
-            w_max = int(round(lambda_centro + fwhm * fattore))
-
-            # Limita al range del sensore (300-1100 nm)
-            w_min = max(w_min, 300)
-            w_max = min(w_max, 1100)
-
-            # Verifica finale che w_min < w_max
-            if w_min >= w_max:
-                print(f"  -> ERRORE: Intervallo non valido ({w_min}-{w_max})! Uso fallback.")
-                # Usa un intervallo di fallback
-                fallback_intervalli = {
-                    'gmag': (418, 555),
-                    'rmag': (552, 692),
-                    'imag': (690, 820),
-                    'zmag': (816, 920),
-                    'ymag': (922, 1005)
-                }
-                w_min, w_max = fallback_intervalli.get(banda, (400, 550))
-
-            limiti_bande[banda] = (w_min, w_max)
-            print(f"  -> FWHM: {fwhm} nm")
-            print(f"  -> Intervallo finale: {w_min} - {w_max} nm")
-
-    print("\n" + "=" * 70)
-    print("DIZIONARIO FINALE:")
-    print("=" * 70)
-    for banda, (w_min, w_max) in limiti_bande.items():
-        print(f"    '{banda}': ({w_min}, {w_max}),")
-    print("=" * 70 + "\n")
-
-    return limiti_bande
-
 # =============================================================================
 # BLOCCO DI ESECUZIONE (MAIN)
 # =============================================================================
@@ -378,9 +157,6 @@ if __name__ == "__main__":
             'ymag': (920, 1050)
         }
 
-        limiti_bande = scarica_intervalli_bande_ps1_da_descrizioni()
-        print(f"Limiti bande: \n{limiti_bande}")
-
         pesi_estratti = []
 
         # itero sulle bande per calcolare l'area sottesa alla curva per ciascun range
@@ -416,7 +192,7 @@ if __name__ == "__main__":
             continue
 
         cartella_prove = BASE_DIR
-        cartella_tabelle = cartella_prove / "tabelle"
+        cartella_tabelle = cartella_prove / "tabelle_cazzata"
         output_dir = cartella_tabelle / "tabelle_unite" / f"tabelle_unite_run_{run}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -439,6 +215,7 @@ if __name__ == "__main__":
                 tentativi_massimi = 5
                 attesa = 10
                 for tentativo in range(tentativi_massimi):
+                    print("Tentativo" , tentativo)
                     try:
                         riquadro_esterno_vizier = vizier.query_region(
                             coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
@@ -455,30 +232,31 @@ if __name__ == "__main__":
                 # calcolo la magnitudine sintetica FLIR
                 bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
 
+                # recupero i pesi precedentemente calcolati in modo efficiente
+                pesi_ideali = pesi_ideali_globali
+
                 flussi = []
+                maschere_valide = []
 
                 for banda in bande:
                     colonna = tbl_riquadro_esterno_vizier[banda]
                     array_dati = colonna.filled(np.nan) if hasattr(colonna, 'filled') else np.array(colonna)
                     flusso = 10 ** (-0.4 * array_dati)
-
-                    # sostituisco i dati mancanti con un flusso pari a zero
-                    # assumo che se il catalogo non ha visto la stella in questa banda,
-                    # il suo contributo di luce qui è nullo
-                    flusso_pulito = np.nan_to_num(flusso, nan=0.0)
-                    flussi.append(flusso_pulito)
+                    flussi.append(flusso)
+                    maschere_valide.append(~np.isnan(flusso))
 
                 flussi = np.array(flussi)
-                array_pesi = pesi_ideali_globali[:, None]
+                maschere_valide = np.array(maschere_valide)
+                array_pesi = pesi_ideali[:, None]
 
-                # calcolo il flusso pesato totale senza normalizzare per le bande mancanti
-                # in questo modo le stelle fredde mantengono i loro pesi ottici alti moltiplicati per zero
-                flusso_finale = np.sum(flussi * array_pesi, axis=0)
+                pesi_attivi = array_pesi * maschere_valide
+                somma_pesi = np.sum(pesi_attivi, axis=0)
+                flussi_sicuri = np.nan_to_num(flussi)
+                flusso_pesato_totale = np.sum(flussi_sicuri * pesi_attivi, axis=0)
 
                 with np.errstate(divide='ignore', invalid='ignore'):
-                    # assegno una magnitudine fittizia di 99.0 agli oggetti che risultano avere flusso totalmente zero
-                    mag_sintetica_globale = np.where(flusso_finale > 0, -2.5 * np.log10(flusso_finale),
-                                                     99.0)
+                    flusso_finale = flusso_pesato_totale / somma_pesi
+                    mag_sintetica_globale = -2.5 * np.log10(flusso_finale)
 
                 tbl_riquadro_esterno_vizier['Mag_sintetica'] = mag_sintetica_globale
 

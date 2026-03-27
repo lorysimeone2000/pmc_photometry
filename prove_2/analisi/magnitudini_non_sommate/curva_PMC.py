@@ -33,6 +33,6 @@ ax.margins(x=0, y=0)
 
 # Aggiusto i margini della figura per fare in modo che il titolo non venga tagliato
 plt.subplots_adjust(top=0.85)
-
+plt.savefig('curva_PMC.png')
 # Avvio il render a schermo del grafico finale
 plt.show()

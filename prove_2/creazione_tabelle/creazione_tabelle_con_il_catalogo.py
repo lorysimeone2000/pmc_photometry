@@ -5,7 +5,7 @@ from photutils.background import Background2D, MedianBackground
 from astropy.convolution import convolve
 from photutils.segmentation import make_2dgaussian_kernel
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm  # permette di avere la scala logaritmica
+from matplotlib.colors import LogNorm  # mi permette di avere la scala logaritmica
 from scipy.optimize import curve_fit
 from photutils.segmentation import detect_sources
 from photutils.segmentation import SourceCatalog
@@ -58,7 +58,7 @@ warnings.filterwarnings('ignore', category=VerifyWarning)
 
 def trova_cartella_base(nome_target="pmc_photometry"):
     """
-    Risale la directory partendo dalla posizione dello script fino a trovare
+    Risalgo la directory partendo dalla posizione dello script fino a trovare
     la cartella target (es. 'pmc_photometry').
     """
     path_corrente = Path(__file__).resolve()
@@ -75,7 +75,7 @@ def trova_cartella_base(nome_target="pmc_photometry"):
 
 def cerca_file_nel_progetto(base_dir, nome_file_esatto):
     """
-    Cerca un file ricorsivamente in tutte le sottocartelle di base_dir.
+    Cerco un file ricorsivamente in tutte le sottocartelle di base_dir.
     """
     files_trovati = list(base_dir.rglob(nome_file_esatto))
 
@@ -92,7 +92,7 @@ def cerca_file_nel_progetto(base_dir, nome_file_esatto):
 
 def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
     """
-    Cerca una CARTELLA ricorsivamente in tutte le sottocartelle di base_dir.
+    Cerco una CARTELLA ricorsivamente in tutte le sottocartelle di base_dir.
     """
     cartelle_trovate = [p for p in base_dir.rglob(nome_cartella_esatto) if p.is_dir()]
 
@@ -132,7 +132,7 @@ vizier = Vizier(
 
 
 def salva_csv_con_header_fits(dataframe, header_fits, filename, nome_file_fits):
-    """Salva il DataFrame in CSV includendo l'header FITS come commenti"""
+    """Salvo il DataFrame in CSV includendo l'header FITS come commenti"""
     with open(filename, 'w') as f:
         # scrivo l'header FITS come commenti
         f.write("# Header FITS:\n")
@@ -146,7 +146,7 @@ def salva_csv_con_header_fits(dataframe, header_fits, filename, nome_file_fits):
 
 def tabella_catalogo(image_file_, tbl_vizier_in, tbl_hipparco_in):
     """
-    Seleziona le stelle dei cataloghi unificati che rientrano nel riquadro dell'immagine.
+    Seleziono le stelle dei cataloghi unificati che rientrano nel riquadro dell'immagine.
     """
     hdu_list_ = fits.open(image_file_)
     wcs = WCS(hdu_list_[0].header)
@@ -216,7 +216,7 @@ def tabella_catalogo(image_file_, tbl_vizier_in, tbl_hipparco_in):
 
 def calcolo_distanze(tbl_trovate, tbl_catalogate, image_file):
     """
-    Calcola le distanze dei centroidi rispetto alle stelle catalogate più vicine
+    Calcolo le distanze dei centroidi rispetto alle stelle catalogate più vicine
     """
 
     # carico il WCS dall'immagine
@@ -272,7 +272,7 @@ def calcolo_distanze(tbl_trovate, tbl_catalogate, image_file):
 
 def converti_valore(valore):
     """
-    Converte una stringa nel tipo di dato appropriato.
+    Converto una stringa nel tipo di dato appropriato.
     """
     valore = valore.strip()
 
@@ -303,7 +303,7 @@ def converti_valore(valore):
 
 
 def leggi_header_da_csv(filename):
-    """Legge l'header FITS dal file CSV"""
+    """Leggo l'header FITS dal file CSV"""
     header_dict = {}
 
     with open(filename, 'r') as f:
@@ -320,6 +320,227 @@ def leggi_header_da_csv(filename):
     return header_dict
 
 
+def stampa_descrizioni_colonne_ps1():
+    """
+    Stampo tutte le informazioni disponibili per le colonne di magnitudine
+    del catalogo Pan-STARRS DR2.
+    """
+    from astroquery.vizier import Vizier
+    import pandas as pd
+
+    print("\n" + "=" * 80)
+    print("ANALISI COMPLETA COLONNE MAGNITUDINE - PAN-STARRS DR2 (II/389/ps1_dr2)")
+    print("=" * 80)
+
+    # recupero il catalogo
+    print("\n1. Scaricamento metadati del catalogo...")
+    catalogo = Vizier.get_catalogs("II/389/ps1_dr2")[0]
+
+    # colori di magnitudine da analizzare
+    bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
+    bande_err = ['e_gmag', 'e_rmag', 'e_imag', 'e_zmag', 'e_ymag']
+    bande_std = ['gmagStd', 'rmagStd', 'imagStd', 'zmagStd', 'ymagStd']
+
+    tutte_colonne = bande + bande_err + bande_std
+
+    print("\n2. Analisi dettagliata per colonna:")
+    print("-" * 80)
+
+    risultati = {}
+
+    for col_name in tutte_colonne:
+        if col_name in catalogo.columns:
+            print(f"\n>>> COLONNA: {col_name}")
+            print("-" * 50)
+
+            # ottengo la colonna
+            col = catalogo[col_name]
+
+            # stampo tutte le informazioni disponibili
+            print(f"  Descrizione: {col.description if hasattr(col, 'description') else 'N/A'}")
+            print(f"  Unità: {col.unit if hasattr(col, 'unit') else 'N/A'}")
+            print(f"  Formato: {col.format if hasattr(col, 'format') else 'N/A'}")
+
+            # meta dati
+            if hasattr(col, 'meta'):
+                print(f"  Meta dati:")
+                for key, value in col.meta.items():
+                    print(f"    {key}: {value}")
+
+            # ucd
+            if hasattr(col, 'meta') and 'ucd' in col.meta:
+                print(f"  UCD: {col.meta['ucd']}")
+
+            # cerco informazioni sulla lunghezza d'onda
+            desc = col.description if hasattr(col, 'description') else ""
+            if desc:
+                # cerco pattern di lunghezza d'onda
+                import re
+                # cerco pattern come "4866Å", "4866 A", "4866A", "4866 nm"
+                patterns = [
+                    r'(\d+)\s*[ÅA]',  # 4866Å o 4866A
+                    r'(\d+)\s*nm',  # 4866 nm
+                    r'(\d+)\s*microns',  # 0.486 microns
+                    r'(\d+\.?\d*)\s*μm',  # 0.486 μm
+                ]
+
+                for pattern in patterns:
+                    matches = re.findall(pattern, desc)
+                    if matches:
+                        print(f"  Lunghezza d'onda trovata: {matches[0]} Å")
+                        break
+
+            risultati[col_name] = {
+                'description': desc,
+                'ucd': col.meta.get('ucd', 'N/A') if hasattr(col, 'meta') else 'N/A'
+            }
+        else:
+            print(f"\n>>> COLONNA: {col_name} - NON TROVATA nel catalogo")
+
+    print("\n" + "=" * 80)
+    print("RIASSUNTO UCD TROVATI:")
+    print("=" * 80)
+    for col_name, info in risultati.items():
+        print(f"{col_name:10s} -> UCD: {info['ucd']}")
+
+    print("\n" + "=" * 80)
+
+    return risultati
+
+
+def scarica_intervalli_bande_ps1_da_descrizioni():
+    """
+    Scarico gli intervalli delle bande Pan-STARRS DR2 estraendo
+    le lunghezze d'onda centrali dalle descrizioni delle colonne.
+    """
+    from astroquery.vizier import Vizier
+    import re
+
+    print("\n" + "=" * 70)
+    print("SCARICAMENTO INTERVALLI BANDE PAN-STARRS DR2")
+    print("=" * 70)
+
+    # recupero il catalogo
+    catalogo = Vizier.get_catalogs("II/389/ps1_dr2")[0]
+
+    # fwhm delle bande Pan-STARRS da Tonry+ 2012
+    fwhm_nm = {
+        'gmag': 137,
+        'rmag': 140,
+        'imag': 130,
+        'zmag': 104,
+        'ymag': 83
+    }
+
+    # valori di fallback validi (in nm)
+    fallback_validi = {
+        'gmag': 486.6,
+        'rmag': 621.5,
+        'imag': 754.5,
+        'zmag': 867.9,
+        'ymag': 963.3
+    }
+
+    # pattern per estrarre la lunghezza d'onda centrale - ORDINE IMPORTANTE!
+    # prima cerco il pattern con {AA} che è specifico per gmag
+    patterns = [
+        r'\((\d+)\s*\{AA\}\)',  # (4866{AA}) - specifico per gmag
+        r'\((\d+)\s*A\)',  # (6215A)
+        r'(\d+)\s*[ÅA]',  # 4866Å o 4866A
+        r'(\d+)\s*nm',  # 4866 nm
+    ]
+
+    bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
+    limiti_bande = {}
+
+    print("\nEstrazione lunghezze d'onda dalle descrizioni:")
+    print("-" * 70)
+
+    for banda in bande:
+        if banda in catalogo.columns:
+            col = catalogo[banda]
+            descrizione = col.description if hasattr(col, 'description') else ""
+
+            print(f"\n{banda}:")
+            print(f"  Descrizione: {descrizione}")
+
+            # estraggo la lunghezza d'onda centrale
+            lambda_centro = None
+
+            # prima provo a trovare il pattern specifico per questa banda
+            if banda == 'gmag':
+                # cerco specificamente il pattern con {AA}
+                match = re.search(r'\((\d+)\s*\{AA\}\)', descrizione)
+                if match:
+                    valore = float(match.group(1))
+                    lambda_centro = valore / 10.0
+                    # raddoppio le parentesi graffe per non farle interpretare come variabile
+                    print(f"  -> Lunghezza d'onda estratta (pattern {{AA}}): {valore:.0f} Å = {lambda_centro:.1f} nm")
+
+            # se non trovato, provo tutti i pattern
+            if lambda_centro is None:
+                for pattern in patterns:
+                    match = re.search(pattern, descrizione)
+                    if match:
+                        valore = float(match.group(1))
+                        # verifico che il valore sia in un range plausibile (300-2000 nm o 3000-20000 Å)
+                        # aggiungo la 'r' per rendere la stringa raw ed evitare il SyntaxWarning
+                        if '{AA}' in pattern or 'Å' in pattern or pattern.endswith(r'A\)') or pattern.endswith('[ÅA]'):
+                            # è in Å, converto in nm
+                            lambda_centro = valore / 10.0
+                            print(f"  -> Lunghezza d'onda estratta: {valore:.0f} Å = {lambda_centro:.1f} nm")
+                        else:
+                            lambda_centro = valore
+                            print(f"  -> Lunghezza d'onda estratta: {lambda_centro:.1f} nm")
+                        break
+
+            # verifico che il valore sia plausibile (tra 300 e 2000 nm)
+            if lambda_centro is not None:
+                if lambda_centro < 300 or lambda_centro > 2000:
+                    print(f"  -> ATTENZIONE: Valore {lambda_centro:.1f} nm non plausibile! Uso fallback.")
+                    lambda_centro = fallback_validi.get(banda, 500.0)
+            else:
+                print(f"  -> ATTENZIONE: Nessuna lunghezza d'onda trovata! Uso fallback.")
+                lambda_centro = fallback_validi.get(banda, 500.0)
+                print(f"  -> Valore di fallback: {lambda_centro:.1f} nm")
+
+            # calcolo l'intervallo usando 1.5×FWHM (copre ~93% della risposta)
+            fwhm = fwhm_nm.get(banda, 100)
+            fattore = 0.75  # 1.5×FWHM / 2 = 0.75×FWHM per lato
+            w_min = int(round(lambda_centro - fwhm * fattore))
+            w_max = int(round(lambda_centro + fwhm * fattore))
+
+            # limito al range del sensore (300-1100 nm)
+            w_min = max(w_min, 300)
+            w_max = min(w_max, 1100)
+
+            # verifico finale che w_min < w_max
+            if w_min >= w_max:
+                print(f"  -> ERRORE: Intervallo non valido ({w_min}-{w_max})! Uso fallback.")
+                # uso un intervallo di fallback
+                fallback_intervalli = {
+                    'gmag': (418, 555),
+                    'rmag': (552, 692),
+                    'imag': (690, 820),
+                    'zmag': (816, 920),
+                    'ymag': (922, 1005)
+                }
+                w_min, w_max = fallback_intervalli.get(banda, (400, 550))
+
+            limiti_bande[banda] = (w_min, w_max)
+            print(f"  -> FWHM: {fwhm} nm")
+            print(f"  -> Intervallo finale: {w_min} - {w_max} nm")
+
+    print("\n" + "=" * 70)
+    print("DIZIONARIO FINALE:")
+    print("=" * 70)
+    for banda, (w_min, w_max) in limiti_bande.items():
+        print(f"    '{banda}': ({w_min}, {w_max}),")
+    print("=" * 70 + "\n")
+
+    return limiti_bande
+
+
 # definisco le mie run da analizzare
 RUN = [1, 2, 3]
 
@@ -329,14 +550,9 @@ if file_curva_pmc is not None:
     # leggo il dataframe della curva
     df_curva = pd.read_csv(file_curva_pmc)
 
-    # stabilisco i limiti di lunghezza d'onda delle singole bande
-    limiti_bande = {
-        'gmag': (400, 550),
-        'rmag': (550, 700),
-        'imag': (680, 840),
-        'zmag': (820, 920),
-        'ymag': (920, 1050)
-    }
+    # scarico gli intervalli delle bande direttamente dalle descrizioni
+    limiti_bande = scarica_intervalli_bande_ps1_da_descrizioni()
+    print(f"Limiti bande: \n{limiti_bande}")
 
     pesi_estratti = []
 
@@ -345,7 +561,7 @@ if file_curva_pmc is not None:
         # applico la maschera di taglio per l'intervallo corrente
         maschera_w = (df_curva['Wavelength'] >= w_min) & (df_curva['Wavelength'] <= w_max)
         # calcolo l'integrale tramite il metodo dei trapezi per estrarre la porzione di efficienza
-        area = np.trapz(df_curva['QE'][maschera_w], x=df_curva['Wavelength'][maschera_w])
+        area = np.trapezoid(df_curva['QE'][maschera_w], x=df_curva['Wavelength'][maschera_w])
         pesi_estratti.append(area)
 
     # converto in array e normalizzo in modo che la somma finale sia pari a 1
@@ -446,38 +662,36 @@ for run in RUN:
                                                                          unit=(u.deg, u.deg),
                                                                          frame='icrs'),
                                                           radius=raggio_ricerca,
-                                                          column_filters={'rmag': f'<{15}'},
                                                           )  # ho messo un limite di magnitudine per non scaricare milioni di stelle
             tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
 
             # calcolo la magnitudine sintetica combinata per tutto il riquadro
             bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
 
-            # recupero i pesi precedentemente calcolati in modo efficiente
-            pesi_ideali = pesi_ideali_globali
-
             flussi = []
-            maschere_valide = []
 
             for banda in bande:
                 colonna = tbl_riquadro_esterno_vizier[banda]
                 array_dati = colonna.filled(np.nan) if hasattr(colonna, 'filled') else np.array(colonna)
                 flusso = 10 ** (-0.4 * array_dati)
-                flussi.append(flusso)
-                maschere_valide.append(~np.isnan(flusso))
+
+                # sostituisco i dati mancanti con un flusso pari a zero
+                # assumo che se il catalogo non ha visto la stella in questa banda,
+                # il suo contributo di luce qui è nullo
+                flusso_pulito = np.nan_to_num(flusso, nan=0.0)
+                flussi.append(flusso_pulito)
 
             flussi = np.array(flussi)
-            maschere_valide = np.array(maschere_valide)
-            array_pesi = pesi_ideali[:, None]
+            array_pesi = pesi_ideali_globali[:, None]
 
-            pesi_attivi = array_pesi * maschere_valide
-            somma_pesi = np.sum(pesi_attivi, axis=0)
-            flussi_sicuri = np.nan_to_num(flussi)
-            flusso_pesato_totale = np.sum(flussi_sicuri * pesi_attivi, axis=0)
+            # calcolo il flusso pesato totale senza normalizzare per le bande mancanti
+            # in questo modo le stelle fredde mantengono i loro pesi ottici alti moltiplicati per zero
+            flusso_finale = np.sum(flussi * array_pesi, axis=0)
 
             with np.errstate(divide='ignore', invalid='ignore'):
-                flusso_finale = flusso_pesato_totale / somma_pesi
-                mag_sintetica_globale = -2.5 * np.log10(flusso_finale)
+                # assegno una magnitudine fittizia di 99.0 agli oggetti che risultano avere flusso totalmente zero
+                mag_sintetica_globale = np.where(flusso_finale > 0, -2.5 * np.log10(flusso_finale),
+                                                 99.0)
 
             tbl_riquadro_esterno_vizier['Mag_sintetica'] = mag_sintetica_globale
 

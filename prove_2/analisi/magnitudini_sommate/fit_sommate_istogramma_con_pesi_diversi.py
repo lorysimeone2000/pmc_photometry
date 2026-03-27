@@ -18,8 +18,25 @@ warnings.simplefilter('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', category=VerifyWarning)
 
 
+def somma_magnitudini(series_mags):
+    # converto le mie magnitudini in flusso, le sommo e restituisco la magnitudine integrata
+    mags = series_mags.dropna()
+
+    if len(mags) == 0:
+        return np.nan
+
+    flussi = 10 ** (-0.4 * np.array(mags))
+    flusso_totale = np.sum(flussi)
+
+    if flusso_totale <= 0:
+        return np.nan
+
+    mag_integrata = -2.5 * np.log10(flusso_totale)
+    return mag_integrata
+
+
 def trova_cartella_base(nome_target="pmc_photometry"):
-    # cerco la mia cartella base risalendo l'albero delle directory
+    # cerco la cartella base risalendo l'albero delle directory
     path_corrente = Path(__file__).resolve()
     for parent in [path_corrente] + list(path_corrente.parents):
         if parent.name == nome_target:
@@ -45,7 +62,7 @@ from funzioni.astrometria import *
 
 
 def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
-    # cerco la cartella specificata nel percorso del mio progetto
+    # cerco la cartella specificata nel percorso del progetto
     cartelle_trovate = [p for p in base_dir.rglob(nome_cartella_esatto) if p.is_dir()]
     if not cartelle_trovate: return None
     cartelle_trovate.sort(key=lambda p: len(str(p)))
@@ -109,11 +126,14 @@ print(f"Totale righe caricate: {len(df_total)}")
 # 2. PREPARAZIONE DATI PER IL FIT E IL GRAFICO
 # =============================================================================
 
-# deduplico i miei dati ordinandoli
+# deduplico i miei dati
 df_total_sorted = df_total.sort_values(by=['label', 'Mag'], ascending=[True, True])
-# prendo solo i miei primi valori per ID
+# prendo solo i miei primi valori
 df_unique = df_total_sorted.drop_duplicates(subset=['ID'], keep='first').copy()
 print(f"Oggetti UNICI totali (Catalogati + Non): {len(df_unique)}")
+
+# separo le mie categorie per replicare lo stile grafico richiesto
+# per avere le mie X rosse (saturi) e i miei rombi arancioni (no match), estraggo queste categorie prima di filtrare tutto.
 
 # isolo i miei non catalogati e rimuovo i duplicati per mantenere un solo elemento per label
 mask_match = df_unique['Corrispondenza'].astype(str).str.startswith('SI')
@@ -123,10 +143,9 @@ df_no_match = df_no_match.drop_duplicates(subset=['label'])
 # isolo i miei matchati
 df_match_raw = df_unique[mask_match].copy()
 
-# preparo il mio dizionario di aggregazione per raggruppare i dati per label
-# imposto la magnitudine massima come valore di riferimento per il gruppo
+# preparo il mio dizionario di aggregazione per sommare le magnitudini dei pallocchi
 agg_dict = {
-    'Mag': 'min',
+    'Mag': somma_magnitudini,
     'Corrispondenza': 'first',
     'ID': 'first'
 }
@@ -138,10 +157,10 @@ for flusso in FLUSSI_DA_ANALIZZARE:
     if f"std_{flusso}" in df_match_raw.columns:
         agg_dict[f"std_{flusso}"] = 'first'
 
-# eseguo il mio raggruppamento per label applicando la magnitudine massima
+# eseguo la mia integrazione delle magnitudini raggruppando per pallocchio
 df_match = df_match_raw.groupby('label').agg(agg_dict).reset_index()
 
-# isolo le mie stelle sature usando il mio dataframe raggruppato
+# isolo le mie stelle sature usando il mio dataframe integrato
 if 'saturazione' in df_match.columns:
     mask_sature = df_match['saturazione'].astype(str).str.startswith('SI')
     df_sature = df_match[mask_sature].copy()
@@ -177,11 +196,12 @@ for flusso in FLUSSI_DA_ANALIZZARE:
     print(f"ANALISI: {flusso}")
     print(f"===========================================================")
 
+    # mi assicuro che le mie colonne esistano prima di procedere
     if col_media not in df_fit_clean.columns or col_std not in df_fit_clean.columns:
         print(f"Le colonne per '{flusso}' non sono presenti nel dataset. Salto l'analisi.")
         continue
 
-    # isolo solo i miei elementi che hanno flussi ed errori positivi validi
+    # isolo solo i miei elementi che hanno flussi ed errori positivi validi per questo specifico parametro
     mask_flusso_valido = (
             (df_fit_clean[col_media].notna()) & (df_fit_clean[col_media] > 0) &
             (df_fit_clean[col_std].notna()) & (df_fit_clean[col_std] > 0)
@@ -203,7 +223,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
         df_no_match_plot = pd.DataFrame()
 
     if len(df_fit_curr) > 2:
-        # estraggo i miei dati originali X, Y e relativi errori
+        # estraggo i miei dati originali X, Y e relativi errori per il calcolo dei bin e per il plot
         X = df_fit_curr['Mag'].values
         Y_flux = df_fit_curr[col_media].values
         sigma_flux = df_fit_curr[col_std].values
@@ -231,6 +251,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
                 # calcolo la mia media semplice nel bin
                 y_media_semplice = np.mean(y_bin)
 
+                # calcolo il mio errore standard pesato
                 if len(y_bin) > 1:
                     y_errore_semplice = np.std(y_bin, ddof=1) / np.sqrt(len(y_bin))
                     if y_errore_semplice == 0:
@@ -255,12 +276,12 @@ for flusso in FLUSSI_DA_ANALIZZARE:
         sigma_log_binned = (1 / np.log(10)) * (Err_binned / Y_binned)
 
         try:
-            # eseguo il mio fit lineare usando i miei dati binnati
+            # eseguo il mio fit lineare usando ESCLUSIVAMENTE i miei dati binnati
             popt, pcov = curve_fit(modello_lineare, X_binned, Y_log_binned, sigma=sigma_log_binned, absolute_sigma=True)
             m_fit, q_fit = popt
             err_m, err_q = np.sqrt(np.diag(pcov))
 
-            # calcolo il mio Chi Quadro ridotto
+            # calcolo il mio Chi Quadro ridotto confrontando coi bin
             y_model_binned = modello_lineare(X_binned, m_fit, q_fit)
             chi2 = np.sum(((Y_log_binned - y_model_binned) / sigma_log_binned) ** 2)
             dof = len(X_binned) - 2
@@ -274,16 +295,17 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             # =============================================================================
             # 4. PLOTTING (STILE AGGIORNATO)
             # =============================================================================
+            # creo il mio grafico aggiornato
             plt.figure(figsize=(12, 9))
 
-            # disegno i miei punti originali (Blu con barre errore chiare)
+            # disegno i miei punti originali (non binnati) (Blu con barre errore chiare)
             plt.errorbar(
                 X, Y_flux, yerr=sigma_flux,
                 fmt='o', markersize=1, color='blue', ecolor='lightblue', alpha=0.7,
                 label=f'Catalogati Validi ({len(X)})'
             )
 
-            # disegno i miei bin usati per il fit (Verdi)
+            # disegno i miei bin usati per il fit (Verdi con barre di errore verdi)
             plt.errorbar(
                 X_binned, Y_binned, yerr=Err_binned,
                 fmt='o', markersize=5, color='green', ecolor='green', capsize=3, alpha=0.9,
@@ -291,6 +313,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             )
 
             # disegno le mie stelle sature (X Rosse)
+            # mi assicuro di avere i miei dati validi per il plot
             if not df_sature_plot.empty:
                 plt.scatter(
                     df_sature_plot['Mag'],
@@ -301,7 +324,9 @@ for flusso in FLUSSI_DA_ANALIZZARE:
 
             # disegno i miei oggetti senza corrispondenza (Rombi Arancioni)
             if not df_no_match_plot.empty:
+                # calcolo la mia magnitudine fittizia per posizionarli a sinistra
                 mag_fittizia = np.min(X) - 1.5 if len(X) > 0 else 4.0
+
                 plt.scatter(
                     np.full(len(df_no_match_plot), mag_fittizia),
                     df_no_match_plot[col_media],
@@ -309,24 +334,28 @@ for flusso in FLUSSI_DA_ANALIZZARE:
                     label=f'NON Catalogati ({len(df_no_match_plot)})', zorder=10
                 )
 
+                # aggiungo la mia annotazione
                 plt.annotate("Mag Fittizia",
                              xy=(mag_fittizia, np.mean(df_no_match_plot[col_media])),
                              xytext=(mag_fittizia, np.max(df_no_match_plot[col_media]) * 1.5),
                              arrowprops=dict(facecolor='black', arrowstyle='->'),
                              ha='center')
 
+                # aggiorno i miei limiti del plot se necessario
                 x_min_plot = min(np.min(X), mag_fittizia - 0.5)
             else:
                 x_min_plot = np.min(X) - 0.5
 
-            # disegno la mia retta di fit
+            # disegno la mia retta di fit sovrapponendola al grafico (usando i parametri derivati dai bin)
             x_max_plot = np.max(X) + 0.5
             x_plot = np.linspace(x_min_plot, x_max_plot, 100)
             y_plot_log = modello_lineare(x_plot, m_fit, q_fit)
 
+            # aggiungo il mio errore sui parametri nella label
             label_fit = (rf'Fit Binnato: log(F)=({m_fit:.2f}$\pm${err_m:.2f})M + ({q_fit:.2f}$\pm${err_q:.2f})'
                          rf'\n$\chi^2_R$={chi2_red:.2f}')
 
+            # coloro la linea di verde ('g--')
             plt.plot(x_plot, 10 ** y_plot_log, 'g--', linewidth=2, label=label_fit, zorder=16)
 
             # configuro il mio grafico
@@ -345,6 +374,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             print(f"Grafico salvato: {out_file}")
             plt.show()
 
+            # chiudo la mia figura per evitare che si aprano troppe finestre in simultanea
             plt.close()
 
         except Exception as e:

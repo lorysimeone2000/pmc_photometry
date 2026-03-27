@@ -124,20 +124,21 @@ BASE_DIR = trova_cartella_base("Lorenzo")
 
 RUNS = [1, 2, 3]
 
-# Liste globali per accumulare i dati di tutte le immagini di tutte le run
+# Imposto le liste globali per accumulare i dati di tutte le immagini di tutte le run
 tutti_mag_data = []
 tutti_mag_cat_data = []
 totale_perse = 0
 totale_catalogate = 0
 totale_correlate = 0
 
-# Strutture per salvare i parametri per il titolo
+# Preparo le strutture per salvare i parametri per il titolo
 fwhm_usato = None
 size_usato = None
 
 print("Inizio scansione Run...")
 
-for run in RUNS:
+# Aggiungo tqdm al ciclo principale delle Run
+for run in tqdm(RUNS, desc="Avanzamento Globale Runs"):
     # Cerco dinamicamente la cartella tabelle_unite_run_X
     nome_cartella_csv = f"tabelle/tabelle_unite/tabelle_unite_run_{run}"
     cartella_csv_path = cerca_cartella_nel_progetto(BASE_DIR, nome_cartella_csv)
@@ -147,7 +148,7 @@ for run in RUNS:
     lista_percorsi_csv = sorted([str(f) for f in cartella_csv_path.glob('*.csv')])
 
     # Cerco dinamicamente la cartella sorgenti_catalogate_run_X
-    nome_cartella_csv_cat = f"sorgenti_catalogate_run_{run}"
+    nome_cartella_csv_cat = f"tabelle/sorgenti_catalogate_run/sorgenti_catalogate_run_{run}"
     cartella_csv_cat_path = cerca_cartella_nel_progetto(BASE_DIR, nome_cartella_csv_cat)
     if cartella_csv_cat_path is None:
         print(f"AVVISO: Cartella '{nome_cartella_csv_cat}' non trovata. Salto la run {run}.")
@@ -160,9 +161,9 @@ for run in RUNS:
         print(f"AVVISO: Nessun file trovato per la run {run}.")
         continue
 
-    print(f"Elaborazione Run {run} ({num_file} immagini)...")
+    print(f"\nElaborazione Run {run} ({num_file} immagini)...")
 
-    for n_immagine in tqdm(range(num_file), desc=f"Run {run}"):
+    for n_immagine in tqdm(range(num_file), desc=f"Run {run} Dettaglio", leave=False):
         percorso_file_csv = lista_percorsi_csv[n_immagine]
         dataframe = pd.read_csv(percorso_file_csv, comment='#')
         tbl = Table.from_pandas(dataframe)
@@ -177,7 +178,7 @@ for run in RUNS:
             fwhm_usato = header_dal_csv.get('seg_fwhm', header_dal_csv.get('SEG_FWHM'))
             size_usato = header_dal_csv.get('seg_size', header_dal_csv.get('SEG_SIZE'))
 
-        # Preparazione dati
+        # Prendo i dati di corrispondenza
         mask_si = np.char.startswith(tbl['Corrispondenza'].astype(str), 'SI')
         ids_trovati_e_correlati = set(tbl[mask_si]['ID'])
 
@@ -212,39 +213,62 @@ for run in RUNS:
         tutti_mag_data.extend(mag_data)
         tutti_mag_cat_data.extend(mag_cat_data)
 
+import time
+
 # Fine ciclo, verifico di avere dati
 if len(tutti_mag_cat_data) == 0:
     print("ERRORE: Nessun dato valido caricato.")
     exit()
 
+print("\n--- Inizio monitoraggio tempi post-ciclo ---")
+
+# Avvio il cronometro per le immagini totali
+t0_immagini = time.perf_counter()
 # Calcolo quante immagini totali ho processato per la formula dei bin e per le medie
 immagini_totali = sum(
     len(list(cerca_cartella_nel_progetto(BASE_DIR, f"tabelle_unite_run_{r}").glob('*.csv'))) for r in RUNS if
     cerca_cartella_nel_progetto(BASE_DIR, f"tabelle_unite_run_{r}"))
+print(f"Tempo calcolo immagini_totali (rglob): {time.perf_counter() - t0_immagini:.3f} s")
 
 print(f"\nRiepilogo Globale:")
 print(f"Stelle totali di catalogo (tutte le run): {totale_catalogate}")
 print(f"Stelle correlate uniche (tutte le run): {totale_correlate}")
 print(f"Stelle di catalogo NON correlate/trovate: {totale_perse}")
 
-# 1. Calcolo bin comuni GLOBALI
+# Avvio il cronometro per la concatenazione
+t0_concat = time.perf_counter()
+# 1. Calcolo i bin comuni GLOBALI
 dati_totali = np.concatenate((tutti_mag_data, tutti_mag_cat_data))
-# Passo il numero di immagini alla funzione e questa si assicurerà che i bin non esplodano
+print(f"Tempo concatenazione dati totali: {time.perf_counter() - t0_concat:.3f} s")
+
+# Avvio il cronometro per i percentili
+t0_fd = time.perf_counter()
+# Passo il numero di immagini alla funzione e mi assicuro che i bin non esplodano
 n_bin = freedman_diaconis_bins(dati_totali, num_images=immagini_totali)
+print(f"Tempo Freedman-Diaconis (np.percentile su {len(dati_totali)} elementi): {time.perf_counter() - t0_fd:.3f} s")
+
+# Avvio il cronometro per i bin edges
+t0_edges = time.perf_counter()
 hist_range = (np.min(dati_totali), np.max(dati_totali))
 bins = np.histogram_bin_edges(dati_totali, bins=n_bin, range=hist_range)
+print(f"Tempo calcolo Bin Edges: {time.perf_counter() - t0_edges:.3f} s")
 
-# 2. Calcolo dei conteggi GLOBALI
+# Avvio il cronometro per gli istogrammi
+t0_hist = time.perf_counter()
+# 2. Calcolo i conteggi GLOBALI
 counts_cat, bin_edges = np.histogram(tutti_mag_cat_data, bins=bins)
 counts_corr, _ = np.histogram(tutti_mag_data, bins=bins)
+print(f"Tempo np.histogram: {time.perf_counter() - t0_hist:.3f} s")
 
-# 3. Calcolo Medie (divido per il numero totale di immagini analizzate)
+# 3. Calcolo le Medie (divido per il numero totale di immagini analizzate)
 media_counts_cat = counts_cat / immagini_totali
 media_counts_corr = counts_corr / immagini_totali
 
 bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
-# 4. Creazione del grafico a linee
+# Avvio il cronometro per il plot
+t0_plot = time.perf_counter()
+# 4. Creo il grafico a linee
 plt.figure(figsize=(14, 8))
 
 # Disegno le Sorgenti Catalogate (Media)
@@ -261,30 +285,25 @@ plt.plot(bin_centers, media_counts_corr,
          linewidth=1.5,
          label='Sorgenti Correlate (Media)')
 
-# Impostazioni Assi
+# Imposto gli Assi
 plt.yscale('log')
 plt.xlabel('Magnitudine (Centri dei Bin)')
 plt.ylabel('Frequenza Media (Conteggi / Immagine)')
-titolo = f'Distribuzione Media delle Magnitudini: Catalogate vs Correlate (Run {RUNS})\n'
+titolo = f'Distribuzione Media delle Magnitudini: Catalogate vs Correlate (Run {RUNS}) versione sintetica nuova\n'
 titolo += f'Media di {totale_correlate / immagini_totali:.1f} match su {totale_catalogate / immagini_totali:.1f} catalogate per immagine'
 if fwhm_usato and size_usato:
     titolo += f' (FWHM = {fwhm_usato}, size = {size_usato})'
 plt.title(titolo)
 
-# Invertiamo l'asse X (magnitudini astronomiche)
+# Inverto l'asse X (magnitudini astronomiche)
 plt.gca().invert_xaxis()
 
-# Griglia e Legenda
+# Aggiungo Griglia e Legenda
 plt.grid(True, which="both", linestyle='--', alpha=0.6)
 plt.legend()
 
-'''# Formattazione Tick Asse X
-tick_labels = [f'{c:.2f}' for c in bin_centers]
-step = 4
-subset_ticks = bin_centers[::step]
-subset_labels = tick_labels[::step]
-plt.gca().set_xticks(subset_ticks)
-plt.gca().set_xticklabels(subset_labels, rotation=45, ha='right')'''
-
 plt.tight_layout()
+print(f"Tempo preparazione grafico Matplotlib: {time.perf_counter() - t0_plot:.3f} s")
+print("--- Fine monitoraggio, avvio render grafico ---")
+
 plt.show()

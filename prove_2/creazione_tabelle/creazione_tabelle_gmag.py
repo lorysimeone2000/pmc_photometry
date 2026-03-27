@@ -108,8 +108,8 @@ vizier = Vizier(
     columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag'],
     row_limit=-1,
 )
-# forzo astroquery a usare il mirror americano
-vizier.VIZIER_SERVER = 'vizier.cfa.harvard.edu'
+'''# forzo astroquery a usare il mirror americano
+vizier.VIZIER_SERVER = 'vizier.cfa.harvard.edu'''
 
 # =============================================================================
 # BLOCCO DI ESECUZIONE (MAIN)
@@ -246,7 +246,7 @@ if __name__ == "__main__":
         # =============================================================================
         # sposto questo blocco fuori da ogni condizione restrittiva
         cartella_prove = BASE_DIR
-        cartella_tabelle = cartella_prove / "tabelle"
+        cartella_tabelle = cartella_prove / "tabelle_gmag"
 
         # creo il percorso finale (mkdir con parents=True gestisce tutta la catena)
         output_dir = cartella_tabelle / "tabelle_unite" / f"tabelle_unite_run_{run}"
@@ -288,8 +288,7 @@ if __name__ == "__main__":
                         # eseguo la mia query su Vizier
                         riquadro_esterno_vizier = vizier.query_region(
                             coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
-                            radius=raggio_ricerca,
-                            column_filters={'gmag': f'<{15}'}
+                            radius=raggio_ricerca
                         )
 
                         # verifico esplicitamente se VizieR ha risposto con risultati validi

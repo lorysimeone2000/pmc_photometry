@@ -7,6 +7,7 @@ from matplotlib.colors import LogNorm
 from photutils.segmentation import SourceCatalog
 from photutils.aperture import aperture_photometry, CircularAperture
 import numpy as np
+import time
 import os
 import sys
 import gc
@@ -31,6 +32,7 @@ from astropy.table import Table, vstack
 from photutils.detection import find_peaks
 from astropy.coordinates import SkyCoord
 import astropy.coordinates as coord
+from astropy.coordinates import search_around_sky
 import astropy.units as u
 from astropy.utils.data import get_pkg_data_filename
 from astropy.wcs.wcsapi import SlicedLowLevelWCS
@@ -39,22 +41,17 @@ from astropy.coordinates import Angle
 from shapely.geometry import Point, Polygon
 from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyUserWarning
+from scipy.ndimage import label
 import re
 
-# --- IMPORT FONDAMENTALE PER LA PORTABILITÀ ---
+# --- IMPORT FONDAMENTALE PER LA MIA PORTABILITÀ ---
 from pathlib import Path
 
-# catalogo satelliti
-from skyfield.api import load, wgs84
-from astropy.time import Time
-import requests
-from datetime import timedelta
-
-# import per la ricerca spaziale ultra veloce
+# importo il modulo per la mia ricerca spaziale ultra veloce
 from scipy.spatial import cKDTree
 
 # --- GESTIONE WARNING ---
-# ignoro i warning per mantenere pulito l'output
+# ignoro i warning per mantenere pulito il mio output
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', message='.*failed to converge.*', category=UserWarning)
 warnings.simplefilter('ignore', category=FITSFixedWarning)
@@ -71,12 +68,11 @@ def trova_cartella_base(nome_target="Lorenzo"):
     for parent in [path_corrente] + list(path_corrente.parents):
         if parent.name == nome_target:
             return parent
-    print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
+    print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory del mio script.")
     return path_corrente.parent
 
 
 BASE_DIR = trova_cartella_base("Lorenzo")
-
 PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
 
 if PERCORSO_FUNZIONI not in sys.path:
@@ -90,21 +86,232 @@ print(f"Cartella Base rilevata: {BASE_DIR}")
 print(f"Moduli esterni caricati con successo.")
 print(f"------------------------------")
 
-# 1. inizializzo Skyfield
-ts = load.timescale()
-
-# 2. imposto le coordinate del mio telescopio usando la funzione importata
-lat_oss, lon_oss, alt_oss = ottieni_coordinate_telescopio('ASTRI 1', BASE_DIR / "pmc_photometry")
-
-# creo l'oggetto geografico wgs84
-osservatorio = wgs84.latlon(lat_oss, lon_oss, elevation_m=alt_oss)
-
-# uso il mirror di Harvard scaricando le 5 bande fondamentali per simulare il sensore FLIR
+# uso il mirror di Harvard scaricando le 5 bande fondamentali per simulare il mio sensore FLIR
 vizier = Vizier(
     catalog="II/389/ps1_dr2",
     columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag', 'imag', 'zmag', 'ymag'],
-    row_limit=-1
+    row_limit=-1,
 )
+
+def stampa_descrizioni_colonne_ps1():
+    """
+    Stampo tutte le informazioni disponibili per le colonne di magnitudine
+    del catalogo Pan-STARRS DR2.
+    """
+    from astroquery.vizier import Vizier
+    import pandas as pd
+
+    print("\n" + "=" * 80)
+    print("ANALISI COMPLETA COLONNE MAGNITUDINE - PAN-STARRS DR2 (II/389/ps1_dr2)")
+    print("=" * 80)
+
+    # recupero il catalogo
+    print("\n1. Scaricamento metadati del catalogo...")
+    catalogo = Vizier.get_catalogs("II/389/ps1_dr2")[0]
+
+    # definisco i colori di magnitudine che voglio analizzare
+    bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
+    bande_err = ['e_gmag', 'e_rmag', 'e_imag', 'e_zmag', 'e_ymag']
+    bande_std = ['gmagStd', 'rmagStd', 'imagStd', 'zmagStd', 'ymagStd']
+
+    tutte_colonne = bande + bande_err + bande_std
+
+    print("\n2. Analisi dettagliata per colonna:")
+    print("-" * 80)
+
+    risultati = {}
+
+    for col_name in tutte_colonne:
+        if col_name in catalogo.columns:
+            print(f"\n>>> COLONNA: {col_name}")
+            print("-" * 50)
+
+            # ottengo la mia colonna
+            col = catalogo[col_name]
+
+            # stampo tutte le informazioni disponibili
+            print(f"  Descrizione: {col.description if hasattr(col, 'description') else 'N/A'}")
+            print(f"  Unità: {col.unit if hasattr(col, 'unit') else 'N/A'}")
+            print(f"  Formato: {col.format if hasattr(col, 'format') else 'N/A'}")
+
+            # gestisco i meta dati
+            if hasattr(col, 'meta'):
+                print(f"  Meta dati:")
+                for key, value in col.meta.items():
+                    print(f"    {key}: {value}")
+
+            # estraggo l'UCD
+            if hasattr(col, 'meta') and 'ucd' in col.meta:
+                print(f"  UCD: {col.meta['ucd']}")
+
+            # cerco informazioni sulla lunghezza d'onda
+            desc = col.description if hasattr(col, 'description') else ""
+            if desc:
+                # cerco pattern di lunghezza d'onda come "4866Å", "4866 A", "4866A", "4866 nm"
+                import re
+                patterns = [
+                    r'(\d+)\s*[ÅA]',
+                    r'(\d+)\s*nm',
+                    r'(\d+)\s*microns',
+                    r'(\d+\.?\d*)\s*μm',
+                ]
+
+                for pattern in patterns:
+                    matches = re.findall(pattern, desc)
+                    if matches:
+                        print(f"  Lunghezza d'onda trovata: {matches[0]} Å")
+                        break
+
+            risultati[col_name] = {
+                'description': desc,
+                'ucd': col.meta.get('ucd', 'N/A') if hasattr(col, 'meta') else 'N/A'
+            }
+        else:
+            print(f"\n>>> COLONNA: {col_name} - NON TROVATA nel mio catalogo")
+
+    print("\n" + "=" * 80)
+    print("RIASSUNTO UCD TROVATI:")
+    print("=" * 80)
+    for col_name, info in risultati.items():
+        print(f"{col_name:10s} -> UCD: {info['ucd']}")
+
+    print("\n" + "=" * 80)
+
+    return risultati
+
+
+def scarica_intervalli_bande_ps1_da_descrizioni():
+    """
+    Scarico gli intervalli delle bande Pan-STARRS DR2 estraendo
+    le lunghezze d'onda centrali dalle descrizioni delle colonne.
+    """
+    from astroquery.vizier import Vizier
+    import re
+
+    print("\n" + "=" * 70)
+    print("SCARICAMENTO INTERVALLI BANDE PAN-STARRS DR2")
+    print("=" * 70)
+
+    # recupero il mio catalogo
+    catalogo = Vizier.get_catalogs("II/389/ps1_dr2")[0]
+
+    # annoto le FWHM delle bande Pan-STARRS che ho ricavato da Tonry+ 2012
+    fwhm_nm = {
+        'gmag': 137,
+        'rmag': 140,
+        'imag': 130,
+        'zmag': 104,
+        'ymag': 83
+    }
+
+    # imposto i miei valori di fallback validi (in nm)
+    fallback_validi = {
+        'gmag': 486.6,
+        'rmag': 621.5,
+        'imag': 754.5,
+        'zmag': 867.9,
+        'ymag': 963.3
+    }
+
+    # definisco il pattern per estrarre la lunghezza d'onda centrale prestando attenzione all'ordine
+    # prima cerco il pattern con {AA} che mi serve in modo specifico per gmag
+    patterns = [
+        r'\((\d+)\s*\{AA\}\)',
+        r'\((\d+)\s*A\)',
+        r'(\d+)\s*[ÅA]',
+        r'(\d+)\s*nm',
+    ]
+
+    bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
+    limiti_bande = {}
+
+    print("\nEstrazione lunghezze d'onda dalle descrizioni:")
+    print("-" * 70)
+
+    for banda in bande:
+        if banda in catalogo.columns:
+            col = catalogo[banda]
+            descrizione = col.description if hasattr(col, 'description') else ""
+
+            print(f"\n{banda}:")
+            print(f"  Descrizione: {descrizione}")
+
+            # estraggo la mia lunghezza d'onda centrale
+            lambda_centro = None
+
+            # provo prima a trovare il pattern specifico per questa banda
+            if banda == 'gmag':
+                # cerco specificamente il mio pattern con {AA}
+                match = re.search(r'\((\d+)\s*\{AA\}\)', descrizione)
+                if match:
+                    valore = float(match.group(1))
+                    lambda_centro = valore / 10.0
+                    # raddoppio le mie parentesi graffe per non farle interpretare come variabile
+                    print(f"  -> Lunghezza d'onda estratta (pattern {{AA}}): {valore:.0f} Å = {lambda_centro:.1f} nm")
+
+            # se non lo trovo, provo tutti i miei pattern
+            if lambda_centro is None:
+                for pattern in patterns:
+                    match = re.search(pattern, descrizione)
+                    if match:
+                        valore = float(match.group(1))
+                        # verifico che il mio valore sia in un range plausibile (300-2000 nm o 3000-20000 Å)
+                        # aggiungo la 'r' per rendere la stringa raw ed evitare il SyntaxWarning
+                        if '{AA}' in pattern or 'Å' in pattern or pattern.endswith(r'A\)') or pattern.endswith('[ÅA]'):
+                            # è in Å, quindi lo converto in nm
+                            lambda_centro = valore / 10.0
+                            print(f"  -> Lunghezza d'onda estratta: {valore:.0f} Å = {lambda_centro:.1f} nm")
+                        else:
+                            lambda_centro = valore
+                            print(f"  -> Lunghezza d'onda estratta: {lambda_centro:.1f} nm")
+                        break
+
+            # verifico che il valore che ho ottenuto sia plausibile (tra 300 e 2000 nm)
+            if lambda_centro is not None:
+                if lambda_centro < 300 or lambda_centro > 2000:
+                    print(f"  -> ATTENZIONE: Valore {lambda_centro:.1f} nm non plausibile! Uso il mio fallback.")
+                    lambda_centro = fallback_validi.get(banda, 500.0)
+            else:
+                print(f"  -> ATTENZIONE: Nessuna lunghezza d'onda trovata! Uso il mio fallback.")
+                lambda_centro = fallback_validi.get(banda, 500.0)
+                print(f"  -> Valore di fallback: {lambda_centro:.1f} nm")
+
+            # calcolo l'intervallo usando 1.5×FWHM per coprire circa il 93% della mia risposta
+            fwhm = fwhm_nm.get(banda, 100)
+            fattore = 0.75
+            w_min = int(round(lambda_centro - fwhm * fattore))
+            w_max = int(round(lambda_centro + fwhm * fattore))
+
+            # limito al range del mio sensore (300-1100 nm)
+            w_min = max(w_min, 300)
+            w_max = min(w_max, 1100)
+
+            # verifico alla fine che w_min < w_max
+            if w_min >= w_max:
+                print(f"  -> ERRORE: Intervallo non valido ({w_min}-{w_max})! Uso il mio fallback.")
+                # imposto un intervallo di fallback sicuro
+                fallback_intervalli = {
+                    'gmag': (418, 555),
+                    'rmag': (552, 692),
+                    'imag': (690, 820),
+                    'zmag': (816, 920),
+                    'ymag': (922, 1005)
+                }
+                w_min, w_max = fallback_intervalli.get(banda, (400, 550))
+
+            limiti_bande[banda] = (w_min, w_max)
+            print(f"  -> FWHM: {fwhm} nm")
+            print(f"  -> Intervallo finale: {w_min} - {w_max} nm")
+
+    print("\n" + "=" * 70)
+    print("DIZIONARIO FINALE:")
+    print("=" * 70)
+    for banda, (w_min, w_max) in limiti_bande.items():
+        print(f"    '{banda}': ({w_min}, {w_max}),")
+    print("=" * 70 + "\n")
+
+    return limiti_bande
+
 
 # =============================================================================
 # BLOCCO DI ESECUZIONE (MAIN)
@@ -123,69 +330,57 @@ if __name__ == "__main__":
         exit()
     parametri_caricati = leggi_file_parametri(file_parametri)
 
-    # --- PRE-CALCOLO GLOBALE HIPPARCOS ---
-    file_hipparco = cerca_file_nel_progetto(BASE_DIR, "hipparco.fit")
-    hdu_list_hipparco = fits.open(file_hipparco)
-    tbl_catalogo_hipparco = Table(hdu_list_hipparco[1].data)
-    hdu_list_hipparco.close()
+    # scarico il mio catalogo globale Hipparcos da VizieR
+    print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
+    vizier_hip = Vizier(
+        catalog="I/239/hip_main",
+        columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],
+        row_limit=-1
+    )
+    risultato_hip = vizier_hip.query_constraints(Vmag="<16")
+    tbl_catalogo_hipparco = risultato_hip[0]
 
-    # calcolo gli errori propagati al J2000
-    dt = 2000.0 - 1991.25
-    sigma_ra_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco['e_RAICRS']) ** 2 + (
-            dt * np.nan_to_num(tbl_catalogo_hipparco['e_pmRA'])) ** 2) / 3600000.0
-    sigma_dec_deg = np.sqrt(np.nan_to_num(tbl_catalogo_hipparco['e_DEICRS']) ** 2 + (
-            dt * np.nan_to_num(tbl_catalogo_hipparco['e_pmDE'])) ** 2) / 3600000.0
+    # rinomino le colonne per allinearmi al mio formato standard
+    if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
+        tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
+        tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
+    print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
 
-    # errore radiale totale Hipparcos
-    sigma_hip_deg = np.sqrt(sigma_ra_deg ** 2 + sigma_dec_deg ** 2)
+    exclusion_radii_deg = np.full(len(tbl_catalogo_hipparco), 2.5 / 3600.0)
 
-    # errore stimato Vizier
-    sigma_vizier_deg = 0.1 / 3600.0
-
-    # sommo in quadratura i due cataloghi
-    sigma_totale_deg = np.sqrt(sigma_hip_deg ** 2 + sigma_vizier_deg ** 2)
-
-    # 3-SIGMA
-    exclusion_radii_deg_ = 3.0 * sigma_totale_deg
-    exclusion_radii_deg = np.full(len(exclusion_radii_deg_), 2.5 / 3600.0)
-
-    print(f"Raggio di merging tra i cataloghi: {np.mean(exclusion_radii_deg)}")
-
-    # creo lo SkyCoord Hipparcos
+    # creo il mio SkyCoord Hipparcos globale
     coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],
                                       dec=tbl_catalogo_hipparco['_DEJ2000'],
                                       unit=u.deg)
 
-    # cerco il file contenente la curva di efficienza quantica per calcolare i pesi esatti
+    dati_tutte_le_run = []
+    mappa_headers_globali = {}
+
+    # cerco il file contenente la mia curva di efficienza quantica per calcolare i pesi esatti
     file_curva_pmc = cerca_file_nel_progetto(BASE_DIR, "curva_PMC.csv")
     if file_curva_pmc is not None:
-        # leggo il dataframe della curva
+        # leggo il dataframe della mia curva
         df_curva = pd.read_csv(file_curva_pmc)
 
-        # stabilisco i limiti di lunghezza d'onda delle singole bande
-        limiti_bande = {
-            'gmag': (400, 550),
-            'rmag': (550, 700),
-            'imag': (680, 840),
-            'zmag': (820, 920),
-            'ymag': (920, 1050)
-        }
+        # stabilisco i limiti di lunghezza d'onda delle singole bande estraendoli da VizieR
+        limiti_bande = scarica_intervalli_bande_ps1_da_descrizioni()
+        print(f"Limiti bande: \n{limiti_bande}")
 
         pesi_estratti = []
 
-        # itero sulle bande per calcolare l'area sottesa alla curva per ciascun range
+        # itero sulle bande per calcolare l'area sottesa alla mia curva per ciascun range
         for nome_banda, (w_min, w_max) in limiti_bande.items():
-            # applico la maschera di taglio per l'intervallo corrente
+            # applico la mia maschera di taglio per l'intervallo corrente
             maschera_w = (df_curva['Wavelength'] >= w_min) & (df_curva['Wavelength'] <= w_max)
-            # calcolo l'integrale tramite il metodo dei trapezi per estrarre la porzione di efficienza
-            area = np.trapz(df_curva['QE'][maschera_w], x=df_curva['Wavelength'][maschera_w])
+            # calcolo l'integrale tramite il metodo dei trapezi per estrarre la mia porzione di efficienza
+            area = np.trapezoid(df_curva['QE'][maschera_w], x=df_curva['Wavelength'][maschera_w])
             pesi_estratti.append(area)
 
-        # converto in array e normalizzo in modo che la somma finale sia pari a 1
+        # converto in array e normalizzo in modo che la mia somma finale sia pari a 1
         pesi_estratti = np.array(pesi_estratti)
         pesi_ideali_globali = pesi_estratti / np.sum(pesi_estratti)
     else:
-        # imposto i pesi standard in caso di mancato ritrovamento del csv
+        # imposto i pesi standard in caso di mancato ritrovamento del mio csv
         pesi_ideali_globali = np.array([0.458, 0.326, 0.133, 0.055, 0.028])
 
     file_somma_pixel = cerca_file_nel_progetto(BASE_DIR, "risultati_somma_pixel.csv")
@@ -200,53 +395,10 @@ if __name__ == "__main__":
         df_somma_pixel = None
         s_ref = 1.0
 
-    tutti_i_file_csv_generati = []
-    tuo_user = "lorenzo.simeone@studenti.unipg.it"
-    tua_password = "Cazzata_2002348"
-
     global_tracker_coords = None
     global_tracker_labels = []
-    global_max_label = 0
-    global_catalog_label_map = {}
-    contatore_satelliti = 0
-    contatore_satelliti_presenti = 0
 
-    # =================================================================
-    # --- PRE-CALCOLO SATELLITI GLOBALE ---
-    # =================================================================
-    print("\nPreparo il catalogo satelliti storici...")
-
-    file_fits_riferimento = None
     cartella_dati = BASE_DIR / "PMC_DATA_COLOSSALE"
-
-    if cartella_dati.exists():
-        f_list = list(cartella_dati.rglob('*.fit')) + list(cartella_dati.rglob('*.fits')) + list(
-            cartella_dati.rglob('*.FIT')) + list(cartella_dati.rglob('*.FITS'))
-        if f_list:
-            file_fits_riferimento = f_list[0]
-
-    if file_fits_riferimento:
-        hdu_ref = fits.open(file_fits_riferimento)
-        tempo_ref_astropy = Time(hdu_ref[0].header['DATE-OBS'], format='isot', scale='utc')
-        hdu_ref.close()
-
-        # definisco direttamente il percorso della cartella
-        cartella_tabelle = BASE_DIR / "tabelle_COLOSSALE" / "tabelle_unite"
-        cartella_tabelle.mkdir(parents=True, exist_ok=True)
-
-        percorso_tle = scarica_tle_storici(tempo_ref_astropy, tuo_user, tua_password, cartella_tabelle)
-
-        if percorso_tle:
-            satelliti_attivi = load.tle_file(percorso_tle)
-            print(f"Download satelliti avvenuto: {len(satelliti_attivi)} satelliti trovati")
-        else:
-            print("ATTENZIONE: Download fallito. Disabilito il filtro satelliti.")
-            satelliti_attivi = []
-    else:
-        print("ATTENZIONE: Nessun FITS trovato per determinare la data. Disabilito il filtro satelliti.")
-        satelliti_attivi = []
-    # =================================================================
-
     cartella_tabelle = BASE_DIR / "tabelle_COLOSSALE" / "tabelle_unite"
 
     if not cartella_dati.exists():
@@ -292,40 +444,51 @@ if __name__ == "__main__":
 
                     hdu_list.close()
 
-                    riquadro_esterno_vizier = vizier.query_region(
-                        coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
-                        radius=raggio_ricerca
-                    )
-                    tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+                    # implemento il ciclo di tentativi per il mio scaricamento da vizier
+                    tentativi_massimi = 5
+                    attesa = 10
+                    for tentativo in range(tentativi_massimi):
+                        try:
+                            riquadro_esterno_vizier = vizier.query_region(
+                                coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
+                                radius=raggio_ricerca
+                            )
+                            tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+                            break
+                        except Exception as e:
+                            if tentativo < tentativi_massimi - 1:
+                                time.sleep(attesa)
+                            else:
+                                raise
 
                     # CALCOLO MAGNITUDINE SINTETICA FLIR
                     bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
 
-                    # recupero i pesi precedentemente calcolati in modo efficiente
+                    # recupero i miei pesi precedentemente calcolati in modo efficiente
                     pesi_ideali = pesi_ideali_globali
 
                     flussi = []
-                    maschere_valide = []
 
                     for banda in bande:
                         colonna = tbl_riquadro_esterno_vizier[banda]
                         array_dati = colonna.filled(np.nan) if hasattr(colonna, 'filled') else np.array(colonna)
                         flusso = 10 ** (-0.4 * array_dati)
-                        flussi.append(flusso)
-                        maschere_valide.append(~np.isnan(flusso))
+
+                        # sostituisco i dati mancanti con un flusso pari a zero
+                        # assumo che se il catalogo non ha visto la mia stella in questa banda, il contributo di luce è nullo
+                        flusso_pulito = np.nan_to_num(flusso, nan=0.0)
+                        flussi.append(flusso_pulito)
 
                     flussi = np.array(flussi)
-                    maschere_valide = np.array(maschere_valide)
                     array_pesi = pesi_ideali[:, None]
 
-                    pesi_attivi = array_pesi * maschere_valide
-                    somma_pesi = np.sum(pesi_attivi, axis=0)
-                    flussi_sicuri = np.nan_to_num(flussi)
-                    flusso_pesato_totale = np.sum(flussi_sicuri * pesi_attivi, axis=0)
+                    # calcolo il mio flusso pesato totale senza normalizzare per le bande mancanti
+                    flusso_finale = np.sum(flussi * array_pesi, axis=0)
 
                     with np.errstate(divide='ignore', invalid='ignore'):
-                        flusso_finale = flusso_pesato_totale / somma_pesi
-                        mag_sintetica_globale = -2.5 * np.log10(flusso_finale)
+                        # assegno una magnitudine fittizia di 99.0 ai miei oggetti che risultano avere flusso totalmente zero
+                        mag_sintetica_globale = np.where(flusso_finale > 0, -2.5 * np.log10(flusso_finale),
+                                                         99.0)
 
                     tbl_riquadro_esterno_vizier['Mag_sintetica'] = mag_sintetica_globale
 
@@ -340,7 +503,7 @@ if __name__ == "__main__":
                     # =================================================================
                     # --- FILTRAGGIO COMPETITIVO A SINGOLA FASE ---
                     # =================================================================
-                    print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
+                    print("Avvio il mio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
 
                     coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
                                              dec=tbl_riquadro_esterno_vizier['DEJ2000'],
@@ -366,20 +529,25 @@ if __name__ == "__main__":
 
                     unique_hip_idx = np.unique(idx_hip_valid)
 
+                    array_mag_vizier = np.nan_to_num(tbl_riquadro_esterno_vizier['Mag_sintetica'].data, nan=99.0)
+                    array_mag_hipparco = np.nan_to_num(tbl_hipparco_run_subset['Vmag'].data, nan=99.0)
+
                     for i_hip in unique_hip_idx:
                         viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
 
                         if len(viz_matches) > 0:
-                            mag_viz_matches = np.nan_to_num(tbl_riquadro_esterno_vizier['Mag_sintetica'][viz_matches],
-                                                            nan=99.0)
+                            mag_viz_matches = array_mag_vizier[viz_matches]
 
                             idx_min_mag = np.argmin(mag_viz_matches)
                             best_viz_idx = viz_matches[idx_min_mag]
                             best_viz_mag = mag_viz_matches[idx_min_mag]
 
-                            hip_mag = np.nan_to_num(tbl_hipparco_run_subset['Vmag'][i_hip], nan=99.0)
+                            hip_mag = array_mag_hipparco[i_hip]
 
-                            if best_viz_mag <= hip_mag:
+                            # implemento la logica di filtraggio per eliminare i conflitti
+                            if hip_mag < 9.0:
+                                mask_keep_vizier[viz_matches] = False
+                            elif best_viz_mag <= hip_mag:
                                 mask_keep_hipparco[i_hip] = False
                             else:
                                 mask_keep_vizier[best_viz_idx] = False
@@ -422,7 +590,6 @@ if __name__ == "__main__":
 
                 with fits.open(percorso_file, memmap=False) as hdu:
                     w = WCS(hdu[0].header)
-                    header_date_obs = hdu[0].header['DATE-OBS']
                 coords = w.pixel_to_world(df_trovate['xcentroid'], df_trovate['ycentroid'])
                 df_trovate['RA_centroid'] = coords.ra.deg
                 df_trovate['DEC_centroid'] = coords.dec.deg
@@ -459,34 +626,6 @@ if __name__ == "__main__":
                         df_no['Corrispondenza'] = 'NO'
                         for c in df_catalogate.columns: df_no[c] = np.nan
 
-                        '''tempo_scatto_astropy = Time(header_date_obs, format='isot', scale='utc')
-                        tempo_skyfield = ts.from_astropy(tempo_scatto_astropy)
-
-                        ra_sat_list, dec_sat_list = [], []
-                        for sat in satelliti_attivi:
-                            topocentrica = (sat - osservatorio).at(tempo_skyfield)
-                            ra_sat, dec_sat, _ = topocentrica.radec()
-
-                            if np.isnan(ra_sat.hours) or np.isnan(dec_sat.degrees):
-                                continue
-
-                            ra_sat_list.append(ra_sat.hours * 15)
-                            dec_sat_list.append(dec_sat.degrees)
-
-                        if ra_sat_list and len(df_no) > 0:
-                            catalogo_satelliti = SkyCoord(ra=ra_sat_list * u.deg, dec=dec_sat_list * u.deg)
-
-                            coords_oggetti_no = SkyCoord(ra=df_no['RA_centroid'].values * u.deg,
-                                                         dec=df_no['DEC_centroid'].values * u.deg)
-                            idx_sat, d2d_sat, _ = coords_oggetti_no.match_to_catalog_sky(catalogo_satelliti)
-
-                            tolleranza_satellite = 3 / 60 * u.deg
-                            mask_is_satellite = d2d_sat < tolleranza_satellite
-
-                            # elimino i falsi positivi causati dai satelliti
-                            contatore_satelliti = contatore_satelliti + np.sum(mask_is_satellite)
-                            contatore_satelliti_presenti = contatore_satelliti_presenti + len(catalogo_satelliti)'''
-
                         df_final = pd.concat([df_si, df_no], ignore_index=True)
 
                     else:
@@ -515,14 +654,14 @@ if __name__ == "__main__":
                                              zip(df_final['RA_centroid'].values, df_final['DEC_centroid'].values)]
                     final_labels[:] = global_tracker_labels
                 else:
-                    # creo un albero KD per una ricerca spaziale ultra veloce
+                    # creo il mio albero KD per una ricerca spaziale ultra veloce
                     albero = cKDTree(global_tracker_coords)
                     distanze, indici = albero.query(coords_cart, distance_upper_bound=soglia_3d)
 
                     # trovo quali oggetti hanno un match sotto la mia soglia
                     mask_match = distanze <= soglia_3d
 
-                    # assegno le etichette già note
+                    # assegno le etichette già note ai miei oggetti
                     for i in np.where(mask_match)[0]:
                         final_labels[i] = global_tracker_labels[indici[i]]
 
@@ -544,7 +683,7 @@ if __name__ == "__main__":
 
                 df_final['label'] = final_labels
 
-                # aggiungo colonne identificative
+                # aggiungo le mie colonne identificative
                 df_final['run_id'] = run_name
                 df_final['img_index'] = n
 
@@ -585,7 +724,6 @@ if __name__ == "__main__":
             file_csv_list = sorted([f for f in output_dir.glob('*.csv')])
 
             for f in file_csv_list:
-                tutti_i_file_csv_generati.append((f, run_name))
                 file_csv_generati_nella_run.append((f, run_name))
 
             all_ids = []
@@ -653,7 +791,7 @@ if __name__ == "__main__":
                 img_idx = df_frame['img_index'].iloc[0] if 'img_index' in df_frame.columns else int(
                     nome_fits.split('.')[0][-3:])
 
-                # estraggo il numero della run dalla stringa per i calcoli dei pixel
+                # estraggo il numero della mia run dalla stringa per i calcoli dei pixel
                 match_run = re.search(r'run_?(\d+)', run_name, re.IGNORECASE)
                 run_idx = int(match_run.group(1)) if match_run else 1
 
@@ -703,7 +841,7 @@ if __name__ == "__main__":
 
                 df_frame['raggio_fisso_max_run'] = raggi_fissi
 
-                # assegno unicamente questo flusso
+                # assegno unicamente il mio flusso
                 df_frame['flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura'] = flussi_calcolati_add
 
                 df_frame['fondo_per_pixel'] = fondo_pp
@@ -714,7 +852,7 @@ if __name__ == "__main__":
                 salva_csv_con_header_aggiornato(df_frame, header_info, file_csv)
 
             # =============================================================================
-            # Avvio la fase 4 per calcolare statistiche e ID per la mia singola run corrente
+            # Avvio la mia fase 4 per calcolare statistiche e ID per la singola run corrente
             # =============================================================================
             print(f"\n--- FASE 4: Statistiche Locali e Ripetizioni per {run_name} ---")
 
@@ -785,6 +923,8 @@ if __name__ == "__main__":
 
             for idx, uid in no_mapping_run.items(): run_df.at[idx, 'run_unique_id'] = uid
 
+            print("Eseguo il mio filtraggio temporale e delle ripetizioni minime...")
+
             run_df['da_eliminare_temporale'] = False
             mask_no_temp = run_df['Corrispondenza'] == 'NO'
 
@@ -797,14 +937,13 @@ if __name__ == "__main__":
 
             run_df = run_df[~run_df['da_eliminare_temporale']].drop(columns=['da_eliminare_temporale'])
 
-            conteggi_aggiornati_run = run_df['run_unique_id'].value_counts()
-            id_da_scartare_run = conteggi_aggiornati_run[conteggi_aggiornati_run < 2].index
+            conteggi_aggiornati = run_df['run_unique_id'].value_counts()
+            id_da_scartare = conteggi_aggiornati[conteggi_aggiornati < 2].index
 
-            mask_da_scartare_rip_run = (run_df['Corrispondenza'] == 'NO') & (
-                run_df['run_unique_id'].isin(id_da_scartare_run))
-            run_df = run_df[~mask_da_scartare_rip_run]
+            mask_da_scartare_rip = (run_df['Corrispondenza'] == 'NO') & (run_df['run_unique_id'].isin(id_da_scartare))
+            run_df = run_df[~mask_da_scartare_rip]
 
-            print("Riorganizzazione colonne...")
+            print("Riorganizzazione colonne e salvataggio per fase 5...")
             # tengo traccia solo del flusso base richiesto e rimuovo tutti gli step di decorrelazione locale
             cols_flux = ['flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura']
 
@@ -818,7 +957,7 @@ if __name__ == "__main__":
             run_df.loc[mask_no_match, 'ID'] = run_df.loc[mask_no_match, 'run_unique_id']
             files_groups_run = run_df.groupby('original_file_path')
 
-            # salvo le modifiche intra-run nei CSV per poterle recuperare nella Fase globale
+            # salvo le mie modifiche intra-run e accumulo in memoria per la Fase 5 globale
             for file_path, df_file in tqdm(files_groups_run, desc="Salvataggio Fase 4"):
                 df_final_save = df_file.copy()
                 header_orig = leggi_header_da_csv(file_path)
@@ -830,219 +969,121 @@ if __name__ == "__main__":
                 df_final_save = df_final_save[cols]
                 salva_csv_con_header_aggiornato(df_final_save, header_orig, file_path)
 
+                dati_tutte_le_run.append(df_file)
+                mappa_headers_globali[str(file_path)] = header_orig
+
     # =============================================================================
     # FASE 5 FINALE GLOBALE: STATISTICHE E DECORRELAZIONE GLOBALE SU TUTTE LE RUN
     # =============================================================================
-    print("\n==================== FASE FINALE GLOBALE (TUTTE LE RUN) ====================")
-    print(f"Elaborazione di {len(tutti_i_file_csv_generati)} file totali per decorrelazione d'insieme...")
+    if dati_tutte_le_run:
+        print("\n==================== FASE FINALE GLOBALE (TUTTE LE RUN) ====================")
+        print(f"--- FASE 5: Calcolo Decorrelazione Globale delle Stelle ---")
+        df_totale = pd.concat(dati_tutte_le_run, ignore_index=True)
 
-    if not tutti_i_file_csv_generati:
-        print("Nessun file generato. Esco.")
-        exit()
-
-    lista_df = []
-    tutti_i_file_csv_generati = sorted(tutti_i_file_csv_generati, key=lambda x: str(x[0]))
-
-    for idx_file, (file_csv, run_number) in enumerate(tqdm(tutti_i_file_csv_generati, desc="Lettura Dati Globali")):
-        df_temp = pd.read_csv(file_csv, comment='#')
-        df_temp['file_index'] = idx_file
-        df_temp['run_number'] = run_number
-        df_temp['original_file_path'] = str(file_csv)
-        df_temp['original_idx'] = df_temp.index
-        lista_df.append(df_temp)
-
-    big_df = pd.concat(lista_df, ignore_index=True)
-
-    big_df['run_unique_id'] = np.nan
-    big_df['run_unique_id'] = big_df['run_unique_id'].astype(object)
-
-    mask_si = big_df['Corrispondenza'].str.startswith('SI', na=False)
-    big_df.loc[mask_si, 'run_unique_id'] = "CAT_" + big_df.loc[mask_si, 'ID'].astype(str)
-
-    mask_no = big_df['Corrispondenza'] == 'NO'
-    df_no = big_df[mask_no].copy()
-
-    df_no.sort_values('file_index', inplace=True)
-
-    known_clusters_coords = []
-    known_clusters_ids = []
-    threshold_deg = 35 / 3600
-    unique_files = df_no['file_index'].unique()
-    next_internal_id = 1
-    no_mapping = {}
-
-    for f_idx in tqdm(unique_files, desc="Matching oggetti NO (Multi-Run)"):
-        subset = df_no[df_no['file_index'] == f_idx]
-        if subset.empty: continue
-        coords_subset = SkyCoord(ra=subset['RA_centroid'].values * u.deg,
-                                 dec=subset['DEC_centroid'].values * u.deg)
-        indices_subset = subset.index.tolist()
-
-        if not known_clusters_coords:
-            for i, (ra, dec) in enumerate(zip(subset['RA_centroid'], subset['DEC_centroid'])):
-                cid = f"INT_{next_internal_id}"
-                known_clusters_coords.append((ra, dec))
-                known_clusters_ids.append(cid)
-                no_mapping[indices_subset[i]] = cid
-                next_internal_id += 1
-        else:
-            cluster_sc = SkyCoord(known_clusters_coords, unit=u.deg)
-            idx_cluster, d2d, _ = coords_subset.match_to_catalog_sky(cluster_sc)
-            for i, (match_idx, dist, ra_curr, dec_curr) in enumerate(
-                    zip(idx_cluster, d2d, subset['RA_centroid'], subset['DEC_centroid'])):
-                global_idx = indices_subset[i]
-
-                # aggiorno la mia memoria per risolvere il doppio append e seguire lo spostamento
-                if dist.deg <= threshold_deg:
-                    no_mapping[global_idx] = known_clusters_ids[match_idx]
-                    known_clusters_coords[match_idx] = (ra_curr, dec_curr)
-                else:
-                    cid = f"INT_{next_internal_id}"
-                    known_clusters_ids.append(cid)
-                    known_clusters_coords.append((ra_curr, dec_curr))
-                    no_mapping[global_idx] = cid
-                    next_internal_id += 1
-
-    for idx, uid in no_mapping.items(): big_df.at[idx, 'run_unique_id'] = uid
-
-    # =================================================================
-    # FILTRO TEMPORALE E FILTRO RIPETIZIONI (< 2) GLOBALE
-    # =================================================================
-    print("Eseguo il filtraggio temporale e delle ripetizioni minime globale...")
-
-    # 1. applico il filtro di prossimità temporale (+/- 2 immagini)
-    big_df['da_eliminare_temporale'] = False
-    mask_no_temp = big_df['Corrispondenza'] == 'NO'
-
-    for uid, group in big_df[mask_no_temp].groupby('run_unique_id'):
-        indici_file = group['file_index'].values
-        for idx_row, f_idx in zip(group.index, indici_file):
-            # cerco se esiste almeno una rilevazione dello stesso oggetto nel range di 2 immagini adiacenti
-            vicini = [x for x in indici_file if x != f_idx and abs(x - f_idx) <= 2]
-            if len(vicini) == 0:
-                # marco la singola rilevazione isolata per l'eliminazione
-                big_df.at[idx_row, 'da_eliminare_temporale'] = True
-
-    # elimino materialmente le righe isolate temporalmente
-    big_df = big_df[~big_df['da_eliminare_temporale']].drop(columns=['da_eliminare_temporale'])
-
-    # 2. applico il filtro per numero totale di ripetizioni (< 2)
-    conteggi_aggiornati = big_df['run_unique_id'].value_counts()
-    id_da_scartare = conteggi_aggiornati[conteggi_aggiornati < 2].index
-
-    # creo la maschera ed elimino i NO con meno di 2 ripetizioni totali
-    mask_da_scartare_rip = (big_df['Corrispondenza'] == 'NO') & (big_df['run_unique_id'].isin(id_da_scartare))
-    big_df = big_df[~mask_da_scartare_rip]
-
-    # =================================================================
-    print("Calcolo decorrelazione d'insieme globale sulle singole run unite...")
-
-    cols_base_flux = [c for c in big_df.columns if ('flusso_' in c or 'somma_' in c or 'kron_' in c)]
-    cols_tutti_flussi_glob = [c for c in cols_base_flux if not any(
-        x in c for x in ['media_', 'std_', 'DECORRELAZIONE_STELLE', 'ripetizioni', 'raggio_'])]
-
-    for c in cols_tutti_flussi_glob: big_df[c] = pd.to_numeric(big_df[c], errors='coerce')
-
-    nuovi_flussi_globali = []
-
-    for c in tqdm(cols_tutti_flussi_glob, desc="Decorrelazione Ensemble Globale"):
-        new_col = f"{c}_DECORRELAZIONE_STELLE_GLOBALE"
-        nuovi_flussi_globali.append(new_col)
-
-        # estraggo il primo valore registrato per ogni oggetto e lo imposto come mio riferimento
-        primo_flusso_stella_serie = big_df.groupby('run_unique_id')[c].first()
-        riferimento_per_riga = big_df['run_unique_id'].map(primo_flusso_stella_serie)
-
-        with np.errstate(divide='ignore', invalid='ignore'):
-            rapporto_relativo = (big_df[c] / riferimento_per_riga)
-
-        temp_df_corr = pd.DataFrame({'path': big_df['original_file_path'], 'ratio': rapporto_relativo})
-        fattore_immagine_serie = temp_df_corr.groupby('path')['ratio'].median()
-        fattore_per_riga = big_df['original_file_path'].map(fattore_immagine_serie)
-
-        big_df[new_col] = (big_df[c] / fattore_per_riga)
-
-        # calcolo la media e la deviazione standard rispetto alla mia nuova colonna
-        big_df[f'media_{new_col}'] = big_df.groupby('run_unique_id')[new_col].transform('mean')
-
-        stats_agg = big_df.groupby('run_unique_id')[new_col].agg(['std', 'count'])
-        std_err_serie = (stats_agg['std'] / np.sqrt(stats_agg['count']))
-        big_df[f'std_{new_col}'] = big_df['run_unique_id'].map(std_err_serie)
-
-        # elimino le variabili temporanee per liberare la mia memoria
-        del temp_df_corr, rapporto_relativo, fattore_per_riga, riferimento_per_riga
+        # deframmento il mio dataframe iniziale per ottimizzare e liberare la mia RAM
+        df_totale = df_totale.copy()
+        del dati_tutte_le_run
         gc.collect()
 
-    # ricalcolo medie e deviazioni standard globali originali sui flussi base senza formattazione
-    grouped_per_run_glob = big_df.groupby('run_unique_id')
-    for c in cols_tutti_flussi_glob:
-        col_mean = f'media_{c}'
-        col_std = f'std_{c}'
-        big_df[col_mean] = grouped_per_run_glob[c].transform('mean')
-        stds_sample = grouped_per_run_glob[c].transform('std')
-        counts_grouped = grouped_per_run_glob[c].transform('count')
-        big_df[col_std] = stds_sample / np.sqrt(counts_grouped)
+        # estraggo l'unica colonna di flusso che ho mantenuto
+        cols_base_flux = [c for c in df_totale.columns if ('flusso_' in c or 'somma_' in c or 'kron_' in c)]
+        cols_tutti_flussi_glob = [c for c in cols_base_flux if not any(
+            x in c for x in ['media_', 'std_', 'DECORRELAZIONE_STELLE', 'ripetizioni', 'raggio_'])]
 
-    big_df['ID'] = big_df['ID'].astype(object)
+        nuovi_flussi_globali = []
+        dizionario_nuove_colonne = {}
 
-    mask_no_match = big_df['Corrispondenza'] == 'NO'
-    big_df.loc[mask_no_match, 'ID'] = big_df.loc[mask_no_match, 'run_unique_id']
+        for c in tqdm(cols_tutti_flussi_glob, desc="Decorrelazione Ensemble Globale"):
+            new_col = f"{c}_DECORRELAZIONE_STELLE_GLOBALE"
+            nuovi_flussi_globali.append(new_col)
 
-    files_groups = big_df.groupby('original_file_path')
+            # converto la mia colonna in formato numerico
+            flusso_numerico = pd.to_numeric(df_totale[c], errors='coerce')
 
+            # trovo il primo valore registrato per ogni oggetto e lo imposto come mio riferimento
+            primo_flusso_stella_globale = flusso_numerico.groupby(df_totale['run_unique_id']).transform('first')
 
-    def salva_finale_global(df, header_dict, output_file, fp_count):
-        nome_solo = os.path.basename(str(output_file))
-        with open(output_file, 'w') as f:
-            f.write("# Header FITS:\n")
-            f.write(f"# Numero di falsi positivi esclusi sicuramente: {fp_count}\n")
-            for k, v in header_dict.items():
-                if k != 'PERCORSO_FILE' and k != 'NOME_FILE' and not k.startswith("Numero di falsi"):
-                    f.write(f"# {k}: {v}\n")
-            f.write(f"# NOME_FILE: {nome_solo}\n")
-            f.write("#\n")
-            df.to_csv(f, index=False)
+            # calcolo il mio rapporto tra il flusso e il primo valore di riferimento
+            with np.errstate(divide='ignore', invalid='ignore'):
+                rapporto_relativo = np.where(primo_flusso_stella_globale > 0,
+                                             flusso_numerico / primo_flusso_stella_globale,
+                                             np.nan)
 
+            # calcolo il fattore di correzione per l'immagine senza aggiungere colonne temporanee al mio dataframe
+            temp_rapporto_series = pd.Series(rapporto_relativo)
+            fattore_immagine = temp_rapporto_series.groupby(df_totale['original_file_path']).transform('median')
 
-    global_repetition_counts = big_df['run_unique_id'].value_counts()
+            # salvo il mio risultato nel dizionario temporaneo
+            dizionario_nuove_colonne[new_col] = flusso_numerico / fattore_immagine
 
-    for file_path, df_file in tqdm(files_groups, desc="Salvataggio finale FASE 5"):
+        # unisco tutte le mie nuove colonne calcolate al dataframe principale in un colpo solo per ridurre la frammentazione
+        df_totale = pd.concat([df_totale, pd.DataFrame(dizionario_nuove_colonne)], axis=1)
 
-        col_rip_name = 'ripetizioni'
-        df_file[col_rip_name] = df_file['run_unique_id'].map(global_repetition_counts)
+        # calcolo la mia media e deviazione standard per le mie nuove colonne globali
+        stat_columns_globali = []
+        dizionario_statistiche = {}
 
-        df_final_save = df_file.copy()
-        num_falsi_positivi = 0
+        for c in nuovi_flussi_globali:
+            col_mean = f'media_{c}'
+            col_std = f'std_{c}'
 
-        header_orig = leggi_header_da_csv(file_path)
+            # converto temporaneamente per calcolare le mie statistiche
+            flusso_num_globale = pd.to_numeric(df_totale[c], errors='coerce')
 
-        cols = df_final_save.columns.tolist()
-        for temp_c in ['file_index', 'original_file_path', 'original_idx', 'run_unique_id', 'run_number']:
-            if temp_c in cols: cols.remove(temp_c)
+            dizionario_statistiche[col_mean] = flusso_num_globale.groupby(df_totale['run_unique_id']).transform('mean')
+            stds_sample = flusso_num_globale.groupby(df_totale['run_unique_id']).transform('std')
+            counts_grouped = flusso_num_globale.groupby(df_totale['run_unique_id']).transform('count')
+            dizionario_statistiche[col_std] = stds_sample / np.sqrt(counts_grouped)
 
-        if col_rip_name in cols: cols.remove(col_rip_name)
-        if 'saturazione' in cols:
-            cols.insert(cols.index('saturazione') + 1, col_rip_name)
-        else:
-            cols.append(col_rip_name)
+            stat_columns_globali.extend([col_mean, col_std])
 
-        # elimino la colonna base per lasciare solamente quella richiesta
-        colonna_base = 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura'
-        if colonna_base in cols:
-            cols.remove(colonna_base)
+        # unisco le mie statistiche al dataframe in un colpo solo
+        df_totale = pd.concat([df_totale, pd.DataFrame(dizionario_statistiche)], axis=1)
 
-        # ordino le mie colonne
-        for c_flux in nuovi_flussi_globali + cols_tutti_flussi_glob:
-            if c_flux in cols:
+        # riordino e salvo tutti i miei file
+        files_groups_globale = df_totale.groupby('original_file_path')
+        run_repetition_counts_global = df_totale['run_unique_id'].value_counts()
+
+        for file_path, df_file in tqdm(files_groups_globale, desc="Salvataggio finale FASE 5"):
+            header_orig = mappa_headers_globali[file_path]
+            cols = df_file.columns.tolist()
+
+            for temp_c in ['file_index', 'original_file_path', 'original_idx', 'run_unique_id', 'run_number']:
+                if temp_c in cols: cols.remove(temp_c)
+
+            # elimino la colonna base per lasciare solamente quella richiesta
+            colonna_base = 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura'
+            if colonna_base in cols:
+                cols.remove(colonna_base)
+
+            df_file = df_file.copy()
+            df_file['ripetizioni'] = df_file['ID'].map(run_repetition_counts_global)
+            if 'ripetizioni' not in cols:
+                if 'saturazione' in cols:
+                    cols.insert(cols.index('saturazione') + 1, 'ripetizioni')
+                else:
+                    cols.append('ripetizioni')
+
+            for c_flux in nuovi_flussi_globali:
                 c_mean, c_std = f'media_{c_flux}', f'std_{c_flux}'
-                if c_mean in cols:
+                if c_flux in cols and c_mean in cols:
                     cols.remove(c_mean)
                     cols.remove(c_std)
                     idx_flux = cols.index(c_flux)
                     cols.insert(idx_flux + 1, c_mean)
                     cols.insert(idx_flux + 2, c_std)
 
-        df_final_save = df_final_save[cols]
-        salva_finale_global(df_final_save, header_orig, file_path, num_falsi_positivi)
+            df_final_save = df_file[cols]
+            nome_solo = os.path.basename(str(file_path))
 
-    print("\n--- ELABORAZIONE GLOBALE MULTI-RUN COMPLETATA CON SUCCESSO ---")
+            with open(file_path, 'w') as f:
+                f.write("# Header FITS:\n")
+                f.write("# Numero di falsi positivi esclusi sicuramente: 0\n")
+                for k, v in header_orig.items():
+                    if k not in ['PERCORSO_FILE', 'NOME_FILE'] and not k.startswith("Numero di falsi"):
+                        f.write(f"# {k}: {v}\n")
+                f.write(f"# NOME_FILE: {nome_solo}\n")
+                f.write("#\n")
+                df_final_save.to_csv(f, index=False)
+
+    print("\n--- ELABORAZIONE COMPLETATA CON SUCCESSO ---")

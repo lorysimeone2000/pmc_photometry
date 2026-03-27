@@ -143,37 +143,9 @@ print(f"Target ID: {id_stella_target}")
 
 # --- STRUTTURE DATI GLOBALI ---
 
-# definisco le categorie di stringhe per comporre tutti i nomi delle colonne
-flussi_base = [
-    'kron_manuale_aper',
-    'kron_manuale_seg',
-    'somma_apertura_ultimo_pixel',
-    'flusso_fisso_max_run',
-    'flusso_raggio_fisso_doppio'
-]
-
-varianti_correzione = [
-    '',
-    '_CORRETTO_Correzione_Additiva_dell_Apertura',
-    '_FONDO_SOTTRATTO'
-]
-
-varianti_decorrelazione = [
-    '',
-    '_DECORRELAZIONE_LINEARE',
-    '_DECORRELAZIONE_STELLE',
-    '_DECORRELAZIONE_LINEARE_DECORRELAZIONE_STELLE',
-    '_DECORRELAZIONE_STELLE_GLOBALE',
-    '_DECORRELAZIONE_LINEARE_DECORRELAZIONE_STELLE_GLOBALE'
-]
-
-# preparo il dizionario iterando dinamicamente per generare tutte le chiavi per flusso
-all_data = {}
-for base in flussi_base:
-    for var in varianti_correzione:
-        for dec in varianti_decorrelazione:
-            nome_colonna = base + var + dec
-            all_data[nome_colonna] = []
+# definisco l'unica colonna che mi interessa studiare
+colonna_target = 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'
+all_data = {colonna_target: []}
 
 all_times = []
 t0_global = None
@@ -218,20 +190,17 @@ for run in run_list:
             stella_nel_frame = tbl_frame[mask_target]
 
             if len(stella_nel_frame) > 0:
-                # ciclo su tutti i nomi di colonna generati per estrarre il dato se esiste
-                for col_name in all_data.keys():
-                    if col_name in stella_nel_frame.colnames:
-                        try:
-                            # converto in float in caso di artefatti testuali
-                            val = float(stella_nel_frame[col_name][0])
-                        except (ValueError, TypeError):
-                            val = np.nan
-                        all_data[col_name].append(val)
-                    else:
-                        all_data[col_name].append(np.nan)
+                if colonna_target in stella_nel_frame.colnames:
+                    try:
+                        # converto in float in caso di artefatti testuali
+                        val = float(stella_nel_frame[colonna_target][0])
+                    except (ValueError, TypeError):
+                        val = np.nan
+                    all_data[colonna_target].append(val)
+                else:
+                    all_data[colonna_target].append(np.nan)
             else:
-                for col_name in all_data.keys():
-                    all_data[col_name].append(np.nan)
+                all_data[colonna_target].append(np.nan)
 
             all_times.append(tempo_relativo)
 
@@ -250,7 +219,6 @@ for run in run_list:
 
 times_arr = np.array(all_times)
 
-
 def calc_stats(arr, mask):
     # calcolo media e deviazione standard escludendo gli zeri e i nan
     if np.sum(mask) > 0:
@@ -258,75 +226,41 @@ def calc_stats(arr, mask):
         return np.mean(vals), np.std(vals)
     return 0.0, 0.0
 
+print(f"\n=== GENERAZIONE GRAFICO PER {colonna_target} ===")
 
-print("\n=== GENERAZIONE GRAFICI A PANNELLI 2x3 ===")
+arr = np.array(all_data[colonna_target])
+mask = (arr > 0) & (~np.isnan(arr))
 
-titoli_subplot = [
-    "Dati Originali (Nessuna Decorrelazione)",
-    "Decorrelazione Lineare (Fondo)",
-    "Decorrelazione Stelle (Locale)",
-    "Dec. Lineare + Dec. Stelle (Locale)",
-    "Decorrelazione Stelle (Globale)",
-    "Dec. Lineare + Dec. Stelle (Globale)"
-]
+if np.sum(mask) == 0:
+    print(f"Nessun dato valido per {colonna_target}, impossibile generare il grafico.")
+else:
+    media, std = calc_stats(arr, mask)
+    err_pct = (std / media * 100) if media != 0 else 0
 
-colori_plot = ['blue', 'orange', 'green', 'red']
-etichette_legenda = ['Base', 'Additiva', 'Fondo Sott.']
+    # creo la singola figura
+    plt.figure(figsize=(12, 6))
 
-for base in flussi_base:
-    # controllo se esistono dati validi prima di creare il grafico
-    arr_verifica = np.array(all_data[base])
-    if np.sum((arr_verifica > 0) & (~np.isnan(arr_verifica))) == 0:
-        print(f"Nessun dato valido per {base}, salto il plot.")
-        continue
+    plt.plot(times_arr[mask], arr[mask],
+             marker='o', linestyle='-', linewidth=1.5, markersize=4, alpha=0.8, color='blue',
+             label=rf"Media Flusso Globale ($\sigma$: {err_pct:.2f}%)")
 
-    # creo la figura a griglia 2x3
-    fig, axes = plt.subplots(2, 3, figsize=(24, 12))
-    axes = axes.flatten()
+    # disegno le linee divisorie per evidenziare le run
+    for r_idx, (run_num, t_end) in enumerate(run_boundaries):
+        plt.axvline(x=t_end, color='gray', linestyle='--', alpha=0.6)
 
-    for idx_dec, dec in enumerate(varianti_decorrelazione):
-        ax = axes[idx_dec]
+    plt.title(f'Andamento della Stella ID {id_stella_target}\nTarget Kron ~ {KRON_TARGET} | {colonna_target}', fontsize=12, fontweight='bold')
+    plt.xlabel("Tempo dall'inizio della Run 1 (secondi)")
+    plt.ylabel("Flusso (ADU)")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.legend(fontsize='medium', loc='best')
 
-        # plotto le varianti di correzione in ogni rispettivo quadrante
-        for var, color, lbl in zip(varianti_correzione, colori_plot, etichette_legenda):
-            nome_colonna = base + var + dec
+    plt.tight_layout()
 
-            arr = np.array(all_data[nome_colonna])
-            mask = (arr > 0) & (~np.isnan(arr))
-
-            if np.sum(mask) > 0:
-                media, std = calc_stats(arr, mask)
-                # calcolo l'errore percentuale per la legenda
-                err_pct = (std / media * 100) if media != 0 else 0
-
-                ax.plot(times_arr[mask], arr[mask],
-                        marker='o', linestyle='-', linewidth=1.0, markersize=3, alpha=0.7, color=color,
-                        label=rf"{lbl} ($\sigma$: {err_pct:.2f}%)")
-
-        # disegno le linee divisorie per evidenziare le run
-        for r_idx, (run_num, t_end) in enumerate(run_boundaries):
-            ax.axvline(x=t_end, color='gray', linestyle='--', alpha=0.5)
-
-        # formatto il singolo quadrante
-        ax.set_title(titoli_subplot[idx_dec], fontsize=12, fontweight='bold')
-        ax.set_xlabel("Tempo dall'inizio della Run 1 (secondi)")
-        ax.set_ylabel("Flusso (ADU)")
-        ax.grid(True, linestyle='--', alpha=0.4)
-        ax.legend(fontsize='small', loc='best')
-
-    # imposto il titolo globale del file
-    fig.suptitle(
-        f'Evoluzione del Detrending per [{base}]\nAnalisi Multi-Run - ID {id_stella_target} (Target Kron ~ {KRON_TARGET})',
-        fontsize=16, fontweight='bold')
-
-    # imposto il layout per non sovrapporre il titolo ai grafici
-    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
-
-    file_grafico = f'analisi_detrending_completa_{base}_{KRON_TARGET}.jpg'
+    file_grafico = f'analisi_singola_media_flusso_{KRON_TARGET}.jpg'
     plt.savefig(file_grafico, dpi=300)
     plt.show()
     plt.close()
 
-    print(f"Salvato grafico a pannelli: {file_grafico}")
+    print(f"Salvato grafico: {file_grafico}")
 
-print("\n--- TUTTI I GRAFICI SONO STATI GENERATI ---")
+print("\n--- ELABORAZIONE COMPLETATA ---")

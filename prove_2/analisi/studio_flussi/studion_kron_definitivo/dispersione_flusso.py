@@ -10,6 +10,7 @@ import warnings
 from astropy.wcs import FITSFixedWarning
 from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyUserWarning
+from scipy.stats import norm
 
 # gestisco i warning ignorandoli
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
@@ -129,7 +130,8 @@ if len(tbl_catalogate_ref) == 0:
     exit()
 
 # calcolo la differenza assoluta tra i flussi trovati e il target
-differenze = np.abs(tbl_catalogate_ref['media_flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'] - KRON_TARGET)
+differenze = np.abs(tbl_catalogate_ref[
+                        'media_flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'] - KRON_TARGET)
 
 # trovo l'indice della differenza minima
 idx_min = np.argmin(differenze)
@@ -143,39 +145,12 @@ print(f"Target ID: {id_stella_target}")
 
 # --- STRUTTURE DATI GLOBALI ---
 
-# definisco le categorie di stringhe per comporre tutti i nomi delle colonne
-flussi_base = [
-    'kron_manuale_aper',
-    'kron_manuale_seg',
-    'somma_apertura_ultimo_pixel',
-    'flusso_fisso_max_run',
-    'flusso_raggio_fisso_doppio'
-]
-
-varianti_correzione = [
-    '',
-    '_CORRETTO_Correzione_Additiva_dell_Apertura',
-    '_FONDO_SOTTRATTO'
-]
-
-varianti_decorrelazione = [
-    '',
-    '_DECORRELAZIONE_LINEARE',
-    '_DECORRELAZIONE_STELLE',
-    '_DECORRELAZIONE_LINEARE_DECORRELAZIONE_STELLE',
-    '_DECORRELAZIONE_STELLE_GLOBALE',
-    '_DECORRELAZIONE_LINEARE_DECORRELAZIONE_STELLE_GLOBALE'
-]
-
-# preparo il dizionario iterando dinamicamente per generare tutte le chiavi per flusso
-all_data = {}
-for base in flussi_base:
-    for var in varianti_correzione:
-        for dec in varianti_decorrelazione:
-            nome_colonna = base + var + dec
-            all_data[nome_colonna] = []
+# definisco l'unica colonna che mi interessa studiare
+colonna_target = 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'
+all_data = {colonna_target: []}
 
 all_times = []
+all_runs = []  # Nuova lista per tracciare la run di ogni misurazione
 t0_global = None
 run_boundaries = []
 
@@ -218,22 +193,20 @@ for run in run_list:
             stella_nel_frame = tbl_frame[mask_target]
 
             if len(stella_nel_frame) > 0:
-                # ciclo su tutti i nomi di colonna generati per estrarre il dato se esiste
-                for col_name in all_data.keys():
-                    if col_name in stella_nel_frame.colnames:
-                        try:
-                            # converto in float in caso di artefatti testuali
-                            val = float(stella_nel_frame[col_name][0])
-                        except (ValueError, TypeError):
-                            val = np.nan
-                        all_data[col_name].append(val)
-                    else:
-                        all_data[col_name].append(np.nan)
+                if colonna_target in stella_nel_frame.colnames:
+                    try:
+                        # converto in float in caso di artefatti testuali
+                        val = float(stella_nel_frame[colonna_target][0])
+                    except (ValueError, TypeError):
+                        val = np.nan
+                    all_data[colonna_target].append(val)
+                else:
+                    all_data[colonna_target].append(np.nan)
             else:
-                for col_name in all_data.keys():
-                    all_data[col_name].append(np.nan)
+                all_data[colonna_target].append(np.nan)
 
             all_times.append(tempo_relativo)
+            all_runs.append(run)  # Traccio a quale run appartiene questo scatto
 
         except Exception as e:
             print(f"Errore nel file {os.path.basename(percorso_csv)}: {e}")
@@ -248,7 +221,10 @@ for run in run_list:
 
 # --- FUNZIONI DI SUPPORTO PER I GRAFICI ---
 
+# --- FUNZIONI DI SUPPORTO PER I GRAFICI ---
+
 times_arr = np.array(all_times)
+runs_arr = np.array(all_runs)
 
 
 def calc_stats(arr, mask):
@@ -259,74 +235,109 @@ def calc_stats(arr, mask):
     return 0.0, 0.0
 
 
-print("\n=== GENERAZIONE GRAFICI A PANNELLI 2x3 ===")
+print(f"\n=== STUDIO DELLA DISPERSIONE PER {colonna_target} ===")
 
-titoli_subplot = [
-    "Dati Originali (Nessuna Decorrelazione)",
-    "Decorrelazione Lineare (Fondo)",
-    "Decorrelazione Stelle (Locale)",
-    "Dec. Lineare + Dec. Stelle (Locale)",
-    "Decorrelazione Stelle (Globale)",
-    "Dec. Lineare + Dec. Stelle (Globale)"
-]
+arr = np.array(all_data[colonna_target])
+mask = (arr > 0) & (~np.isnan(arr))
 
-colori_plot = ['blue', 'orange', 'green', 'red']
-etichette_legenda = ['Base', 'Additiva', 'Fondo Sott.']
+if np.sum(mask) == 0:
+    print(f"Nessun dato valido per {colonna_target}, impossibile generare i grafici.")
+else:
+    arr_valid = arr[mask]
+    times_valid = times_arr[mask]
+    runs_valid = runs_arr[mask]
 
-for base in flussi_base:
-    # controllo se esistono dati validi prima di creare il grafico
-    arr_verifica = np.array(all_data[base])
-    if np.sum((arr_verifica > 0) & (~np.isnan(arr_verifica))) == 0:
-        print(f"Nessun dato valido per {base}, salto il plot.")
-        continue
+    media_tot, std_tot = calc_stats(arr, mask)
+    err_pct_tot = (std_tot / media_tot * 100) if media_tot != 0 else 0
 
-    # creo la figura a griglia 2x3
-    fig, axes = plt.subplots(2, 3, figsize=(24, 12))
-    axes = axes.flatten()
+    # =========================================================
+    # OPZIONE 1: Istogramma e Fit Gaussiano (con Legenda)
+    # =========================================================
+    plt.figure(figsize=(10, 6))
 
-    for idx_dec, dec in enumerate(varianti_decorrelazione):
-        ax = axes[idx_dec]
+    # Plotto l'istogramma normalizzato (density=True) ed etichetto i dati
+    n, bins, patches = plt.hist(arr_valid, bins=30, density=True, alpha=0.6, color='steelblue', edgecolor='black',
+                                label='Dati Sperimentali (ADU)')
 
-        # plotto le varianti di correzione in ogni rispettivo quadrante
-        for var, color, lbl in zip(varianti_correzione, colori_plot, etichette_legenda):
-            nome_colonna = base + var + dec
+    # Sovrappongo la curva ideale Gaussiana basata su media e std calcolate ed etichetto il fit
+    xmin, xmax = plt.xlim()
+    x = np.linspace(xmin, xmax, 100)
+    p = norm.pdf(x, media_tot, std_tot)
+    plt.plot(x, p, 'k', linewidth=2, label=rf"Fit Normale (Teorico)")
 
-            arr = np.array(all_data[nome_colonna])
-            mask = (arr > 0) & (~np.isnan(arr))
+    # Aggiungo testo statistico extra direttamente nel grafico (non in legenda per pulizia)
+    plt.text(xmax * 0.7, np.max(p) * 0.8,
+             rf"$\mu={media_tot:.1f}$ ADU" + "\n" + rf"$\sigma={std_tot:.1f}$ ADU ({err_pct_tot:.2f}%)",
+             fontsize=10, fontweight='bold', bbox=dict(facecolor='white', alpha=0.5))
 
-            if np.sum(mask) > 0:
-                media, std = calc_stats(arr, mask)
-                # calcolo l'errore percentuale per la legenda
-                err_pct = (std / media * 100) if media != 0 else 0
-
-                ax.plot(times_arr[mask], arr[mask],
-                        marker='o', linestyle='-', linewidth=1.0, markersize=3, alpha=0.7, color=color,
-                        label=rf"{lbl} ($\sigma$: {err_pct:.2f}%)")
-
-        # disegno le linee divisorie per evidenziare le run
-        for r_idx, (run_num, t_end) in enumerate(run_boundaries):
-            ax.axvline(x=t_end, color='gray', linestyle='--', alpha=0.5)
-
-        # formatto il singolo quadrante
-        ax.set_title(titoli_subplot[idx_dec], fontsize=12, fontweight='bold')
-        ax.set_xlabel("Tempo dall'inizio della Run 1 (secondi)")
-        ax.set_ylabel("Flusso (ADU)")
-        ax.grid(True, linestyle='--', alpha=0.4)
-        ax.legend(fontsize='small', loc='best')
-
-    # imposto il titolo globale del file
-    fig.suptitle(
-        f'Evoluzione del Detrending per [{base}]\nAnalisi Multi-Run - ID {id_stella_target} (Target Kron ~ {KRON_TARGET})',
-        fontsize=16, fontweight='bold')
-
-    # imposto il layout per non sovrapporre il titolo ai grafici
-    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
-
-    file_grafico = f'analisi_detrending_completa_{base}_{KRON_TARGET}.jpg'
-    plt.savefig(file_grafico, dpi=300)
+    plt.title(f"Opzione 1: Distribuzione dei Flussi e Sovrapposizione Gaussiana\nStella ID: {id_stella_target}",
+              fontsize=12, fontweight='bold')
+    plt.xlabel("Flusso (ADU)")
+    plt.ylabel("Densità di Probabilità")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.legend(loc='best')  # Mostra la legenda con 'Dati' e 'Fit'
+    plt.tight_layout()
+    plt.savefig(f"dispersione_istogramma_{KRON_TARGET}.jpg", dpi=300)
     plt.show()
-    plt.close()
 
-    print(f"Salvato grafico a pannelli: {file_grafico}")
+    # =========================================================
+    # OPZIONE 2: Boxplot per singola Run (con Legenda)
+    # =========================================================
+    plt.figure(figsize=(10, 6))
 
-print("\n--- TUTTI I GRAFICI SONO STATI GENERATI ---")
+    dati_per_run = []
+    labels_run = []
+
+    for r in run_list:
+        mask_r = (runs_valid == r)
+        if np.sum(mask_r) > 0:
+            dati_per_run.append(arr_valid[mask_r])
+            labels_run.append(f"Run {r}")
+
+    # Creo il boxplot
+    bp = plt.boxplot(dati_per_run, labels=labels_run, patch_artist=True)
+
+    # Personalizzo i colori e aggiungo etichette per la legenda
+    for patch in bp['boxes']:
+        patch.set_facecolor('lightblue')
+    bp['boxes'][0].set_label('Distribuzione Centrale (IQR)')
+    bp['medians'][0].set_label('Mediana')
+    bp['fliers'][0].set_label('Outliers (Fuori Baffi)')
+
+    plt.title(f"Opzione 2: Dispersione Statistica del Flusso per Singola Run\nStella ID: {id_stella_target}",
+              fontsize=12, fontweight='bold')
+    plt.ylabel("Flusso (ADU)")
+    plt.grid(True, axis='y', linestyle='--', alpha=0.5)
+    plt.legend(loc='upper right', fontsize='small')  # Mostra legenda personalizzata per Boxplot
+    plt.tight_layout()
+    plt.savefig(f"dispersione_boxplot_{KRON_TARGET}.jpg", dpi=300)
+    plt.show()
+
+    # =========================================================
+    # OPZIONE 3: Dispersione Mobile nel Tempo (con Legenda)
+    # =========================================================
+    plt.figure(figsize=(12, 6))
+
+    # Uso pandas per calcolare la deviazione standard mobile (es. su finestra di 10 immagini)
+    finestra_mobile = 10
+    serie_flussi = pd.Series(arr_valid)
+    rolling_std = serie_flussi.rolling(window=finestra_mobile, center=True).std()
+
+    plt.plot(times_valid, rolling_std, color='darkred', linewidth=2,
+             label=f"Deviazione Std Mobile (finestra={finestra_mobile})")
+
+    # Inserisco le divisioni per le run come nel grafico originale
+    for r_idx, (run_num, t_end) in enumerate(run_boundaries):
+        plt.axvline(x=t_end, color='gray', linestyle='--', alpha=0.6)
+
+    plt.title(f"Opzione 3: Andamento Temporale della Dispersione (Rumore Locale)\nStella ID: {id_stella_target}",
+              fontsize=12, fontweight='bold')
+    plt.xlabel("Tempo dall'inizio della Run 1 (secondi)")
+    plt.ylabel("Deviazione Standard Locale (ADU)")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.legend(loc='best')  # Mostra legenda per la curva mobile
+    plt.tight_layout()
+    plt.savefig(f"dispersione_rolling_std_{KRON_TARGET}.jpg", dpi=300)
+    plt.show()
+
+print("\n--- ELABORAZIONE DISPERSIONE COMPLETATA ---")

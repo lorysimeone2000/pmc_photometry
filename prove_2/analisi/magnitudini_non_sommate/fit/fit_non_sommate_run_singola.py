@@ -56,7 +56,7 @@ def modello_lineare(mag, m, q):
 
 
 # configuro le mie impostazioni di base
-RUN_TO_ANALYZE = [1, 2, 3]
+RUN_TO_ANALYZE = [1]
 
 # definisco il flusso esatto che voglio analizzare applicando la correzione additiva e la decorrelazione globale
 FLUSSI_DA_ANALIZZARE = [
@@ -107,23 +107,39 @@ print(f"Totale righe caricate: {len(df_total)}")
 # 2. PREPARAZIONE DATI PER IL FIT E IL GRAFICO
 # =============================================================================
 
-# deduplico i miei dati
+# deduplico i miei dati ordinandoli
 df_total_sorted = df_total.sort_values(by=['label', 'Mag'], ascending=[True, True])
-# prendo solo i miei primi valori
+# prendo solo i miei primi valori per ID
 df_unique = df_total_sorted.drop_duplicates(subset=['ID'], keep='first').copy()
 print(f"Oggetti UNICI totali (Catalogati + Non): {len(df_unique)}")
 
-# separo le mie categorie per replicare lo stile grafico richiesto
-# per avere le mie X rosse (saturi) e i miei rombi arancioni (no match), estraggo queste categorie prima di filtrare tutto.
-
-# isolo i miei non catalogati
+# isolo i miei non catalogati e rimuovo i duplicati per mantenere un solo elemento per label
 mask_match = df_unique['Corrispondenza'].astype(str).str.startswith('SI')
 df_no_match = df_unique[~mask_match].copy()
+df_no_match = df_no_match.drop_duplicates(subset=['label'])
 
 # isolo i miei matchati
-df_match = df_unique[mask_match].copy()
+df_match_raw = df_unique[mask_match].copy()
 
-# isolo le mie stelle sature
+# preparo il mio dizionario di aggregazione per raggruppare i dati per label
+# imposto la magnitudine minima come valore di riferimento per il mio gruppo
+agg_dict = {
+    'Mag': 'min',
+    'Corrispondenza': 'first',
+    'ID': 'first'
+}
+if 'saturazione' in df_match_raw.columns:
+    agg_dict['saturazione'] = 'first'
+for flusso in FLUSSI_DA_ANALIZZARE:
+    if f"media_{flusso}" in df_match_raw.columns:
+        agg_dict[f"media_{flusso}"] = 'first'
+    if f"std_{flusso}" in df_match_raw.columns:
+        agg_dict[f"std_{flusso}"] = 'first'
+
+# eseguo il mio raggruppamento per label applicando le direttive del dizionario
+df_match = df_match_raw.groupby('label').agg(agg_dict).reset_index()
+
+# isolo le mie stelle sature usando il mio dataframe raggruppato
 if 'saturazione' in df_match.columns:
     mask_sature = df_match['saturazione'].astype(str).str.startswith('SI')
     df_sature = df_match[mask_sature].copy()
@@ -269,7 +285,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             # aggiungo il mio errore sui parametri nella label
             # uso rf anche sulla seconda stringa per correggere il SyntaxWarning
             label_fit = (rf'Fit: log(F)=({m_fit:.2f}$\pm${err_m:.2f})M + ({q_fit:.2f}$\pm${err_q:.2f})'
-                         rf'\n$\chi^2_R$={chi2_red:.2f}')
+                         rf'$\chi^2_R$={chi2_red:.2f}')
 
             plt.plot(x_plot, 10 ** y_plot_log, 'k--', linewidth=2, label=label_fit)
 
@@ -284,10 +300,11 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             plt.tight_layout()
 
             # salvo il mio grafico
-            out_file = f"FIT_GLOBALE_{flusso}_style.png"
+            out_file = f"fit_normale_run_1.png"
             plt.savefig(out_file, dpi=300)
             print(f"Grafico salvato: {out_file}")
-            plt.show()
+
+            # plt.show()
 
             # chiudo la mia figura per evitare che si aprano troppe finestre in simultanea
             plt.close()

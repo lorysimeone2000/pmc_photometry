@@ -10,6 +10,8 @@ from astropy.wcs.utils import proj_plane_pixel_scales
 from pathlib import Path
 import warnings
 from astropy.wcs import FITSFixedWarning
+from astroquery.vizier import Vizier
+from astropy.table import Table
 
 # ignoro i warning FITS noti che non intralciano l'analisi
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
@@ -23,6 +25,65 @@ def trova_cartella_base(nome_target="Lorenzo"):
         if parent.name == nome_target:
             return parent
     return path_corrente.parent
+
+# definisco la funzione per ottenere le magnitudini da VizieR
+def ottieni_magnitudini_vizier_con_coordinate(ra, dec, id_stella, raggio_arcsec=2.0):
+    # preparo il dizionario con i valori nulli di default
+    dati_stella = {
+        'ID': id_stella,
+        'gmag': np.nan,
+        'rmag': np.nan,
+        'imag': np.nan,
+        'zmag': np.nan,
+        'ymag': np.nan
+    }
+
+    try:
+        # configuro Vizier per il catalogo Pan-STARRS
+        vizier_ps1 = Vizier(
+            catalog="II/389/ps1_dr2",
+            columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag', 'imag', 'zmag', 'ymag'],
+            row_limit=-1
+        )
+
+        # ricerco nella regione attorno alle coordinate
+        result = vizier_ps1.query_region(
+            SkyCoord(ra=ra, dec=dec, unit=u.deg),
+            radius=raggio_arcsec * u.arcsec
+        )
+
+        if len(result) > 0:
+            tabella_res = result[0]
+
+            # converto l'ID in intero per il confronto
+            try:
+                id_intero = int(float(id_stella))
+            except (ValueError, TypeError):
+                id_intero = None
+
+            # cerco la riga con l'ID corrispondente
+            if id_intero is not None and 'objID' in tabella_res.colnames:
+                for riga in tabella_res:
+                    try:
+                        if int(riga['objID']) == id_intero:
+                            for banda in ['gmag', 'rmag', 'imag', 'zmag', 'ymag']:
+                                if banda in riga.colnames and not pd.isna(riga[banda]):
+                                    dati_stella[banda] = riga[banda]
+                            return dati_stella
+                    except (ValueError, TypeError):
+                        continue
+
+            # se non trovo corrispondenza per ID, prendo la stella più vicina
+            riga = tabella_res[0]
+            for banda in ['gmag', 'rmag', 'imag', 'zmag', 'ymag']:
+                if banda in riga.colnames and not pd.isna(riga[banda]):
+                    dati_stella[banda] = riga[banda]
+
+    except Exception as e:
+        print(f"  Attenzione: Errore per stella {id_stella} a coordinate ({ra:.6f}, {dec:.6f}): {e}")
+
+    return dati_stella
+
 
 # imposto la base directory
 BASE_DIR = trova_cartella_base("Lorenzo")
@@ -112,6 +173,28 @@ id_stella = stella_piu_luminosa['ID']
 
 print(f"Analisi Immagine: {Path(percorso_fits).name}")
 print(f"Stella mancante più luminosa: ID={id_stella}, Mag={mag_stella:.2f}, RA={ra_stella:.5f}, DEC={dec_stella:.5f}")
+
+# --- RICERCA MAGNITUDINI SU VIZIER E GENERAZIONE TABELLA ---
+print("\nRicerca delle magnitudini su VizieR (Pan-STARRS DR2)...")
+dati_mag = ottieni_magnitudini_vizier_con_coordinate(ra_stella, dec_stella, id_stella)
+
+# creo il dataframe per organizzare la visualizzazione
+df_risultati_mag = pd.DataFrame([dati_mag])
+
+# aggiungo coordinate e magnitudine sintetica di riferimento
+df_risultati_mag.insert(1, 'Mag_Sintetica', mag_stella)
+df_risultati_mag.insert(2, 'RAJ2000', ra_stella)
+df_risultati_mag.insert(3, 'DEJ2000', dec_stella)
+
+# converto in tabella Astropy e stampo a video
+tabella_astropy_mag = Table.from_pandas(df_risultati_mag)
+print("\n" + "=" * 100)
+print("TABELLA MAGNITUDINI DELLA STELLA MANCANTE")
+print("=" * 100)
+print(tabella_astropy_mag)
+print("=" * 100 + "\n")
+
+# --- CONTINUO PREPARAZIONE PER IL PLOTTING ---
 
 # converto le coordinate celesti della stella mancante in coordinate pixel per centrare il ritaglio
 coord_stella = SkyCoord(ra=ra_stella*u.deg, dec=dec_stella*u.deg, frame='icrs')

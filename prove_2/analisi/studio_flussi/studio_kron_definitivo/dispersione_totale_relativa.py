@@ -1,5 +1,7 @@
+import matplotlib
 import pandas as pd
 import matplotlib.pyplot as plt
+matplotlib.use('TkAgg')
 import numpy as np
 import os
 import sys
@@ -10,6 +12,7 @@ import warnings
 from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyUserWarning
 from astropy.wcs import FITSFixedWarning
+from scipy.stats import norm, chisquare
 
 # gestisco i warning ignorandoli
 warnings.filterwarnings('ignore', category=RuntimeWarning)
@@ -54,6 +57,7 @@ RUN_TO_ANALYZE = [1, 2, 3]
 
 # definisco il flusso esatto che voglio analizzare applicando la correzione additiva e la decorrelazione globale
 FLUSSI_DA_ANALIZZARE = [
+    "flusso_fisso_max_run_senza_correzioni",
     "flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE"
 ]
 
@@ -115,113 +119,127 @@ print(f"Totale righe caricate: {len(df_total)}")
 # 2. CALCOLO DELLE VARIAZIONI RELATIVE
 # =============================================================================
 
-colonna_flusso = FLUSSI_DA_ANALIZZARE[0]
-colonna_media = f"media_{colonna_flusso}"
+# preparo un dizionario in cui memorizzo l'array delle variazioni per ciascun flusso
+dati_flussi_istogramma = {}
 
-# rimuovo le righe senza valori validi
-df_valid = df_total.dropna(subset=[colonna_flusso, colonna_media])
+for flusso in FLUSSI_DA_ANALIZZARE:
+    colonna_media = f"media_{flusso}"
 
-# mantengo solo le righe dove la media è maggiore di zero per evitare divisioni per zero e creo una copia sicura
-df_valid = df_valid[df_valid[colonna_media] > 0].copy()
+    # rimuovo ogni riga priva di valore valido per lo specifico flusso
+    df_valid_tmp = df_total.dropna(subset=[flusso, colonna_media])
 
-# calcolo la variazione relativa per ogni singola misurazione e la salvo in una nuova colonna
-df_valid['variazione_relativa'] = (df_valid[colonna_flusso] - df_valid[colonna_media]) / df_valid[colonna_media]
+    # conservo unicamente il dato con media maggiore di zero per evitare la divisione per zero
+    df_valid_tmp = df_valid_tmp[df_valid_tmp[colonna_media] > 0].copy()
 
-# preparo gli array globali che mi servono per i primi due grafici
+    # calcolo la variazione relativa
+    var_rel = (df_valid_tmp[flusso] - df_valid_tmp[colonna_media]) / df_valid_tmp[colonna_media]
+
+    # scarto l'anomalia estrema per mantenere leggibile il grafico
+    mask_outliers = (var_rel > -1) & (var_rel < 1)
+
+    # salvo l'array filtrato nel dizionario
+    dati_flussi_istogramma[flusso] = var_rel[mask_outliers].values
+
+    # mantengo la variabile df_valid impostata sull'ultimo flusso elaborato affinché il grafico dell'Opzione 3 continui a funzionare sul flusso corretto
+    if flusso == FLUSSI_DA_ANALIZZARE[1]:
+        df_valid = df_valid_tmp
+        df_valid['variazione_relativa'] = var_rel
+
+# ripristino gli array usati dalle altre sezioni basandomi sull'ultimo flusso analizzato
 arr_valid = df_valid['variazione_relativa'].values
 runs_valid = df_valid['run_origin'].values
 
+output_dir = "dispersione_relativa"
+cartella_corrente = Path.cwd()
+nuova_sottocartella = cartella_corrente / "dispersione_relativa"
+nuova_sottocartella.mkdir(parents=True, exist_ok=True)
+
 # =============================================================================
-# 3. OPZIONE 1: CREAZIONE ISTOGRAMMA CENTRATO SU 0
+# 3. OPZIONE 1: CREAZIONE ISTOGRAMMI SOVRAPPOSTI
 # =============================================================================
 
-plt.figure(figsize=(10, 6))
+plt.figure(figsize=(12, 8))
 
-# filtro eventuali anomalie estreme per mantenere leggibile l'istogramma
-mask_outliers = (arr_valid > -1) & (arr_valid < 1)
-dati_istogramma = arr_valid[mask_outliers]
+# definisco il colore chiaro per l'istogramma e quello scuro per il fit
+colori_hist = ['dodgerblue', 'tomato']
+colori_fit = ['navy', 'darkred']
+nomi_legenda = ['Senza Correzioni', 'Corretto']
 
-# calcolo la media e la deviazione standard delle variazioni
-media_var = np.mean(dati_istogramma)
-std_var = np.std(dati_istogramma)
+# inizializzo i limiti dell'asse x per uniformare il fit gaussiano
+xmin_globale, xmax_globale = 0, 0
 
-# calcolo il chi quadro ridotto sui conteggi per mantenere il rigore statistico
-conteggi, bordi_bin = np.histogram(dati_istogramma, bins=100)
-centri_bin = (bordi_bin[:-1] + bordi_bin[1:]) / 2
-larghezza_bin = np.diff(bordi_bin)
-conteggi_attesi = len(dati_istogramma) * larghezza_bin * norm.pdf(centri_bin, media_var, std_var)
+# avvio il ciclo per estrarre ed elaborare il dato di ciascun flusso
+for i, flusso in enumerate(FLUSSI_DA_ANALIZZARE):
+    dati = dati_flussi_istogramma[flusso]
 
-# filtro i bin con conteggi attesi nulli per evitare divisioni per zero
-mask_chi = conteggi_attesi > 0
-chi_quadro = np.sum(((conteggi[mask_chi] - conteggi_attesi[mask_chi]) ** 2) / conteggi_attesi[mask_chi])
-gradi_liberta = np.sum(mask_chi) - 3
-chi_quadro_ridotto = chi_quadro / gradi_liberta if gradi_liberta > 0 else np.nan
+    # ricavo la media e la deviazione standard sull'intero set di dati
+    media_var = np.mean(dati)
+    std_var = np.std(dati)
 
-# creo l'istogramma normalizzato
-n, bins, patches = plt.hist(dati_istogramma, bins=100, density=True, alpha=0.6, color='steelblue', edgecolor='black',
-                            label='Variazioni Relative Sperimentali')
+    # isolo i dati nell'intervallo compreso tra -1 e +1 deviazione standard rispetto alla media
+    mask_fit = (dati >= media_var - std_var) & (dati <= media_var + std_var)
+    dati_per_fit = dati[mask_fit]
 
-# sovrappongo il fit gaussiano teorico
-xmin, xmax = plt.xlim()
-x = np.linspace(xmin, xmax, 200)
-p = norm.pdf(x, media_var, std_var)
-plt.plot(x, p, 'k', linewidth=2, label=rf"Fit Normale (Teorico, $\chi^2_\nu={chi_quadro_ridotto:.2f}$)")
+    # calcolo i nuovi parametri del fit basandomi solo sui dati ristretti
+    mu_fit, sigma_fit = norm.fit(dati_per_fit)
 
-# inserisco le statistiche nel grafico
-plt.text(xmax * 0.45, np.max(p) * 0.8,
-         f"$\\mu={media_var:.4f}$\n$\\sigma={std_var:.4f}$",
-         fontsize=10, fontweight='bold', bbox=dict(facecolor='white', alpha=0.5))
+    # disegno le due linee verticali tratteggiate per evidenziare i limiti del fit
+    plt.axvline(media_var - std_var, color=colori_fit[i], linestyle='--', alpha=0.4, linewidth=0.8)
+    plt.axvline(media_var + std_var, color=colori_fit[i], linestyle='--', alpha=0.4, linewidth=0.8)
 
-plt.title("Opzione 1: Distribuzione delle Variazioni Relative del Flusso\n(Tutte le Stelle, Tutte le Run)",
-          fontsize=12, fontweight='bold')
+    # ottengo il conteggio osservato e definisco il bin sull'intero set di dati
+    conteggi, bordi_bin = np.histogram(dati, bins='auto')
+    centri_bin = (bordi_bin[:-1] + bordi_bin[1:]) / 2
+    larghezza_bin = np.diff(bordi_bin)
+
+    # calcolo il conteggio atteso teorico usando i parametri del fit ristretto
+    conteggi_attesi = len(dati) * larghezza_bin * norm.pdf(centri_bin, mu_fit, sigma_fit)
+
+    # applico il test del chi quadro
+    mask_chi = conteggi > 0
+    osservati = conteggi[mask_chi]
+    attesi = conteggi_attesi[mask_chi]
+    chi_quadro, p_value = chisquare(f_obs=osservati, f_exp=attesi, ddof=2)
+
+    # ricavo il grado di libertà e il chi quadro ridotto
+    gradi_liberta = len(osservati) - 3
+    chi_quadro_ridotto = chi_quadro / gradi_liberta if gradi_liberta > 0 else np.nan
+
+    # genero l'istogramma a gradini per impedire che le barre piene si coprano a vicenda senza l'uso di trasparenze
+    plt.hist(dati, bins='auto', density=True, histtype='step', linewidth=1, alpha=1.0,
+             color=colori_hist[i], label=f"Dati: {nomi_legenda[i]}")
+
+    # aggiorno il limite orizzontale per coprire correttamente l'estensione di entrambi i flussi
+    xmin_curr, xmax_curr = plt.xlim()
+    xmin_globale = min(xmin_globale, xmin_curr) if i > 0 else xmin_curr
+    xmax_globale = max(xmax_globale, xmax_curr) if i > 0 else xmax_curr
+
+    # preparo il dato per il fit gaussiano coprendo tutta l'estensione dei bordi
+    x = np.linspace(bordi_bin[0], bordi_bin[-1], 200)
+    p = norm.pdf(x, mu_fit, sigma_fit)
+
+    # disegno il fit con il colore scuro su tutti i dati
+    plt.plot(x, p, color=colori_fit[i], linewidth=1, linestyle='-',
+             label=f"Fit {nomi_legenda[i]} (mu={mu_fit:.4f}, sigma={sigma_fit:.4f}, chi_quadro_ridotto ={chi_quadro_ridotto:.2f})")
+
+# inserisco il titolo comprensivo di tutti i riferimenti
+plt.title("Distribuzione delle Variazioni Relative: Senza Correzioni vs Con Correzioni",
+          fontsize=13, fontweight='bold')
 plt.xlabel("Variazione Relativa: (Flusso - Media) / Media")
 plt.ylabel("Densità di Probabilità")
 
-# traccio la linea centrale sullo 0
-plt.axvline(x=0, color='red', linestyle='--', linewidth=1.5, alpha=0.7, label='Centro (0)')
+# traccio la linea centrale
+plt.axvline(x=0, color='black', linestyle=':', linewidth=1.5, label='Centro (0)')
 
 plt.grid(True, linestyle='--', alpha=0.5)
-plt.legend(loc='upper right')
+plt.legend(loc='upper right', fontsize=9)
 plt.tight_layout()
-plt.savefig("dispersione_istogramma_globale.jpg", dpi=300)
-plt.show()
+
+plt.savefig(nuova_sottocartella / "dispersione_istogrammi_sovrapposti.jpg", dpi=300)
+# plt.show()
 
 # =============================================================================
-# 4. OPZIONE 2: Boxplot per singola Run (con Legenda)
-# =============================================================================
-
-plt.figure(figsize=(10, 6))
-
-dati_per_run = []
-labels_run = []
-
-for r in RUN_TO_ANALYZE:
-    mask_r = (runs_valid == r)
-    if np.sum(mask_r) > 0:
-        dati_per_run.append(arr_valid[mask_r])
-        labels_run.append(f"Run {r}")
-
-# creo il boxplot
-bp = plt.boxplot(dati_per_run, labels=labels_run, patch_artist=True)
-
-# personalizzo i colori e aggiungo etichette per la legenda
-for patch in bp['boxes']:
-    patch.set_facecolor('lightblue')
-bp['boxes'][0].set_label('Distribuzione Centrale (IQR)')
-bp['medians'][0].set_label('Mediana')
-bp['fliers'][0].set_label('Outliers (Fuori Baffi)')
-
-plt.title("Opzione 2: Dispersione Statistica delle Variazioni per Singola Run\n(Tutte le Stelle)",
-          fontsize=12, fontweight='bold')
-plt.ylabel("Variazione Relativa: (Flusso - Media) / Media")
-plt.grid(True, axis='y', linestyle='--', alpha=0.5)
-plt.legend(loc='upper right', fontsize='small')
-plt.tight_layout()
-plt.savefig("dispersione_boxplot_globale.jpg", dpi=300)
-plt.show()
-
-# =============================================================================
-# 5. OPZIONE 3: Dispersione Mobile nel Tempo (Medie per Scatto)
+# 5. OPZIONE 2: Dispersione Mobile nel Tempo (Medie per Scatto)
 # =============================================================================
 
 plt.figure(figsize=(12, 6))
@@ -264,8 +282,9 @@ plt.ylabel("Deviazione Standard Locale (%)")
 plt.grid(True, linestyle='--', alpha=0.5)
 plt.legend(loc='best')
 plt.tight_layout()
-plt.savefig("dispersione_rolling_std_globale.jpg", dpi=300)
-plt.show()
+plt.savefig(nuova_sottocartella / "dispersione_rolling_std_globale.jpg", dpi=300)
+
+# plt.show()
 
 print("\n--- ELABORAZIONE DISPERSIONE COMPLETATA ---")
 

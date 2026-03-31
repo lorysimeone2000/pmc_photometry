@@ -10,8 +10,6 @@ import warnings
 from astropy.wcs import FITSFixedWarning
 from tqdm import tqdm
 
-from analisi.studio_correlazione.distribuzione_distanze import df_cat
-
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 
 

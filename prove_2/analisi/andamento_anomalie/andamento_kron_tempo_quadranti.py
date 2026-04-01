@@ -206,7 +206,7 @@ parametri_seg = leggi_file_parametri(str(file_parametri)) if file_parametri else
 print(f"------------------------------")
 
 run_list = [1, 2, 3]
-KRON_TARGET = 300
+KRON_TARGET = 
 RUN_REF = 3
 RUN_REF = RUN_REF - 1
 INDICE_IMMAGINE_RIFERIMENTO = 35

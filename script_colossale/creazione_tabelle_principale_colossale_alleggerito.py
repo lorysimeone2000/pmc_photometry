@@ -1,5 +1,10 @@
 import pandas as pd
 import matplotlib
+import argparse
+import json
+import pyarrow.parquet as pq
+import shutil
+from astropy.config import paths
 
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -99,6 +104,13 @@ vizier = Vizier(
 
 if __name__ == "__main__":
 
+    # aggiungo il mio analizzatore di argomenti da terminale
+    parser = argparse.ArgumentParser(description="Elaborazione dati ASTRI1 con filtro temporale")
+    parser.add_argument("reprocess", type=str, choices=['s', 'n'], help="Effettuare il riprocessamento totale? ('s' per sì, 'n' per no)")
+    parser.add_argument("start_date", type=str, help="La mia data di inizio nel formato YYYYMMDD")
+    parser.add_argument("end_date", type=str, help="La mia data di fine nel formato YYYYMMDD")
+    args = parser.parse_args()
+
     soglia_correlazione = 35 / 3600 * u.deg
     dist_ripetizione = soglia_correlazione
     magnitudine_massima = 15
@@ -111,6 +123,17 @@ if __name__ == "__main__":
     parametri_caricati = leggi_file_parametri(file_parametri)
 
     print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
+    
+    # individuo il percorso esatto della cache di astroquery nel mio sistema
+    astroquery_cache_dir = os.path.join(paths.get_cache_dir(), 'astroquery')
+    
+    # verifico se la cartella esiste prima di procedere
+    if os.path.exists(astroquery_cache_dir):
+        # elimino l'intera cartella e tutto il suo contenuto per liberare spazio
+        shutil.rmtree(astroquery_cache_dir)
+        # ricreo la cartella vuota per evitare errori nelle esecuzioni future
+        os.makedirs(astroquery_cache_dir)
+
     vizier_hip = Vizier(
         catalog="I/239/hip_main",
         columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],
@@ -172,13 +195,34 @@ if __name__ == "__main__":
         print(f"ERRORE: Cartella dati ASTRI1 non trovata.")
         sys.exit()
 
+    # inizializzo il mio set per i file già processati e controllo i metadati se scelgo 'n'
+    file_gia_processati = set()
+    if args.reprocess == 'n':
+        print(f"\nModalità 'no riprocessamento' attivata. Estraggo i nomi dai metadati dei file Parquet...")
+        if cartella_tabelle.exists():
+            for pq_file in cartella_tabelle.rglob('*.parquet'):
+                try:
+                    # estraggo rapidamente lo schema senza caricare l'intero file in memoria
+                    schema = pq.read_schema(pq_file)
+                    meta_raw = schema.metadata.get(b"astro_metadata")
+                    if meta_raw:
+                        metadata = json.loads(meta_raw.decode("utf-8"))
+                        nome_fits = metadata.get("NOME_FILE_FITS")
+                        if nome_fits:
+                            file_gia_processati.add(nome_fits)
+                except Exception:
+                    continue
+        print(f"Ho trovato {len(file_gia_processati)} file FITS già processati.")
+
     cartella_dati = Path(cartella_dati)
-    sottocartelle = [d for d in cartella_dati.iterdir() if d.is_dir() or d.is_symlink()]
+    
+    # filtro le mie sottocartelle verificando che il loro nome rientri nell'intervallo temporale che ho specificato
+    sottocartelle = [d for d in cartella_dati.iterdir() if (d.is_dir() or d.is_symlink()) and args.start_date <= d.name <= args.end_date]
 
     # inizializzo un dizionario per raggruppare preventivamente i file per cartella/giorno
     files_per_giorno = {}
 
-    print(f"Trovate {len(sottocartelle)} cartelle/link in ASTRI1. Inizio scansione header...")
+    print(f"Trovate {len(sottocartelle)} cartelle/link in ASTRI1 valide per l'intervallo. Inizio scansione header...")
 
     for cartella_giorno in sottocartelle:
         percorso_reale = cartella_giorno.resolve()
@@ -198,6 +242,10 @@ if __name__ == "__main__":
         files_per_giorno[nome_giorno] = []
 
         for percorso_file in tqdm(file_fits_list, desc=f"Scansione {nome_giorno}"):
+            # salto questo file se ho scelto 'n' ed è già presente nell'elenco dei processati
+            if args.reprocess == 'n' and percorso_file.name in file_gia_processati:
+                continue
+
             try:
                 # uso memmap=True per velocizzare la sola lettura dell'header
                 with fits.open(percorso_file, memmap=True) as hdu:
@@ -230,7 +278,7 @@ if __name__ == "__main__":
                 continue
 
     if not files_per_giorno:
-        print("\nERRORE: Nessun file FITS valido trovato.")
+        print("\nERRORE: Nessun file FITS valido trovato (oppure tutti i file sono già stati processati).")
         sys.exit()
 
     soglia_tempo = 300.0
@@ -277,6 +325,11 @@ if __name__ == "__main__":
 
     print(f"\nRaggruppamento completato: {totale_file_validi} file divisi in {totale_run_create} run logiche.")
 
+    # inizializzo le mie variabili per la verifica della distanza tra le run
+    centro_run_precedente = None
+    tbl_vizier_cut_precedente = None
+    tbl_hipparco_run_clean_precedente = None
+
     # --- CICLO PER OGNI RUN LOGICA ---
     for (cartella_giorno_name, run_name) in sorted(run_groups.keys()):
         file_list = sorted(run_groups[(cartella_giorno_name, run_name)])
@@ -314,125 +367,153 @@ if __name__ == "__main__":
 
                 hdu_list.close()
 
-                tentativi_massimi = 5
-                attesa = 10
-                for tentativo in range(tentativi_massimi):
-                    try:
-                        riquadro_esterno_vizier = vizier.query_region(
-                            coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
-                            radius=raggio_ricerca
-                        )
-                        tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
-                        break
-                    except Exception as e:
-                        if tentativo < tentativi_massimi - 1:
-                            time.sleep(attesa)
-                        else:
-                            raise
+                # verifico la distanza dal centro della run precedente per evitare il download superfluo
+                scarica_nuovo_catalogo = True
+                if centro_run_precedente is not None:
+                    distanza = centro.separation(centro_run_precedente)
+                    if distanza.deg <= 1.1:
+                        scarica_nuovo_catalogo = False
 
-                bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
-                pesi_ideali = pesi_ideali_globali
-                flussi = []
+                if scarica_nuovo_catalogo:
+                    # individuo il percorso esatto della cache di astroquery nel mio sistema
+                    astroquery_cache_dir = os.path.join(paths.get_cache_dir(), 'astroquery')
+                    
+                    # verifico se la cartella esiste prima di procedere
+                    if os.path.exists(astroquery_cache_dir):
+                        # elimino l'intera cartella e tutto il suo contenuto per liberare spazio
+                        shutil.rmtree(astroquery_cache_dir)
+                        # ricreo la cartella vuota per evitare errori nelle esecuzioni future
+                        os.makedirs(astroquery_cache_dir)
+                        
+                    tentativi_massimi = 5
+                    attesa = 10
+                    for tentativo in range(tentativi_massimi):
+                        try:
+                            riquadro_esterno_vizier = vizier.query_region(
+                                coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
+                                radius=raggio_ricerca
+                            )
+                            tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+                            break
+                        except Exception as e:
+                            if tentativo < tentativi_massimi - 1:
+                                time.sleep(attesa)
+                            else:
+                                raise
 
-                for banda in bande:
-                    colonna = tbl_riquadro_esterno_vizier[banda]
-                    array_dati = colonna.filled(np.nan) if hasattr(colonna, 'filled') else np.array(colonna)
-                    flusso = 10 ** (-0.4 * array_dati)
-                    flusso_pulito = np.nan_to_num(flusso, nan=0.0)
-                    flussi.append(flusso_pulito)
+                    bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
+                    pesi_ideali = pesi_ideali_globali
+                    flussi = []
 
-                flussi = np.array(flussi)
-                array_pesi = pesi_ideali[:, None]
+                    for banda in bande:
+                        colonna = tbl_riquadro_esterno_vizier[banda]
+                        array_dati = colonna.filled(np.nan) if hasattr(colonna, 'filled') else np.array(colonna)
+                        flusso = 10 ** (-0.4 * array_dati)
+                        flusso_pulito = np.nan_to_num(flusso, nan=0.0)
+                        flussi.append(flusso_pulito)
 
-                flusso_finale = np.sum(flussi * array_pesi, axis=0)
+                    flussi = np.array(flussi)
+                    array_pesi = pesi_ideali[:, None]
 
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    mag_sintetica_globale = np.where(flusso_finale > 0, -2.5 * np.log10(flusso_finale), 99.0)
+                    flusso_finale = np.sum(flussi * array_pesi, axis=0)
 
-                tbl_riquadro_esterno_vizier['Mag_sintetica'] = mag_sintetica_globale
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        mag_sintetica_globale = np.where(flusso_finale > 0, -2.5 * np.log10(flusso_finale), 99.0)
 
-                distanze_hip = centro.separation(coords_hipparco_global)
-                mask_hip_fov = distanze_hip < raggio_ricerca
+                    tbl_riquadro_esterno_vizier['Mag_sintetica'] = mag_sintetica_globale
 
-                tbl_hipparco_run_subset = tbl_catalogo_hipparco[mask_hip_fov]
+                    distanze_hip = centro.separation(coords_hipparco_global)
+                    mask_hip_fov = distanze_hip < raggio_ricerca
 
-                # calcolo il flusso di Hipparco, applico il peso e riconverto in magnitudine
-                colonna_vmag = tbl_hipparco_run_subset['Vmag']
-                array_dati_hip = colonna_vmag.filled(np.nan) if hasattr(colonna_vmag, 'filled') else np.array(colonna_vmag)
-                flusso_hip = 10 ** (-0.4 * array_dati_hip)
-                flusso_hip_pulito = np.nan_to_num(flusso_hip, nan=0.0)
-                flusso_hip_pesato = flusso_hip_pulito * peso_hipparco
+                    tbl_hipparco_run_subset = tbl_catalogo_hipparco[mask_hip_fov]
 
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    mag_hip_pesata = np.where(flusso_hip_pesato > 0, -2.5 * np.log10(flusso_hip_pesato), 99.0)
+                    # calcolo il flusso di Hipparco, applico il peso e riconverto in magnitudine
+                    colonna_vmag = tbl_hipparco_run_subset['Vmag']
+                    array_dati_hip = colonna_vmag.filled(np.nan) if hasattr(colonna_vmag, 'filled') else np.array(colonna_vmag)
+                    flusso_hip = 10 ** (-0.4 * array_dati_hip)
+                    flusso_hip_pulito = np.nan_to_num(flusso_hip, nan=0.0)
+                    flusso_hip_pesato = flusso_hip_pulito * peso_hipparco
 
-                tbl_hipparco_run_subset['Vmag'] = mag_hip_pesata
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        mag_hip_pesata = np.where(flusso_hip_pesato > 0, -2.5 * np.log10(flusso_hip_pesato), 99.0)
 
-                coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
-                exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
+                    tbl_hipparco_run_subset['Vmag'] = mag_hip_pesata
 
-                print("Avvio il mio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
+                    coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
+                    exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
 
-                coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
-                                         dec=tbl_riquadro_esterno_vizier['DEJ2000'],
-                                         unit=u.deg)
+                    print("Avvio il mio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
 
-                max_threshold_deg = np.max(exclusion_radii_run_subset)
-                seplimit = max_threshold_deg * u.deg
+                    coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
+                                             dec=tbl_riquadro_esterno_vizier['DEJ2000'],
+                                             unit=u.deg)
 
-                idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
+                    max_threshold_deg = np.max(exclusion_radii_run_subset)
+                    seplimit = max_threshold_deg * u.deg
 
-                if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
-                    idx_viz_1, idx_hip_1 = idx_A, idx_B
+                    idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
+
+                    if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
+                        idx_viz_1, idx_hip_1 = idx_A, idx_B
+                    else:
+                        idx_hip_1, idx_viz_1 = idx_A, idx_B
+
+                    mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
+
+                    idx_hip_valid = idx_hip_1[mask_threshold]
+                    idx_viz_valid = idx_viz_1[mask_threshold]
+
+                    mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
+                    mask_keep_vizier = np.ones(len(tbl_riquadro_esterno_vizier), dtype=bool)
+
+                    unique_hip_idx = np.unique(idx_hip_valid)
+
+                    array_mag_vizier = np.nan_to_num(tbl_riquadro_esterno_vizier['Mag_sintetica'].data, nan=99.0)
+                    array_mag_hipparco = np.nan_to_num(tbl_hipparco_run_subset['Vmag'].data, nan=99.0)
+
+                    for i_hip in unique_hip_idx:
+                        viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
+
+                        if len(viz_matches) > 0:
+                            mag_viz_matches = array_mag_vizier[viz_matches]
+
+                            idx_min_mag = np.argmin(mag_viz_matches)
+                            best_viz_idx = viz_matches[idx_min_mag]
+                            best_viz_mag = mag_viz_matches[idx_min_mag]
+
+                            hip_mag = array_mag_hipparco[i_hip]
+
+                            if hip_mag < 9.0:
+                                mask_keep_vizier[viz_matches] = False
+                            elif best_viz_mag <= hip_mag:
+                                mask_keep_hipparco[i_hip] = False
+                            else:
+                                mask_keep_vizier[best_viz_idx] = False
+
+                    hipparco_escluse = np.sum(~mask_keep_hipparco)
+                    vizier_escluse = np.sum(~mask_keep_vizier)
+                    print(f"Risolti {len(unique_hip_idx)} conflitti spaziali:")
+                    print(f" -> Escluse {hipparco_escluse} stelle Hipparco (tenute Vizier perché più brillanti)")
+                    print(f" -> Escluse {vizier_escluse} stelle Vizier (tenute Hipparco perché più brillanti)")
+
+                    mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
+
+                    tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco].copy()
+                    tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
+
+                    with np.errstate(invalid='ignore'):
+                        mask_taglio = tbl_riquadro_esterno_vizier_CLEAN['Mag_sintetica'] < magnitudine_massima
+                    tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[mask_taglio].copy()
+                    
+                    # salvo il mio stato attuale per il controllo nella run successiva
+                    centro_run_precedente = centro
+                    tbl_vizier_cut_precedente = tbl_vizier_cut.copy()
+                    tbl_hipparco_run_clean_precedente = tbl_hipparco_run_clean.copy()
                 else:
-                    idx_hip_1, idx_viz_1 = idx_A, idx_B
-
-                mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
-
-                idx_hip_valid = idx_hip_1[mask_threshold]
-                idx_viz_valid = idx_viz_1[mask_threshold]
-
-                mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
-                mask_keep_vizier = np.ones(len(tbl_riquadro_esterno_vizier), dtype=bool)
-
-                unique_hip_idx = np.unique(idx_hip_valid)
-
-                array_mag_vizier = np.nan_to_num(tbl_riquadro_esterno_vizier['Mag_sintetica'].data, nan=99.0)
-                array_mag_hipparco = np.nan_to_num(tbl_hipparco_run_subset['Vmag'].data, nan=99.0)
-
-                for i_hip in unique_hip_idx:
-                    viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
-
-                    if len(viz_matches) > 0:
-                        mag_viz_matches = array_mag_vizier[viz_matches]
-
-                        idx_min_mag = np.argmin(mag_viz_matches)
-                        best_viz_idx = viz_matches[idx_min_mag]
-                        best_viz_mag = mag_viz_matches[idx_min_mag]
-
-                        hip_mag = array_mag_hipparco[i_hip]
-
-                        if hip_mag < 9.0:
-                            mask_keep_vizier[viz_matches] = False
-                        elif best_viz_mag <= hip_mag:
-                            mask_keep_hipparco[i_hip] = False
-                        else:
-                            mask_keep_vizier[best_viz_idx] = False
-
-                hipparco_escluse = np.sum(~mask_keep_hipparco)
-                vizier_escluse = np.sum(~mask_keep_vizier)
-                print(f"Risolti {len(unique_hip_idx)} conflitti spaziali:")
-                print(f" -> Escluse {hipparco_escluse} stelle Hipparco (tenute Vizier perché più brillanti)")
-                print(f" -> Escluse {vizier_escluse} stelle Vizier (tenute Hipparco perché più brillanti)")
-
-                mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
-
-                tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco].copy()
-                tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
-
-                with np.errstate(invalid='ignore'):
-                    mask_taglio = tbl_riquadro_esterno_vizier_CLEAN['Mag_sintetica'] < magnitudine_massima
-                tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[mask_taglio].copy()
+                    # recupero la mia tabella precedentemente calcolata se la distanza è inferiore a 1.1 gradi
+                    print("Distanza dal centro della run precedente <= 1.1 gradi: riutilizzo il catalogo Vizier e Hipparcos.")
+                    tbl_vizier_cut = tbl_vizier_cut_precedente.copy()
+                    tbl_hipparco_run_clean = tbl_hipparco_run_clean_precedente.copy()
 
             tbl_vizier_cut['Mag'] = tbl_vizier_cut['Mag_sintetica']
             tbl_hipparco_run_clean['Mag'] = tbl_hipparco_run_clean['Vmag']

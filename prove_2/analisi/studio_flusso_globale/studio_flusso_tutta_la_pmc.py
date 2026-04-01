@@ -171,12 +171,12 @@ if __name__ == "__main__":
 
     # applico la mia formattazione grafica personalizzata
     if tempo_zero_globale:
-        plt.xlabel(f"Tempo in minuti (T0 = {tempo_zero_globale.isot})", fontsize=12)
+        plt.xlabel(f"Time in minutes (T0 = {tempo_zero_globale.isot})", fontsize=12)
     else:
-        plt.xlabel("Tempo in minuti", fontsize=12)
+        plt.xlabel("Time in minutes", fontsize=12)
 
-    plt.ylabel("Somma Totale dei Pixel (ADU)", fontsize=12)
-    plt.title("Variazione del conteggio totale dei pixel nel tempo sulle run di prova", fontsize=14)
+    plt.ylabel("Total Pixel Sum (ADU)", fontsize=12)
+    plt.title("Variation of total pixel count over time for the test runs", fontsize=14)
     plt.grid(True, linestyle='--', alpha=0.7)
     plt.legend(fontsize=11)
     plt.tight_layout()

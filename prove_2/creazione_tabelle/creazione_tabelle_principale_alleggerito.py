@@ -161,10 +161,18 @@ if __name__ == "__main__":
 
         # converto in array e normalizzo in modo che la somma finale sia pari a 1
         pesi_estratti = np.array(pesi_estratti)
-        pesi_ideali_globali = pesi_estratti / np.sum(pesi_estratti)
+        somma_pesi = np.sum(pesi_estratti)
+        pesi_ideali_globali = pesi_estratti / somma_pesi
+
+        # calcolo il peso per la banda Vmag di Hipparco nell'intervallo 500-600 nm
+        maschera_vmag = (df_curva['Wavelength'] >= 500) & (df_curva['Wavelength'] <= 600)
+        area_vmag = np.trapezoid(df_curva['QE'][maschera_vmag], x=df_curva['Wavelength'][maschera_vmag])
+        peso_hipparco = area_vmag / somma_pesi
     else:
         # imposto i pesi standard in caso di mancato ritrovamento del csv
         pesi_ideali_globali = np.array([0.458, 0.326, 0.133, 0.055, 0.028])
+        # imposto un peso di fallback per hipparco
+        peso_hipparco = 0.35
 
     for run in RUN:
         print(f"\n==================== ELABORAZIONE RUN {run} ====================")
@@ -247,6 +255,19 @@ if __name__ == "__main__":
                 distanze_hip = centro.separation(coords_hipparco_global)
                 mask_hip_fov = distanze_hip < raggio_ricerca
                 tbl_hipparco_run_subset = tbl_catalogo_hipparco[mask_hip_fov]
+
+                # calcolo il flusso di Hipparco, applico il peso e riconverto in magnitudine
+                colonna_vmag = tbl_hipparco_run_subset['Vmag']
+                array_dati_hip = colonna_vmag.filled(np.nan) if hasattr(colonna_vmag, 'filled') else np.array(colonna_vmag)
+                flusso_hip = 10 ** (-0.4 * array_dati_hip)
+                flusso_hip_pulito = np.nan_to_num(flusso_hip, nan=0.0)
+                flusso_hip_pesato = flusso_hip_pulito * peso_hipparco
+
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    mag_hip_pesata = np.where(flusso_hip_pesato > 0, -2.5 * np.log10(flusso_hip_pesato), 99.0)
+
+                tbl_hipparco_run_subset['Vmag'] = mag_hip_pesata
+
                 coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
                 exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
 

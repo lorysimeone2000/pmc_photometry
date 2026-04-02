@@ -177,7 +177,10 @@ def azzera_pixel_isolati_veloce(data, min_neighbors=2, threshold_ratio=0.3):
 data = image_data
 data_pulita = azzera_pixel_isolati_veloce(data, min_neighbors=2, threshold_ratio=0.3)
 
-plt.imshow(data_pulita, cmap='grey_r', origin='lower', norm=LogNorm(), interpolation='nearest')
-plt.colorbar()
+plt.figure(figsize=(20, 16))
 
+im = plt.imshow(data_pulita, cmap='grey_r', origin='lower', norm=LogNorm(), interpolation='nearest')
+plt.colorbar(im, fraction=0.046, pad=0.04, aspect=30)
+
+plt.savefig("dati_output.png")
 plt.show()

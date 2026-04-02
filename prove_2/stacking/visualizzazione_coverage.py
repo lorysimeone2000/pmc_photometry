@@ -25,7 +25,7 @@ from photutils.segmentation import SourceFinder
 from photutils.detection import find_peaks
 from photutils.aperture import CircularAperture
 
-# Set up wcs
+# Imposto il wcs
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 import astropy.coordinates as coord
@@ -128,16 +128,18 @@ print("Mediana totale: ", median)
 # sottraggo il fondo mediano
 data_finale = total_data
 
-# visualizzazione
+# preparo la visualizzazione
 norm = PowerNorm(gamma=3.)
 plt.figure(figsize=(10, 8))
-
-# imposto il sistema di riferimento celeste tramite WCS
 plt.subplot(projection=wcs_totale)
+
 
 # genero l'immagine
 plt.imshow(data_finale, cmap="gray", norm=norm, interpolation='nearest', origin='lower')
-plt.colorbar(label='Counts (Total Sum)')
+
+# aggiusto le dimensioni della colorbar in modo che non superi l'altezza del riquadro dati
+plt.colorbar(label='Counts (Total Sum)', fraction=0.046, pad=0.04)
+
 plt.title(f'Coverage map over three runs \n(Max coverage={int(full_coverage_value)})')
 
 # aggiorno le etichette con le coordinate celesti

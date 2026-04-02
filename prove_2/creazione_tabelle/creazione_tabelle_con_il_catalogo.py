@@ -332,9 +332,16 @@ def stampa_descrizioni_colonne_ps1():
     print("ANALISI COMPLETA COLONNE MAGNITUDINE - PAN-STARRS DR2 (II/389/ps1_dr2)")
     print("=" * 80)
 
-    # recupero il catalogo
+    # recupero il catalogo impostando un limite per evitare il timeout
     print("\n1. Scaricamento metadati del catalogo...")
-    catalogo = Vizier.get_catalogs("II/389/ps1_dr2")[0]
+    v = Vizier(row_limit=1)
+    cataloghi = v.get_catalogs("II/389/ps1_dr2")
+
+    if not cataloghi:
+        print("AVVISO: Impossibile scaricare i metadati. VizieR ha restituito una lista vuota.")
+        return {}
+
+    catalogo = cataloghi[0]
 
     # colori di magnitudine da analizzare
     bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
@@ -420,9 +427,6 @@ def scarica_intervalli_bande_ps1_da_descrizioni():
     print("SCARICAMENTO INTERVALLI BANDE PAN-STARRS DR2")
     print("=" * 70)
 
-    # recupero il catalogo
-    catalogo = Vizier.get_catalogs("II/389/ps1_dr2")[0]
-
     # fwhm delle bande Pan-STARRS da Tonry+ 2012
     fwhm_nm = {
         'gmag': 137,
@@ -441,95 +445,123 @@ def scarica_intervalli_bande_ps1_da_descrizioni():
         'ymag': 963.3
     }
 
-    # pattern per estrarre la lunghezza d'onda centrale - ORDINE IMPORTANTE!
-    # prima cerco il pattern con {AA} che è specifico per gmag
-    patterns = [
-        r'\((\d+)\s*\{AA\}\)',  # (4866{AA}) - specifico per gmag
-        r'\((\d+)\s*A\)',  # (6215A)
-        r'(\d+)\s*[ÅA]',  # 4866Å o 4866A
-        r'(\d+)\s*nm',  # 4866 nm
-    ]
+    # dizionario per gli intervalli di fallback diretti in caso di errore
+    fallback_intervalli = {
+        'gmag': (418, 555),
+        'rmag': (552, 692),
+        'imag': (690, 820),
+        'zmag': (816, 920),
+        'ymag': (922, 1005)
+    }
 
-    bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
+    # recupero il catalogo in modo sicuro, limitando la riga per prevenire timeout
+    v = Vizier(row_limit=1)
+    cataloghi = v.get_catalogs("II/389/ps1_dr2")
+
     limiti_bande = {}
+    bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
 
-    print("\nEstrazione lunghezze d'onda dalle descrizioni:")
-    print("-" * 70)
+    if not cataloghi:
+        print("\nAVVISO: Catalogo non trovato o timeout di VizieR. Uso direttamente gli intervalli di fallback.")
+        limiti_bande = fallback_intervalli
+    else:
+        catalogo = cataloghi[0]
 
-    for banda in bande:
-        if banda in catalogo.columns:
-            col = catalogo[banda]
-            descrizione = col.description if hasattr(col, 'description') else ""
+        # pattern per estrarre la lunghezza d'onda centrale - ORDINE IMPORTANTE!
+        # prima cerco il pattern con {AA} che è specifico per gmag
+        patterns = [
+            r'\((\d+)\s*\{AA\}\)',  # (4866{AA}) - specifico per gmag
+            r'\((\d+)\s*A\)',  # (6215A)
+            r'(\d+)\s*[ÅA]',  # 4866Å o 4866A
+            r'(\d+)\s*nm',  # 4866 nm
+        ]
 
-            print(f"\n{banda}:")
-            print(f"  Descrizione: {descrizione}")
+        print("\nEstrazione lunghezze d'onda dalle descrizioni:")
+        print("-" * 70)
 
-            # estraggo la lunghezza d'onda centrale
-            lambda_centro = None
+        for banda in bande:
+            if banda in catalogo.columns:
+                col = catalogo[banda]
+                descrizione = col.description if hasattr(col, 'description') else ""
 
-            # prima provo a trovare il pattern specifico per questa banda
-            if banda == 'gmag':
-                # cerco specificamente il pattern con {AA}
-                match = re.search(r'\((\d+)\s*\{AA\}\)', descrizione)
-                if match:
-                    valore = float(match.group(1))
-                    lambda_centro = valore / 10.0
-                    # raddoppio le parentesi graffe per non farle interpretare come variabile
-                    print(f"  -> Lunghezza d'onda estratta (pattern {{AA}}): {valore:.0f} Å = {lambda_centro:.1f} nm")
+                print(f"\n{banda}:")
+                print(f"  Descrizione: {descrizione}")
 
-            # se non trovato, provo tutti i pattern
-            if lambda_centro is None:
-                for pattern in patterns:
-                    match = re.search(pattern, descrizione)
+                # estraggo la lunghezza d'onda centrale
+                lambda_centro = None
+
+                # prima provo a trovare il pattern specifico per questa banda
+                if banda == 'gmag':
+                    # cerco specificamente il pattern con {AA}
+                    match = re.search(r'\((\d+)\s*\{AA\}\)', descrizione)
                     if match:
                         valore = float(match.group(1))
-                        # verifico che il valore sia in un range plausibile (300-2000 nm o 3000-20000 Å)
-                        # aggiungo la 'r' per rendere la stringa raw ed evitare il SyntaxWarning
-                        if '{AA}' in pattern or 'Å' in pattern or pattern.endswith(r'A\)') or pattern.endswith('[ÅA]'):
-                            # è in Å, converto in nm
-                            lambda_centro = valore / 10.0
-                            print(f"  -> Lunghezza d'onda estratta: {valore:.0f} Å = {lambda_centro:.1f} nm")
-                        else:
-                            lambda_centro = valore
-                            print(f"  -> Lunghezza d'onda estratta: {lambda_centro:.1f} nm")
-                        break
+                        lambda_centro = valore / 10.0
+                        # raddoppio le parentesi graffe per non farle interpretare come variabile
+                        print(
+                            f"  -> Lunghezza d'onda estratta (pattern {{AA}}): {valore:.0f} Å = {lambda_centro:.1f} nm")
 
-            # verifico che il valore sia plausibile (tra 300 e 2000 nm)
-            if lambda_centro is not None:
-                if lambda_centro < 300 or lambda_centro > 2000:
-                    print(f"  -> ATTENZIONE: Valore {lambda_centro:.1f} nm non plausibile! Uso fallback.")
+                # se non trovato, provo tutti i pattern
+                if lambda_centro is None:
+                    for pattern in patterns:
+                        match = re.search(pattern, descrizione)
+                        if match:
+                            valore = float(match.group(1))
+                            # verifico che il valore sia in un range plausibile (300-2000 nm o 3000-20000 Å)
+                            # aggiungo la 'r' per rendere la stringa raw ed evitare il SyntaxWarning
+                            if '{AA}' in pattern or 'Å' in pattern or pattern.endswith(r'A\)') or pattern.endswith(
+                                    '[ÅA]'):
+                                # è in Å, converto in nm
+                                lambda_centro = valore / 10.0
+                                print(f"  -> Lunghezza d'onda estratta: {valore:.0f} Å = {lambda_centro:.1f} nm")
+                            else:
+                                lambda_centro = valore
+                                print(f"  -> Lunghezza d'onda estratta: {lambda_centro:.1f} nm")
+                            break
+
+                # verifico che il valore sia plausibile (tra 300 e 2000 nm)
+                if lambda_centro is not None:
+                    if lambda_centro < 300 or lambda_centro > 2000:
+                        print(f"  -> ATTENZIONE: Valore {lambda_centro:.1f} nm non plausibile! Uso fallback.")
+                        lambda_centro = fallback_validi.get(banda, 500.0)
+                else:
+                    print(f"  -> ATTENZIONE: Nessuna lunghezza d'onda trovata! Uso fallback.")
                     lambda_centro = fallback_validi.get(banda, 500.0)
-            else:
-                print(f"  -> ATTENZIONE: Nessuna lunghezza d'onda trovata! Uso fallback.")
-                lambda_centro = fallback_validi.get(banda, 500.0)
-                print(f"  -> Valore di fallback: {lambda_centro:.1f} nm")
+                    print(f"  -> Valore di fallback: {lambda_centro:.1f} nm")
 
-            # calcolo l'intervallo usando 1.5×FWHM (copre ~93% della risposta)
-            fwhm = fwhm_nm.get(banda, 100)
-            fattore = 0.75  # 1.5×FWHM / 2 = 0.75×FWHM per lato
-            w_min = int(round(lambda_centro - fwhm * fattore))
-            w_max = int(round(lambda_centro + fwhm * fattore))
+                # calcolo l'intervallo usando 1.5×FWHM (copre ~93% della risposta)
+                fwhm = fwhm_nm.get(banda, 100)
+                fattore = 0.75  # 1.5×FWHM / 2 = 0.75×FWHM per lato
+                w_min = int(round(lambda_centro - fwhm * fattore))
+                w_max = int(round(lambda_centro + fwhm * fattore))
 
-            # limito al range del sensore (300-1100 nm)
-            w_min = max(w_min, 300)
-            w_max = min(w_max, 1100)
+                # limito al range del sensore (300-1100 nm)
+                w_min = max(w_min, 300)
+                w_max = min(w_max, 1100)
 
-            # verifico finale che w_min < w_max
-            if w_min >= w_max:
-                print(f"  -> ERRORE: Intervallo non valido ({w_min}-{w_max})! Uso fallback.")
-                # uso un intervallo di fallback
-                fallback_intervalli = {
-                    'gmag': (418, 555),
-                    'rmag': (552, 692),
-                    'imag': (690, 820),
-                    'zmag': (816, 920),
-                    'ymag': (922, 1005)
-                }
-                w_min, w_max = fallback_intervalli.get(banda, (400, 550))
+                # verifico finale che w_min < w_max
+                if w_min >= w_max:
+                    print(f"  -> ERRORE: Intervallo non valido ({w_min}-{w_max})! Uso fallback.")
+                    w_min, w_max = fallback_intervalli.get(banda, (400, 550))
 
-            limiti_bande[banda] = (w_min, w_max)
-            print(f"  -> FWHM: {fwhm} nm")
-            print(f"  -> Intervallo finale: {w_min} - {w_max} nm")
+                limiti_bande[banda] = (w_min, w_max)
+                print(f"  -> FWHM: {fwhm} nm")
+                print(f"  -> Intervallo finale: {w_min} - {w_max} nm")
+
+        # risolvo le eventuali sovrapposizioni tra gli intervalli delle bande
+        # scorro le bande in ordine di lunghezza d'onda crescente
+        bande_ordine_crescente = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
+        max_precedente = None
+
+        for b in bande_ordine_crescente:
+            if b in limiti_bande:
+                min_corrente, max_corrente = limiti_bande[b]
+                if max_precedente is not None and min_corrente < max_precedente:
+                    # riduco l'intervallo maggiore spostando il suo minimo per non contare le aree due volte
+                    min_corrente = max_precedente
+
+                limiti_bande[b] = (min_corrente, max_corrente)
+                max_precedente = max_corrente
 
     print("\n" + "=" * 70)
     print("DIZIONARIO FINALE:")

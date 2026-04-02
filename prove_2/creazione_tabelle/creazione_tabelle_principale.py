@@ -301,6 +301,21 @@ def scarica_intervalli_bande_ps1_da_descrizioni():
             print(f"  -> FWHM: {fwhm} nm")
             print(f"  -> Intervallo finale: {w_min} - {w_max} nm")
 
+    # risolvo le eventuali sovrapposizioni tra gli intervalli delle bande
+    # scorro le bande in ordine di lunghezza d'onda crescente
+    bande_ordine_crescente = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
+    max_precedente = None
+
+    for b in bande_ordine_crescente:
+        if b in limiti_bande:
+            min_corrente, max_corrente = limiti_bande[b]
+            if max_precedente is not None and min_corrente < max_precedente:
+                # riduco l'intervallo maggiore spostando il suo minimo per non contare le aree due volte
+                min_corrente = max_precedente
+
+            limiti_bande[b] = (min_corrente, max_corrente)
+            max_precedente = max_corrente
+
     print("\n" + "=" * 70)
     print("DIZIONARIO FINALE:")
     print("=" * 70)
@@ -309,6 +324,7 @@ def scarica_intervalli_bande_ps1_da_descrizioni():
     print("=" * 70 + "\n")
 
     return limiti_bande
+
 
 # =============================================================================
 # BLOCCO DI ESECUZIONE (MAIN)
@@ -414,7 +430,7 @@ if __name__ == "__main__":
             continue
 
         cartella_prove = BASE_DIR
-        cartella_tabelle = cartella_prove / "tabelle"
+        cartella_tabelle = cartella_tabelle = cartella_prove / "tabelle"
         output_dir = cartella_tabelle / "tabelle_unite" / f"tabelle_unite_run_{run}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -876,7 +892,8 @@ if __name__ == "__main__":
 
         print("Calcolo statistiche di run e riorganizzazione colonne...")
         # tengo traccia solo del flusso base richiesto e rimuovo tutti gli step di decorrelazione locale
-        cols_flux = ['flusso_fisso_max_run_senza_correzioni','flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura']
+        cols_flux = ['flusso_fisso_max_run_senza_correzioni',
+                     'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura']
 
         cols_flux_presenti = [c for c in cols_flux if c in run_df.columns]
         for c in cols_flux_presenti: run_df[c] = pd.to_numeric(run_df[c], errors='coerce')
@@ -967,7 +984,8 @@ if __name__ == "__main__":
             cols = df_file.columns.tolist()
 
             # elimino le mie colonne di servizio, inclusa stat_group_id
-            for temp_c in ['file_index', 'original_file_path', 'original_idx', 'run_unique_id', 'run_number', 'stat_group_id']:
+            for temp_c in ['file_index', 'original_file_path', 'original_idx', 'run_unique_id', 'run_number',
+                           'stat_group_id']:
                 if temp_c in cols: cols.remove(temp_c)
 
             # elimino la colonna base per lasciare solamente quella richiesta

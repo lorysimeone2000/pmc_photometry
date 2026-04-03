@@ -132,7 +132,7 @@ def analisi_image_segmentation(percorso_file_, parametri_globali):
     fwhm = parametri_globali.get('fwhm', 3.0)
     size = parametri_globali.get('size', 5)
     threshold = parametri_globali.get('threshold_assoluta', 3.0)
-    pixel_n = parametri_globali.get('pixel', 5)
+    pixel_n = parametri_globali.get('pixel', 3)
 
     kernel = make_2dgaussian_kernel(fwhm, size=size)
     convolved_data = convolve(data, kernel)

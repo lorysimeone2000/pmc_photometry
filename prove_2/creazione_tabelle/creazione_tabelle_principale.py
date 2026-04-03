@@ -102,9 +102,17 @@ def stampa_descrizioni_colonne_ps1():
     print("ANALISI COMPLETA COLONNE MAGNITUDINE - PAN-STARRS DR2 (II/389/ps1_dr2)")
     print("=" * 80)
 
-    # Recupera il catalogo
     print("\n1. Scaricamento metadati del catalogo...")
-    catalogo = Vizier.get_catalogs("II/389/ps1_dr2")[0]
+
+    # recupero il catalogo gestendo l'eventuale errore di lista vuota dal server
+    try:
+        lista_cataloghi = Vizier.get_catalogs("II/389/ps1_dr2")
+        if not lista_cataloghi:
+            raise IndexError("Lista cataloghi vuota")
+        catalogo = lista_cataloghi[0]
+    except Exception as e:
+        print(f"ATTENZIONE: Errore nello scaricamento dei metadati ({e}).")
+        return {}
 
     # Colori di magnitudine da analizzare
     bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
@@ -190,8 +198,22 @@ def scarica_intervalli_bande_ps1_da_descrizioni():
     print("SCARICAMENTO INTERVALLI BANDE PAN-STARRS DR2")
     print("=" * 70)
 
-    # Recupera il catalogo
-    catalogo = Vizier.get_catalogs("II/389/ps1_dr2")[0]
+    # gestisco l'eventuale errore se il server VizieR mi restituisce una lista vuota
+    try:
+        lista_cataloghi = Vizier.get_catalogs("II/389/ps1_dr2")
+        if not lista_cataloghi:
+            raise IndexError("Lista cataloghi vuota")
+        catalogo = lista_cataloghi[0]
+    except Exception as e:
+        print(f"ATTENZIONE: Impossibile scaricare i metadati del catalogo ({e}).")
+        print("Applico i fallback predefiniti per gli intervalli delle bande.")
+        return {
+            'gmag': (418, 555),
+            'rmag': (552, 692),
+            'imag': (690, 820),
+            'zmag': (816, 920),
+            'ymag': (922, 1005)
+        }
 
     # FWHM delle bande Pan-STARRS da Tonry+ 2012
     fwhm_nm = {

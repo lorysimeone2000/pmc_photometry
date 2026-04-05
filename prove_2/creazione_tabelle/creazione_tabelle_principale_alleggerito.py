@@ -110,7 +110,7 @@ if __name__ == "__main__":
     print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
     vizier_hip = Vizier(
         catalog="I/239/hip_main",
-        columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],
+        columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag'],
         row_limit=-1
     )
     risultato_hip = vizier_hip.query_constraints(Vmag="<16")

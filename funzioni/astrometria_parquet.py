@@ -252,9 +252,18 @@ def stampa_descrizioni_colonne_ps1():
     print("ANALISI COMPLETA COLONNE MAGNITUDINE - PAN-STARRS DR2 (II/389/ps1_dr2)")
     print("=" * 80)
 
-    # Recupera il catalogo
+    # Recupero il catalogo
     print("\n1. Scaricamento metadati del catalogo...")
-    catalogo = Vizier.get_catalogs("II/389/ps1_dr2")[0]
+    try:
+        # scarico i metadati gestendo eventuali errori e liste vuote
+        cataloghi = Vizier.get_catalogs("II/389/ps1_dr2")
+        if not cataloghi:
+            print("ATTENZIONE: Nessun dato ricevuto da VizieR. Ritorno dizionario vuoto.")
+            return {}
+        catalogo = cataloghi[0]
+    except Exception as e:
+        print(f"ERRORE di connessione a VizieR: {e}. Ritorno dizionario vuoto.")
+        return {}
 
     # Colori di magnitudine da analizzare
     bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
@@ -332,37 +341,62 @@ def scarica_intervalli_bande_ps1_da_descrizioni():
     """
     Scarica gli intervalli delle bande Pan-STARRS DR2 estraendo
     le lunghezze d'onda centrali dalle descrizioni delle colonne.
+
+    Il calcolo degli intervalli spettrali utilizza la risoluzione R
+    fornita nell'abstract e la formula:
+        λ_min/max,i = λ_c,i ± 0.75 · Δλ_i
+    con Δλ_i = λ_c,i / R (FWHM)
     """
     from astroquery.vizier import Vizier
     import re
+
+    # 1. FORZIAMO I SETTAGGI DI VIZIER PER EVITARE IL TIMEOUT
+    Vizier.TIMEOUT = 120
+    Vizier.VIZIER_SERVER = 'vizier.cfa.harvard.edu'
 
     print("\n" + "=" * 70)
     print("SCARICAMENTO INTERVALLI BANDE PAN-STARRS DR2")
     print("=" * 70)
 
-    # Recupera il catalogo
-    catalogo = Vizier.get_catalogs("II/389/ps1_dr2")[0]
-
-    # FWHM delle bande Pan-STARRS da Tonry+ 2012
-    fwhm_nm = {
-        'gmag': 137,
-        'rmag': 140,
-        'imag': 130,
-        'zmag': 104,
-        'ymag': 83
+    # Risoluzione spettrale R = λ_c / Δλ da abstract (Tonry+ 2012)
+    # R = λ_c / FWHM
+    risoluzione_R = {
+        'gmag': 3.5,
+        'rmag': 4.4,
+        'imag': 5.8,
+        'zmag': 8.3,
+        'ymag': 11.6
     }
 
-    # Valori di fallback validi (in nm)
+    # Valori di fallback per le lunghezze d'onda centrali (in nm)
     fallback_validi = {
-        'gmag': 486.6,
-        'rmag': 621.5,
-        'imag': 754.5,
-        'zmag': 867.9,
-        'ymag': 963.3
+        'gmag': 481.0,
+        'rmag': 617.0,
+        'imag': 752.0,
+        'zmag': 866.0,
+        'ymag': 962.0
     }
 
-    # Pattern per estrarre la lunghezza d'onda centrale - ORDINE IMPORTANTE!
-    # Prima cerco il pattern con {AA} che è specifico per gmag
+    # predispongo il mio dizionario di sicurezza finale se vizier cade totalmente
+    fallback_intervalli_totali = {
+        'gmag': (378, 584),  # 481 ± 0.75*(481/3.5)=481±103
+        'rmag': (512, 722),  # 617 ± 0.75*(617/4.4)=617±105
+        'imag': (655, 849),  # 752 ± 0.75*(752/5.8)=752±97
+        'zmag': (788, 944),  # 866 ± 0.75*(866/8.3)=866±78
+        'ymag': (900, 1024)  # 962 ± 0.75*(962/11.6)=962±62
+    }
+
+    try:
+        cataloghi = Vizier.get_catalogs("II/389/ps1_dr2")
+        if not cataloghi:
+            print("  -> ATTENZIONE: Nessun dato recuperato da VizieR. Uso i limiti di default.")
+            return fallback_intervalli_totali
+        catalogo = cataloghi[0]
+    except Exception as e:
+        print(f"  -> ERRORE durante la connessione a VizieR: {e}. Uso i limiti di default.")
+        return fallback_intervalli_totali
+
+    # Pattern per estrarre la lunghezza d'onda centrale
     patterns = [
         r'\((\d+)\s*\{AA\}\)',  # (4866{AA}) - specifico per gmag
         r'\((\d+)\s*A\)',  # (6215A)
@@ -373,7 +407,7 @@ def scarica_intervalli_bande_ps1_da_descrizioni():
     bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
     limiti_bande = {}
 
-    print("\nEstrazione lunghezze d'onda dalle descrizioni:")
+    print("\nEstrazione lunghezze d'onda dalle descrizioni e calcolo intervalli:")
     print("-" * 70)
 
     for banda in bande:
@@ -383,30 +417,24 @@ def scarica_intervalli_bande_ps1_da_descrizioni():
 
             print(f"\n{banda}:")
             print(f"  Descrizione: {descrizione}")
+            print(f"  R = {risoluzione_R[banda]}")
 
-            # Estrai la lunghezza d'onda centrale
+            # Estraggo la lunghezza d'onda centrale
             lambda_centro = None
 
-            # prima prova a trovare il pattern specifico per questa banda
             if banda == 'gmag':
-                # cerco specificamente il pattern con {AA}
                 match = re.search(r'\((\d+)\s*\{AA\}\)', descrizione)
                 if match:
                     valore = float(match.group(1))
                     lambda_centro = valore / 10.0
-                    # raddoppio le parentesi graffe per non farle interpretare come variabile
                     print(f"  -> Lunghezza d'onda estratta (pattern {{AA}}): {valore:.0f} Å = {lambda_centro:.1f} nm")
 
-            # se non trovato, provo tutti i pattern
             if lambda_centro is None:
                 for pattern in patterns:
                     match = re.search(pattern, descrizione)
                     if match:
                         valore = float(match.group(1))
-                        # verifico che il valore sia in un range plausibile (300-2000 nm o 3000-20000 Å)
-                        # aggiungo la 'r' per rendere la stringa raw ed evitare il SyntaxWarning
                         if '{AA}' in pattern or 'Å' in pattern or pattern.endswith(r'A\)') or pattern.endswith('[ÅA]'):
-                            # è in Å, converto in nm
                             lambda_centro = valore / 10.0
                             print(f"  -> Lunghezza d'onda estratta: {valore:.0f} Å = {lambda_centro:.1f} nm")
                         else:
@@ -414,7 +442,6 @@ def scarica_intervalli_bande_ps1_da_descrizioni():
                             print(f"  -> Lunghezza d'onda estratta: {lambda_centro:.1f} nm")
                         break
 
-            # Verifica che il valore sia plausibile (tra 300 e 2000 nm)
             if lambda_centro is not None:
                 if lambda_centro < 300 or lambda_centro > 2000:
                     print(f"  -> ATTENZIONE: Valore {lambda_centro:.1f} nm non plausibile! Uso fallback.")
@@ -424,35 +451,48 @@ def scarica_intervalli_bande_ps1_da_descrizioni():
                 lambda_centro = fallback_validi.get(banda, 500.0)
                 print(f"  -> Valore di fallback: {lambda_centro:.1f} nm")
 
-            # Calcola l'intervallo usando 1.5×FWHM (copia ~93% della risposta)
-            fwhm = fwhm_nm.get(banda, 100)
-            fattore = 0.75  # 1.5×FWHM / 2 = 0.75×FWHM per lato
-            w_min = int(round(lambda_centro - fwhm * fattore))
-            w_max = int(round(lambda_centro + fwhm * fattore))
+            # Calcolo Δλ (FWHM) dalla definizione R = λ_c / Δλ
+            R = risoluzione_R.get(banda, 5.0)
+            delta_lambda = lambda_centro / R  # FWHM in nm
 
-            # Limita al range del sensore (300-1100 nm)
+            # Calcolo l'intervallo usando λ_c ± 0.75 × Δλ
+            fattore = 0.75
+            w_min = int(round(lambda_centro - delta_lambda * fattore))
+            w_max = int(round(lambda_centro + delta_lambda * fattore))
+
+            # Limito al range del sensore (300-1100 nm)
             w_min = max(w_min, 300)
             w_max = min(w_max, 1100)
 
-            # Verifica finale che w_min < w_max
             if w_min >= w_max:
                 print(f"  -> ERRORE: Intervallo non valido ({w_min}-{w_max})! Uso fallback.")
-                # Usa un intervallo di fallback
-                fallback_intervalli = {
-                    'gmag': (418, 555),
-                    'rmag': (552, 692),
-                    'imag': (690, 820),
-                    'zmag': (816, 920),
-                    'ymag': (922, 1005)
-                }
-                w_min, w_max = fallback_intervalli.get(banda, (400, 550))
+                w_min, w_max = fallback_intervalli_totali.get(banda, (400, 550))
 
             limiti_bande[banda] = (w_min, w_max)
-            print(f"  -> FWHM: {fwhm} nm")
-            print(f"  -> Intervallo finale: {w_min} - {w_max} nm")
+            print(f"  -> λ_c = {lambda_centro:.1f} nm")
+            print(f"  -> Δλ (FWHM) = {delta_lambda:.1f} nm")
+            print(f"  -> Intervallo parziale: {w_min} - {w_max} nm")
+
+    # Studio le sovrapposizioni e accorcio la banda di lunghezza d'onda maggiore
+    print("\nControllo sovrapposizioni:")
+    print("-" * 70)
+    for i in range(1, len(bande)):
+        banda_prec = bande[i - 1]
+        banda_corr = bande[i]
+
+        if banda_prec in limiti_bande and banda_corr in limiti_bande:
+            w_min_prec, w_max_prec = limiti_bande[banda_prec]
+            w_min_corr, w_max_corr = limiti_bande[banda_corr]
+
+            if w_min_corr < w_max_prec:
+                # Accorcio la banda con lunghezza d'onda maggiore spostando il suo limite inferiore
+                limiti_bande[banda_corr] = (w_max_prec, w_max_corr)
+                print(
+                    f"  -> Sovrapposizione corretta: {banda_prec} (fino a {w_max_prec} nm) e {banda_corr} (da {w_min_corr} nm).")
+                print(f"     Nuovo limite per {banda_corr}: {w_max_prec} - {w_max_corr} nm")
 
     print("\n" + "=" * 70)
-    print("DIZIONARIO FINALE:")
+    print("DIZIONARIO FINALE (intervalli in nm):")
     print("=" * 70)
     for banda, (w_min, w_max) in limiti_bande.items():
         print(f"    '{banda}': ({w_min}, {w_max}),")

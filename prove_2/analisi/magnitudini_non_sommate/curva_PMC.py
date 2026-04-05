@@ -9,25 +9,27 @@ fig, ax = plt.subplots(figsize=(10, 5))
 
 # Definizione degli intervalli delle bande con i relativi colori
 intervalli = {
-    'gmag': (400, 550),    # banda g: da 400 a 550 nm
-    'rmag': (555, 705),    # banda r: da 555 a 705 nm
-    'imag': (688, 850),    # banda i: da 688 a 850 nm
-    'zmag': (812, 920),    # banda z: da 812 a 920 nm
-    'ymag': (922, 1005)    # banda y: da 922 a 1005 nm
+    'm_g [384;589]': (382, 591),    # banda g: da 400 a 550 nm
+    'm_r [589;726]': (591, 727),    # banda r: da 555 a 705 nm
+    'm_i [726;852]': (727, 852),    # banda i: da 688 a 850 nm
+    'm_z [852;946]': (852, 946),    # banda z: da 812 a 920 nm
+    'm_y [946;1026]': (946, 1026)    # banda y: da 922 a 1005 nm
 }
 
 # Mappa dei colori per le bande (sfumature tenui e riconoscibili)
 colori_bande = {
-    'gmag': '#33cc33',    # verde
-    'rmag': '#ff3333',    # rosso
-    'imag': '#ff66cc',    # magenta
-    'zmag': '#8b4513',    # marrone
-    'ymag': '#66ccff'     # blu chiaro
+    'm_g': '#33cc33',    # verde
+    'm_r': '#ff3333',    # rosso
+    'm_i': '#ff66cc',    # magenta
+    'm_z': '#8b4513',    # marrone
+    'm_y': '#66ccff'     # blu chiaro
 }
 
 # Aggiungo le strisce verticali per ogni banda
 for banda, (inizio, fine) in intervalli.items():
-    ax.axvspan(inizio, fine, alpha=0.3, color=colori_bande[banda], label=banda)
+    # Estraggo il nome base della banda separando la stringa allo spazio per trovare il colore corretto nel dizionario
+    chiave_colore = banda.split()[0]
+    ax.axvspan(inizio, fine, alpha=0.3, color=colori_bande[chiave_colore], label=banda)
 
 # Traccio la curva principale usando il nero come colore
 ax.plot(df['Wavelength'], df['QE'], color='#111111', linewidth=2)
@@ -56,11 +58,18 @@ ax.xaxis.grid(False)
 # Mi assicuro che la linea dati parta esattamente dai bordi senza spazi vuoti
 ax.margins(x=0, y=0)
 
+# Disegno un intervallo per la banda Vmag sopra il riquadro per non intaccare i colori delle altre bande.
+# Utilizzo ax.plot al posto di ax.annotate per fare in modo che le righe verticali siano solo sotto quella orizzontale.
+ax.plot([500, 500, 600, 600], [1.00, 1.02, 1.02, 1.00], color='black', lw=1., transform=ax.get_xaxis_transform(), clip_on=False)
+
+# Aggiungo l'etichetta di testo "Vmag" centrata appena sopra la linea dell'intervallo
+ax.text(550, 1.03, 'm_V [500;600]', transform=ax.get_xaxis_transform(), ha='center', va='bottom', color='black', clip_on=False)
+
 # Aggiusto i margini della figura per fare in modo che il titolo non venga tagliato
 plt.subplots_adjust(top=0.85)
 
 # Salvo l'immagine
-plt.savefig('curva_PMC.png', dpi=300, bbox_inches='tight')
+plt.savefig('curva_PMC_intervalli_calcolati.png', dpi=300, bbox_inches='tight')
 
 # Avvio il render a schermo del grafico finale
 plt.show()

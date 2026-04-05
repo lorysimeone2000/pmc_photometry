@@ -4,93 +4,113 @@ import matplotlib.ticker as ticker
 import numpy as np
 import os
 
-# --- 1. CONFIGURAZIONE ---
+# --- 1. CONFIGURO I PARAMETRI ---
 RUNS_TO_PROCESS = [1, 2, 3]
 SIZES_TO_TEST = [3, 5]
 
-# Colori per il grafico
+# imposto i colori per il grafico
 colors_perse = {3: 'red', 5: 'blue'}
 colors_fp = {3: 'darkred', 5: 'darkblue'}
 
-print("--- Inizio Unificazione Dati e Plotting Medio ---")
+print("--- Starting Data Unification and Mean Plotting ---")
 
-# --- 2. CARICAMENTO E AGGREGAZIONE DATI ---
+# --- 2. CARICO E AGGREGO I DATI ---
 lista_dataframes = []
 
 for run in RUNS_TO_PROCESS:
-    # Costruisco il nome del file
+    # costruisco il nome del file
     filename = f"risultati_scan_run_{run}_perse_mag_lt_10.csv"
 
-    # Verifico se esiste
+    # verifico se esiste
     if os.path.exists(filename):
-        print(f"Caricamento dati da: {filename}")
+        print(f"Loading data from: {filename}")
         df_temp = pd.read_csv(filename)
         lista_dataframes.append(df_temp)
     else:
-        print(f"ATTENZIONE: File {filename} non trovato. Lo salto.")
+        print(f"WARNING: File {filename} not found. Skipping it.")
 
 if not lista_dataframes:
-    print("ERRORE: Nessun file dati trovato. Impossibile generare il grafico.")
+    print("ERROR: No data files found. Cannot generate the plot.")
     exit()
 
-# Concateno tutti i dataframe in uno solo
-df_totale = pd.concat(lista_dataframes)
+# concateno momentaneamente per trovare il minimo e massimo globale di FWHM
+df_temp_totale = pd.concat(lista_dataframes)
+fwhm_min = df_temp_totale['FWHM'].min()
+fwhm_max = df_temp_totale['FWHM'].max()
 
-# Calcolo la MEDIA raggruppando per FWHM
-# Questo è il passaggio chiave: per ogni valore di FWHM, fa la media tra Run 1, 2 e 3
-print("Calcolo delle medie su tutte le run...")
+# creo una griglia comune di 500 punti per l'interpolazione
+fwhm_grid = np.linspace(fwhm_min, fwhm_max, 500)
+
+lista_dataframes_interpolati = []
+
+# interpolo ogni dataframe sulla nuova griglia comune per allinearli tutti
+for df in lista_dataframes:
+    # ordino il dataframe originale per sicurezza
+    df = df.sort_values('FWHM')
+    df_interp = pd.DataFrame({'FWHM': fwhm_grid})
+
+    for col in df.columns:
+        if col != 'FWHM':
+            # uso np.interp per allineare i valori, metto NaN fuori dal range originale del mio singolo dataframe
+            df_interp[col] = np.interp(fwhm_grid, df['FWHM'], df[col], left=np.nan, right=np.nan)
+
+    lista_dataframes_interpolati.append(df_interp)
+
+# concateno tutti i dataframe allineati in uno solo
+df_totale = pd.concat(lista_dataframes_interpolati)
+
+# calcolo la media raggruppando per la griglia FWHM (ignoro automaticamente i NaN)
 df_medio = df_totale.groupby('FWHM').mean().reset_index()
 
-# --- 3. CONFIGURAZIONE GRAFICO ---
+# --- 4. TRACCIO IL GRAFICO ---
 plt.figure(figsize=(12, 8))
-
-# Variabile asse X
 x_axis = df_medio['FWHM']
 
-# --- 4. CICLO DI PLOTTING SUI DATI MEDI ---
 for size_val in SIZES_TO_TEST:
-    # Ricostruisco i nomi delle colonne
     col_perse_mean = f'Perse_MagLT10_Size{size_val}_Mean'
     col_fp_mean = f'FP_Size{size_val}_Mean'
 
-    # Controllo se le colonne esistono (dovrebbero esserci se i CSV sono corretti)
     if col_perse_mean in df_medio.columns and col_fp_mean in df_medio.columns:
 
-        # Plot Stelle Perse (Linea Continua) - MEDIA
+        # traccio la linea continua per la media delle stelle perse
         plt.plot(x_axis, df_medio[col_perse_mean],
                  color=colors_perse[size_val], linestyle='-', linewidth=2,
-                 label=f'Media Stelle Perse (Mag < 10) - Size {size_val}')
+                 label=f'Mean Lost Stars (Mag < 10) - Size {size_val}')
 
-        # Plot Falsi Positivi (Linea Tratteggiata) - MEDIA
+        # traccio la linea tratteggiata per la media dei falsi positivi
         plt.plot(x_axis, df_medio[col_fp_mean],
                  color=colors_fp[size_val], linestyle='--', linewidth=2,
-                 label=f'Media Falsi Positivi (FP) - Size {size_val}')
+                 label=f'Mean False Positives (FP) - Size {size_val}')
     else:
-        print(f"Attenzione: Colonne per Size {size_val} non trovate nel dataset unito.")
+        print(f"Warning: Columns for Size {size_val} not found in the merged dataset.")
 
-# --- 5. FORMATTAZIONE ---
+# --- 5. FORMATTO IL GRAFICO ---
 plt.grid(True, which="both", linestyle='--', alpha=0.6)
 plt.xlabel('FWHM')
-plt.ylabel('Numero MEDIO per immagine (Log) - Media delle Run')
-plt.yscale('log')
+plt.ylabel('MEAN Number per Image - Run Average')
+plt.yscale('symlog', linthresh=5.0)
 
-# Titolo che riflette l'unificazione
-plt.title(f'Scan Parametri UNIFICATO (Media su Run {RUNS_TO_PROCESS})\nFalsi Positivi vs Stelle Perse < Mag 10')
+# inserisco il titolo che riflette l'unificazione
+plt.title(f'UNIFIED Parameter Scan (Average over Runs {RUNS_TO_PROCESS})\nFalse Positives vs Lost Stars < Mag 10')
 
-# Formattazione assi logaritmici
 ax = plt.gca()
-ax.yaxis.set_minor_locator(ticker.LogLocator(base=10.0, subs=np.arange(2, 10), numticks=100))
-ax.yaxis.set_minor_formatter(ticker.ScalarFormatter())
+
+# definisco e applico le tacchette (ticks) personalizzate per l'asse y
+# conto di 1 in 1 per i valori da 0 a 5, poi avanzo di 5 in 5 da 10 a 80
+y_ticks = list(range(0, 6)) + list(range(10, 85, 5))
+ax.set_yticks(y_ticks)
+
+# formatto gli assi mantenendo i numeri in formato normale senza notazione scientifica
 ax.yaxis.set_major_formatter(ticker.ScalarFormatter())
 ax.ticklabel_format(style='plain', axis='y')
+
+# rimuovo i minor ticks per avere un asse pulito e ordinato con solo i miei valori
+ax.yaxis.set_minor_locator(ticker.NullLocator())
 
 plt.legend()
 plt.tight_layout()
 
-# --- 6. SALVATAGGIO ---
-nome_file_output = 'scan_parametri_UNIFICATO_perse_replot.png'
-plt.savefig(nome_file_output, dpi=300)
-print(f"\nGrafico unificato salvato come: {nome_file_output}")
+plt.savefig('scan_parametri_UNIFICATO.png', dpi=300, bbox_inches='tight')
+print("Plot saved as 'scan_parametri_UNIFICATO.png'")
 
 plt.show()
-plt.close()

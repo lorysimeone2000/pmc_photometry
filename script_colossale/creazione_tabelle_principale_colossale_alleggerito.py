@@ -90,7 +90,7 @@ print(f"Cartella Base rilevata: {BASE_DIR}")
 print(f"Moduli esterni caricati con successo.")
 print(f"------------------------------")
 
-# uso il mirror di Harvard scaricando le 5 bande fondamentali per simulare il mio sensore FLIR
+# scarico le 5 bande fondamentali per simulare il mio sensore FLIR
 vizier = Vizier(
     catalog="II/389/ps1_dr2",
     columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag', 'imag', 'zmag', 'ymag'],
@@ -123,10 +123,10 @@ if __name__ == "__main__":
     parametri_caricati = leggi_file_parametri(file_parametri)
 
     print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
-    
+
     # individuo il percorso esatto della cache di astroquery nel mio sistema
     astroquery_cache_dir = os.path.join(paths.get_cache_dir(), 'astroquery')
-    
+
     # verifico se la cartella esiste prima di procedere
     if os.path.exists(astroquery_cache_dir):
         # elimino l'intera cartella e tutto il suo contenuto per liberare spazio
@@ -136,7 +136,7 @@ if __name__ == "__main__":
 
     vizier_hip = Vizier(
         catalog="I/239/hip_main",
-        columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],
+        columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag'],
         row_limit=-1
     )
     risultato_hip = vizier_hip.query_constraints(Vmag="<16")
@@ -215,7 +215,7 @@ if __name__ == "__main__":
         print(f"Ho trovato {len(file_gia_processati)} file FITS già processati.")
 
     cartella_dati = Path(cartella_dati)
-    
+
     # filtro le mie sottocartelle verificando che il loro nome rientri nell'intervallo temporale che ho specificato
     sottocartelle = [d for d in cartella_dati.iterdir() if (d.is_dir() or d.is_symlink()) and args.start_date <= d.name <= args.end_date]
 
@@ -377,14 +377,14 @@ if __name__ == "__main__":
                 if scarica_nuovo_catalogo:
                     # individuo il percorso esatto della cache di astroquery nel mio sistema
                     astroquery_cache_dir = os.path.join(paths.get_cache_dir(), 'astroquery')
-                    
+
                     # verifico se la cartella esiste prima di procedere
                     if os.path.exists(astroquery_cache_dir):
                         # elimino l'intera cartella e tutto il suo contenuto per liberare spazio
                         shutil.rmtree(astroquery_cache_dir)
                         # ricreo la cartella vuota per evitare errori nelle esecuzioni future
                         os.makedirs(astroquery_cache_dir)
-                        
+
                     tentativi_massimi = 5
                     attesa = 10
                     for tentativo in range(tentativi_massimi):
@@ -504,7 +504,7 @@ if __name__ == "__main__":
                     with np.errstate(invalid='ignore'):
                         mask_taglio = tbl_riquadro_esterno_vizier_CLEAN['Mag_sintetica'] < magnitudine_massima
                     tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[mask_taglio].copy()
-                    
+
                     # salvo il mio stato attuale per il controllo nella run successiva
                     centro_run_precedente = centro
                     tbl_vizier_cut_precedente = tbl_vizier_cut.copy()
@@ -524,7 +524,7 @@ if __name__ == "__main__":
 
             dizionario_sfondi[(run_idx, n)] = {'somma': somma_totale, 'fondo_pp': fondo_medio}
 
-            if run_idx == 1 and n == 35:
+            if run_idx == 1 and n == 1:
                 s_ref = somma_totale
 
             df_trovate = tbl_trovate.to_pandas()

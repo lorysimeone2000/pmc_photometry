@@ -65,7 +65,7 @@ def leggi_header_da_csv(filename):
 run = 1
 KRON_TARGET = 150
 INDICE_IMMAGINE_RIFERIMENTO = 35
-max_sep = 0.003349 * u.deg
+max_sep = 36/3600 * u.deg
 
 # --- SETUP STELLE CATALOGATE ---
 file_csv_catalogate = f"/home/lorysimeone/tesi_magistrale/prove_2/tabelle/sorgenti_catalogate_run/sorgenti_catalogate_run_{run}/run_1_stelle_catalogate_immagine_{INDICE_IMMAGINE_RIFERIMENTO:03d}.csv"
@@ -143,7 +143,7 @@ t0 = None
 bool_time = False
 
 for percorso_csv in lista_percorsi_csv:
-    n +=1
+    n += 1
 
     header_dal_csv_ = leggi_header_da_csv(percorso_csv)
     image_file = header_dal_csv_['PERCORSO_FILE']
@@ -303,4 +303,118 @@ os.makedirs(os.path.dirname(path_output), exist_ok=True)
 plt.savefig(path_output, dpi=300, bbox_inches='tight')
 print(f"Immagine salvata correttamente in: {path_output}")
 
+# --- FASE 5: STATISTICHE SULLE DISTANZE CELESTI ---
+print("\n--- FASE 5: Statistiche delle distanze celesti tra centroidi ---")
+if len(ra_clean) > 1:
+    # Creo un oggetto SkyCoord unico con tutte le posizioni valide della stella
+    coord_centroidi = SkyCoord(ra=ra_clean, dec=dec_clean, unit='deg', frame='icrs')
+
+    distanze_deg = []
+    # Calcolo la distanza tra ogni coppia unica di coordinate
+    for i in range(len(coord_centroidi)):
+        # Uso .separation sulle posizioni successive all'indice i per evitare duplicati e zeri
+        seps = coord_centroidi[i].separation(coord_centroidi[i + 1:])
+        distanze_deg.extend(seps.degree)
+
+    distanze_array = np.array(distanze_deg)
+
+    # Ricavo il massimo, la media e la deviazione standard
+    dist_max = np.max(distanze_array)
+    dist_mean = np.mean(distanze_array)
+    dist_std = np.std(distanze_array)
+
+    # Stampo a video i risultati
+    print(f"Distanza massima:    {dist_max:.8f} gradi  ({dist_max * 3600:.4f} arcsec)")
+    print(f"Distanza media:      {dist_mean:.8f} gradi  ({dist_mean * 3600:.4f} arcsec)")
+    print(f"Deviazione standard: {dist_std:.8f} gradi  ({dist_std * 3600:.4f} arcsec)")
+else:
+    # Mostro un avviso nel caso avessi solo un frame valido o zero
+    print("Non ho abbastanza coordinate valide per calcolare le distanze.")
+
 plt.show()
+
+import os
+import pandas as pd
+import numpy as np
+from astropy.coordinates import SkyCoord
+from astropy import units as u
+from itertools import combinations
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+
+# Fase 6: Analisi della distanza angolare massima dei centroidi
+# imposto il percorso base
+base_path = "/home/lorysimeone/tesi_magistrale/prove_2/tabelle/tabelle_unite"
+
+# creo una lista in cui memorizzo le distanze massime trovate per ogni stella
+tutte_le_distanze_massime = []
+
+# ciclo sulle run da 1 a 3 comprese
+for run in tqdm(range(1, 4)):
+    cartella_csv = os.path.join(base_path, f"tabelle_unite_run_{run}")
+
+    # verifico che la cartella esista per evitare errori di percorso
+    if os.path.exists(cartella_csv):
+        # ciclo su tutti i file csv all'interno della cartella della run corrente
+        for file in os.listdir(cartella_csv):
+            if file.endswith(".csv"):
+                file_path = os.path.join(cartella_csv, file)
+
+                # leggo il dataframe
+                df = pd.read_csv(file_path , comment='#')
+
+                # raggruppo i dati per la colonna 'label'
+                gruppi = df.groupby('label')
+
+                # analizzo ogni singola stella all'interno del gruppo
+                for label, gruppo in gruppi:
+                    # estraggo le coordinate assumendo che le colonne si chiamino 'ra' e 'dec'
+                    ra_vals = gruppo['RAJ2000'].values
+                    dec_vals = gruppo['DEJ2000'].values
+
+                    # procedo solo se ho almeno due centroidi per calcolare una distanza
+                    if len(ra_vals) > 1:
+                        # creo gli oggetti SkyCoord per le coordinate della stella
+                        coords = SkyCoord(ra=ra_vals * u.deg, dec=dec_vals * u.deg)
+
+                        max_dist = 0
+                        # valuto la distanza angolare tra tutte le possibili coppie di centroidi
+                        for i, j in combinations(range(len(coords)), 2):
+                            # calcolo la separazione in arcosecondi
+                            dist = coords[i].separation(coords[j]).arcsec
+
+                            # aggiorno la distanza massima se ne trovo una maggiore
+                            if dist > max_dist:
+                                max_dist = dist
+
+                        # aggiungo la distanza massima isolata per questa stella alla lista generale
+                        tutte_le_distanze_massime.append(max_dist)
+
+# calcolo le statistiche finali sulle distanze massime
+if tutte_le_distanze_massime:
+    valore_massimo = np.max(tutte_le_distanze_massime)
+    media = np.mean(tutte_le_distanze_massime)
+    deviazione_standard = np.std(tutte_le_distanze_massime)
+
+    print("--- FASE 6: Risultati sulle distanze angolari massime (in arcosecondi) ---")
+    print(f"Valore massimo: {valore_massimo}")
+    print(f"Media: {media}")
+    print(f"Deviazione standard: {deviazione_standard}")
+
+    # creo l'istogramma delle distanze massime
+    plt.figure(figsize=(10, 6))
+    # imposto l'istogramma e aggiungo i valori per la legenda
+    plt.hist(tutte_le_distanze_massime, bins=50, color='skyblue', edgecolor='black',
+             label=f'Mean: {media:.2f}\'\'\nStd Dev: {deviazione_standard:.2f}\'\'')
+    plt.title('Distribution of maximum angular distances between centroids')
+    plt.xlabel('Maximum distance (arcseconds)')
+    plt.ylabel('Frequency')
+    plt.grid(axis='y', alpha=0.75)
+    # mostro la legenda
+    plt.legend()
+
+    # salvo l'istogramma nella directory corrente e lo mostro a schermo
+    plt.savefig("istogramma_distanze_massime.png")
+    plt.show()
+else:
+    print("Non ho trovato dati sufficienti o stelle con più di un centroide per calcolare le distanze.")

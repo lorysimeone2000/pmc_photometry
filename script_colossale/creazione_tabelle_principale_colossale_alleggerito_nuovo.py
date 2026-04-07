@@ -350,7 +350,7 @@ if __name__ == "__main__":
         output_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"Cartella di output: {output_dir}")
-        file_parquet_generati_nella_run = []
+        file_csv_generati_nella_run = []
 
         # --- FASE 1: CREAZIONE TABELLE UNITE ---
         print(f"--- FASE 1: Segmentazione & Unione ({len(file_list)} files) ---")

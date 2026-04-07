@@ -625,7 +625,7 @@ if __name__ == "__main__":
                 cols.insert(cols.index('ID'), 'Catalogo')
                 df_final = df_final[cols]
 
-            file_out = output_dir / f'run_{run_name}_immagine_{n:03d}.csv'
+            file_out = output_dir / f'run_{run_name}_stelle_trovate_e_catalogate_immagine_{n:03d}.csv'
 
             # creo il mio dizionario dei metadati e inserisco i valori di run_name e indice immagine
             header_dict = dict(fits.getheader(percorso_file))

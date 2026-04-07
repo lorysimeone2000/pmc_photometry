@@ -235,8 +235,6 @@ if __name__ == "__main__":
 
         # salto la cartella se contiene 10 o meno file
         if len(file_fits_list) <= 10:
-            #print(
-                #f"Salto la cartella {cartella_giorno.name}: contiene solo {len(file_fits_list)} file FITS (richiesti > 10).")
             continue
 
         nome_giorno = cartella_giorno.name
@@ -337,12 +335,11 @@ if __name__ == "__main__":
 
         # salto la mia run se contiene 10 o meno file
         if len(file_list) <= 10:
-            # print(f"Salto la run {run_name} di {cartella_giorno_name}: contiene solo {len(file_list)} file FITS (richiesti > 10).")
             continue
 
         print(f"\n==================== ELABORAZIONE {cartella_giorno_name} - {run_name} ====================")
 
-        # estraggo il numero della mia run dalla stringa per i calcoli dei pixel
+        # estraggo il numero della mia run dalla stringa per i calcoli dei pixel e il check di fase 1
         match_run = re.search(r'run_?(\d+)', run_name, re.IGNORECASE)
         run_idx = int(match_run.group(1)) if match_run else 1
 
@@ -517,8 +514,8 @@ if __name__ == "__main__":
             # salvo i miei dati del fondo appena estratti nel dizionario per la Fase 2/3
             dizionario_sfondi[(run_name, n)] = {'somma': somma_totale, 'fondo_pp': fondo_medio}
 
-            # se mi trovo all'immagine 1 della run_name 1 aggiorno il mio s_ref
-            if run_name == 1 and n == 1:
+            # se mi trovo all'immagine 1 della run 1 aggiorno il mio s_ref
+            if run_idx == 1 and n == 1:
                 s_ref = somma_totale
 
             df_trovate = tbl_trovate.to_pandas()
@@ -694,12 +691,12 @@ if __name__ == "__main__":
 
             # recupero i miei identificativi dai metadati anziché dalle colonne
             img_idx = int(header_info.get('IMG_INDEX', int(nome_fits.split('.')[0][-3:])))
-            run_idx = int(header_info.get('RUN_ID', run_name))
+            run_id_mem = str(header_info.get('RUN_ID', run_name))
 
             fondo_pp = 0.0
 
             # recupero i miei dati del fondo direttamente dal dizionario in memoria
-            sfondi_correnti = dizionario_sfondi.get((run_idx, img_idx))
+            sfondi_correnti = dizionario_sfondi.get((run_id_mem, img_idx))
             if sfondi_correnti is not None:
                 s_t = sfondi_correnti['somma']
                 fondo_pp = sfondi_correnti['fondo_pp']

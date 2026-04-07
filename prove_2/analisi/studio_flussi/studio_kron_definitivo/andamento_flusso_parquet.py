@@ -185,35 +185,6 @@ def converti_valore(valore):
     return valore
 
 
-def leggi_header_da_parquet(filename):
-    # inizializzo il mio dizionario vuoto per ospitare i metadati estratti
-    header_dict = {}
-    try:
-        parquet_file = pq.ParquetFile(filename)
-        metadati_grezzi = parquet_file.metadata.metadata
-
-        # verifico se la mia chiave personalizzata esiste all'interno dei metadati
-        if metadati_grezzi and b"astro_metadata" in metadati_grezzi:
-            # decodifico i byte e parso la stringa JSON
-            dizionario_meta = json.loads(metadati_grezzi[b"astro_metadata"].decode("utf-8"))
-
-            # estraggo il mio header FITS dal dizionario
-            header_fits = dizionario_meta.get("FITS_HEADER", {})
-
-            # popolo il mio dizionario con le chiavi del FITS
-            for chiave, valore in header_fits.items():
-                header_dict[chiave] = converti_valore(valore)
-
-            # aggiungo le chiavi rimanenti escludendo il dizionario annidato
-            for chiave, valore in dizionario_meta.items():
-                if chiave != "FITS_HEADER":
-                    header_dict[chiave] = converti_valore(valore) if isinstance(valore, str) else valore
-    except Exception:
-        pass
-
-    return header_dict
-
-
 # definisco l'unica colonna che mi interessa studiare
 colonna_target = 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'
 all_data = {colonna_target: []}
@@ -234,7 +205,7 @@ for run in run_list:
         lista_percorsi_parquet.extend([
             os.path.join(root, f)
             for f in files
-            if f.endswith('.parquet') and f"run_{run}_immagine_" in f
+            if f.endswith('.parquet') and f"run_{run}_stelle_trovate_e_catalogate_immagine_" in f
         ])
 
     lista_percorsi_parquet = sorted(lista_percorsi_parquet)
@@ -335,7 +306,7 @@ else:
 
     plt.tight_layout()
 
-    file_grafico = f'analisi_singola_media_flusso_{KRON_TARGET}_parquet.jpg'
+    file_grafico = f'analisi_singola_media_flusso_{KRON_TARGET}_parquet_priprovo_4_di_notte.jpg'
     plt.savefig(file_grafico, dpi=300)
     plt.show()
     plt.close()

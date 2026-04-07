@@ -2,6 +2,9 @@ import pandas as pd
 from photutils.background import Background2D, MedianBackground
 from astropy.convolution import convolve
 from photutils.segmentation import make_2dgaussian_kernel
+import matplotlib
+
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from photutils.segmentation import SourceCatalog
@@ -79,7 +82,7 @@ print(f"Cartella Base rilevata: {BASE_DIR}")
 print(f"Moduli esterni caricati con successo.")
 print(f"------------------------------")
 
-# definisco le mie run da analizzare
+# definisco le mie run_name da analizzare
 RUN = [1, 2, 3]
 
 # uso il mirror di Harvard scaricando le 5 bande fondamentali per simulare il sensore FLIR
@@ -88,7 +91,6 @@ vizier = Vizier(
     columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag', 'imag', 'zmag', 'ymag'],
     row_limit=-1,
 )
-
 
 # =============================================================================
 # BLOCCO DI ESECUZIONE (MAIN)
@@ -127,17 +129,9 @@ if __name__ == "__main__":
                                       dec=tbl_catalogo_hipparco['_DEJ2000'],
                                       unit=u.deg)
 
-    file_somma_pixel = cerca_file_nel_progetto(BASE_DIR, "risultati_somma_pixel.csv")
-    if file_somma_pixel:
-        df_somma_pixel = pd.read_csv(file_somma_pixel)
-        s_ref_df = df_somma_pixel[(df_somma_pixel['Run'] == 1) & (df_somma_pixel['im'] == 35)]
-        if not s_ref_df.empty:
-            s_ref = s_ref_df['Somma_Pixel_Esterni'].values[0]
-        else:
-            s_ref = 1.0
-    else:
-        df_somma_pixel = None
-        s_ref = 1.0
+    # imposto il mio s_ref di base e il dizionario per i fondi
+    s_ref = 1.0
+    dizionario_sfondi = {}
 
     next_internal_id = 1
 
@@ -147,15 +141,6 @@ if __name__ == "__main__":
         # leggo il dataframe della curva
         df_curva = pd.read_csv(file_curva_pmc)
 
-        # stabilisco i limiti di lunghezza d'onda delle singole bande
-        limiti_bande = {
-            'gmag': (400, 550),
-            'rmag': (550, 700),
-            'imag': (680, 840),
-            'zmag': (820, 920),
-            'ymag': (920, 1050)
-        }
-
         limiti_bande = scarica_intervalli_bande_ps1_da_descrizioni()
         print(f"Limiti bande: \n{limiti_bande}")
 
@@ -163,22 +148,35 @@ if __name__ == "__main__":
 
         # itero sulle bande per calcolare l'area sottesa alla curva per ciascun range
         for nome_banda, (w_min, w_max) in limiti_bande.items():
-            # applico la maschera di taglio per l'intervallo corrente
+            # applico la mia maschera di taglio per l'intervallo corrente
             maschera_w = (df_curva['Wavelength'] >= w_min) & (df_curva['Wavelength'] <= w_max)
-            # calcolo l'integrale tramite il metodo dei trapezi per estrarre la porzione di efficienza
+            # calcolo il mio integrale tramite il metodo dei trapezi per estrarre la porzione di efficienza
             area = np.trapezoid(df_curva['QE'][maschera_w], x=df_curva['Wavelength'][maschera_w])
             pesi_estratti.append(area)
 
         # converto in array e normalizzo in modo che la somma finale sia pari a 1
         pesi_estratti = np.array(pesi_estratti)
-        pesi_ideali_globali = pesi_estratti / np.sum(pesi_estratti)
+        somma_pesi = np.sum(pesi_estratti)
+        pesi_ideali_globali = pesi_estratti / somma_pesi
+
+        # calcolo il mio peso per la banda Vmag di Hipparco nell'intervallo 500-600 nm
+        maschera_vmag = (df_curva['Wavelength'] >= 500) & (df_curva['Wavelength'] <= 600)
+        area_vmag = np.trapezoid(df_curva['QE'][maschera_vmag], x=df_curva['Wavelength'][maschera_vmag])
+        peso_hipparco = area_vmag / somma_pesi
     else:
         # imposto i pesi standard in caso di mancato ritrovamento del csv
         pesi_ideali_globali = np.array([0.458, 0.326, 0.133, 0.055, 0.028])
+        # imposto il mio peso di fallback per hipparco
+        peso_hipparco = 0.35
 
-    for run in RUN:
-        print(f"\n==================== ELABORAZIONE RUN {run} ====================")
-        nome_cartella_run = f"20250120_run{run}"
+    # inizializzo le mie variabili per la verifica della distanza tra le run_name
+    centro_run_precedente = None
+    tbl_vizier_cut_precedente = None
+    tbl_hipparco_run_clean_precedente = None
+
+    for run_name in RUN:
+        print(f"\n==================== ELABORAZIONE RUN {run_name} ====================")
+        nome_cartella_run = f"20250120_run{run_name}"
         found_folders = list(BASE_DIR.rglob(nome_cartella_run))
         if not found_folders:
             continue
@@ -194,8 +192,8 @@ if __name__ == "__main__":
             continue
 
         cartella_prove = BASE_DIR
-        cartella_tabelle = cartella_tabelle = cartella_prove / "tabelle"
-        output_dir = cartella_tabelle / "tabelle_unite" / f"tabelle_unite_run_{run}"
+        cartella_tabelle = cartella_prove / "tabelle_alleggerite"
+        output_dir = cartella_tabelle / "tabelle_unite" / f"tabelle_unite_run_{run_name}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         global_tracker_coords = None
@@ -204,7 +202,7 @@ if __name__ == "__main__":
 
         print(f"--- FASE 1: Segmentazione & Unione ({len(file_list)} files) ---")
 
-        for n, percorso_file in enumerate(tqdm(file_list, desc=f"Fase 1 Run {run}"), 1):
+        for n, percorso_file in enumerate(tqdm(file_list, desc=f"Fase 1 Run {run_name}"), 1):
             if n == 1:
                 hdu_list = fits.open(percorso_file)
                 w = WCS(hdu_list[0].header)
@@ -214,125 +212,161 @@ if __name__ == "__main__":
                 raggio_ricerca = Angle(centro.separation(alto_destra) * 1.5, "deg")
                 hdu_list.close()
 
-                tentativi_massimi = 5
-                attesa = 10
-                for tentativo in range(tentativi_massimi):
-                    try:
-                        riquadro_esterno_vizier = vizier.query_region(
-                            coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
-                            radius=raggio_ricerca
-                        )
-                        tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
-                        break
-                    except Exception as e:
-                        if tentativo < tentativi_massimi - 1:
-                            time.sleep(attesa)
-                        else:
-                            raise
+                # verifico la distanza dal centro della run_name precedente per evitare il download superfluo
+                scarica_nuovo_catalogo = True
+                if centro_run_precedente is not None:
+                    distanza = centro.separation(centro_run_precedente)
+                    if distanza.deg <= 1.1:
+                        scarica_nuovo_catalogo = False
 
-                # calcolo la magnitudine sintetica FLIR
-                bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
+                if scarica_nuovo_catalogo:
+                    tentativi_massimi = 5
+                    attesa = 10
+                    for tentativo in range(tentativi_massimi):
+                        try:
+                            riquadro_esterno_vizier = vizier.query_region(
+                                coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
+                                radius=raggio_ricerca
+                            )
+                            tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+                            break
+                        except Exception as e:
+                            if tentativo < tentativi_massimi - 1:
+                                time.sleep(attesa)
+                            else:
+                                raise
 
-                flussi = []
+                    # calcolo la magnitudine sintetica FLIR
+                    bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
 
-                for banda in bande:
-                    colonna = tbl_riquadro_esterno_vizier[banda]
-                    array_dati = colonna.filled(np.nan) if hasattr(colonna, 'filled') else np.array(colonna)
-                    flusso = 10 ** (-0.4 * array_dati)
+                    flussi = []
 
-                    # sostituisco i dati mancanti con un flusso pari a zero
-                    # assumo che se il catalogo non ha visto la stella in questa banda,
-                    # il suo contributo di luce qui è nullo
-                    flusso_pulito = np.nan_to_num(flusso, nan=0.0)
-                    flussi.append(flusso_pulito)
+                    for banda in bande:
+                        colonna = tbl_riquadro_esterno_vizier[banda]
+                        array_dati = colonna.filled(np.nan) if hasattr(colonna, 'filled') else np.array(colonna)
+                        flusso = 10 ** (-0.4 * array_dati)
 
-                flussi = np.array(flussi)
-                array_pesi = pesi_ideali_globali[:, None]
+                        # sostituisco i dati mancanti con un flusso pari a zero
+                        flusso_pulito = np.nan_to_num(flusso, nan=0.0)
+                        flussi.append(flusso_pulito)
 
-                # calcolo il flusso pesato totale senza normalizzare per le bande mancanti
-                # in questo modo le stelle fredde mantengono i loro pesi ottici alti moltiplicati per zero
-                flusso_finale = np.sum(flussi * array_pesi, axis=0)
+                    flussi = np.array(flussi)
+                    array_pesi = pesi_ideali_globali[:, None]
 
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    # assegno una magnitudine fittizia di 99.0 agli oggetti che risultano avere flusso totalmente zero
-                    mag_sintetica_globale = np.where(flusso_finale > 0, -2.5 * np.log10(flusso_finale),
-                                                     99.0)
+                    # calcolo il flusso pesato totale senza normalizzare per le bande mancanti
+                    flusso_finale = np.sum(flussi * array_pesi, axis=0)
 
-                tbl_riquadro_esterno_vizier['Mag_sintetica'] = mag_sintetica_globale
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        # assegno una magnitudine fittizia di 99.0 agli oggetti che risultano avere flusso totalmente zero
+                        mag_sintetica_globale = np.where(flusso_finale > 0, -2.5 * np.log10(flusso_finale),
+                                                         99.0)
 
-                distanze_hip = centro.separation(coords_hipparco_global)
-                mask_hip_fov = distanze_hip < raggio_ricerca
-                tbl_hipparco_run_subset = tbl_catalogo_hipparco[mask_hip_fov]
-                coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
-                exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
+                    tbl_riquadro_esterno_vizier['Mag_sintetica'] = mag_sintetica_globale
 
-                # avvio il filtraggio competitivo a singola fase Vizier vs Hipparcos
-                print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
+                    distanze_hip = centro.separation(coords_hipparco_global)
+                    mask_hip_fov = distanze_hip < raggio_ricerca
+                    tbl_hipparco_run_subset = tbl_catalogo_hipparco[mask_hip_fov]
 
-                coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
-                                         dec=tbl_riquadro_esterno_vizier['DEJ2000'],
-                                         unit=u.deg)
+                    # calcolo il mio flusso di Hipparco, applico il peso e riconverto in magnitudine
+                    colonna_vmag = tbl_hipparco_run_subset['Vmag']
+                    array_dati_hip = colonna_vmag.filled(np.nan) if hasattr(colonna_vmag, 'filled') else np.array(
+                        colonna_vmag)
+                    flusso_hip = 10 ** (-0.4 * array_dati_hip)
+                    flusso_hip_pulito = np.nan_to_num(flusso_hip, nan=0.0)
+                    flusso_hip_pesato = flusso_hip_pulito * peso_hipparco
 
-                max_threshold_deg = np.max(exclusion_radii_run_subset)
-                seplimit = max_threshold_deg * u.deg
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        mag_hip_pesata = np.where(flusso_hip_pesato > 0, -2.5 * np.log10(flusso_hip_pesato), 99.0)
 
-                idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
+                    tbl_hipparco_run_subset['Vmag'] = mag_hip_pesata
 
-                if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
-                    idx_viz_1, idx_hip_1 = idx_A, idx_B
+                    coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
+                    exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
+
+                    # avvio il filtraggio competitivo a singola fase Vizier vs Hipparcos
+                    print("Avvio filtraggio competitivo a singola fase Vizier vs Hipparcos...")
+
+                    coords_vizier = SkyCoord(ra=tbl_riquadro_esterno_vizier['RAJ2000'],
+                                             dec=tbl_riquadro_esterno_vizier['DEJ2000'],
+                                             unit=u.deg)
+
+                    max_threshold_deg = np.max(exclusion_radii_run_subset)
+                    seplimit = max_threshold_deg * u.deg
+
+                    idx_A, idx_B, d2d_1, _ = coords_hipparco_run_subset.search_around_sky(coords_vizier, seplimit)
+
+                    if len(idx_A) > 0 and np.max(idx_A) >= len(coords_hipparco_run_subset):
+                        idx_viz_1, idx_hip_1 = idx_A, idx_B
+                    else:
+                        idx_hip_1, idx_viz_1 = idx_A, idx_B
+
+                    mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
+                    idx_hip_valid = idx_hip_1[mask_threshold]
+                    idx_viz_valid = idx_viz_1[mask_threshold]
+
+                    mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
+                    mask_keep_vizier = np.ones(len(tbl_riquadro_esterno_vizier), dtype=bool)
+
+                    unique_hip_idx = np.unique(idx_hip_valid)
+
+                    array_mag_vizier = np.nan_to_num(tbl_riquadro_esterno_vizier['Mag_sintetica'].data, nan=99.0)
+                    array_mag_hipparco = np.nan_to_num(tbl_hipparco_run_subset['Vmag'].data, nan=99.0)
+
+                    for i_hip in unique_hip_idx:
+                        viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
+
+                        if len(viz_matches) > 0:
+                            mag_viz_matches = array_mag_vizier[viz_matches]
+
+                            idx_min_mag = np.argmin(mag_viz_matches)
+                            best_viz_idx = viz_matches[idx_min_mag]
+                            best_viz_mag = mag_viz_matches[idx_min_mag]
+
+                            hip_mag = array_mag_hipparco[i_hip]
+
+                            if hip_mag < 9.0:
+                                mask_keep_vizier[viz_matches] = False
+                            elif best_viz_mag <= hip_mag:
+                                mask_keep_hipparco[i_hip] = False
+                            else:
+                                mask_keep_vizier[best_viz_idx] = False
+
+                    hipparco_escluse = np.sum(~mask_keep_hipparco)
+                    vizier_escluse = np.sum(~mask_keep_vizier)
+                    print(f"Risolti {len(unique_hip_idx)} conflitti spaziali:")
+                    print(f" -> Escluse {hipparco_escluse} stelle Hipparco (tenute Vizier perché più brillanti)")
+                    print(f" -> Escluse {vizier_escluse} stelle Vizier (tenute Hipparco perché più brillanti)")
+
+                    mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
+                    tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco].copy()
+                    tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
+
+                    with np.errstate(invalid='ignore'):
+                        mask_taglio = tbl_riquadro_esterno_vizier_CLEAN['Mag_sintetica'] < magnitudine_massima
+                    tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[mask_taglio].copy()
+
+                    # salvo il mio stato attuale per il controllo nella run_name successiva
+                    centro_run_precedente = centro
+                    tbl_vizier_cut_precedente = tbl_vizier_cut.copy()
+                    tbl_hipparco_run_clean_precedente = tbl_hipparco_run_clean.copy()
                 else:
-                    idx_hip_1, idx_viz_1 = idx_A, idx_B
-
-                mask_threshold = d2d_1.deg <= exclusion_radii_run_subset[idx_hip_1]
-                idx_hip_valid = idx_hip_1[mask_threshold]
-                idx_viz_valid = idx_viz_1[mask_threshold]
-
-                mask_keep_hipparco = np.ones(len(tbl_hipparco_run_subset), dtype=bool)
-                mask_keep_vizier = np.ones(len(tbl_riquadro_esterno_vizier), dtype=bool)
-
-                unique_hip_idx = np.unique(idx_hip_valid)
-
-                array_mag_vizier = np.nan_to_num(tbl_riquadro_esterno_vizier['Mag_sintetica'].data, nan=99.0)
-                array_mag_hipparco = np.nan_to_num(tbl_hipparco_run_subset['Vmag'].data, nan=99.0)
-
-                for i_hip in unique_hip_idx:
-                    viz_matches = idx_viz_valid[idx_hip_valid == i_hip]
-
-                    if len(viz_matches) > 0:
-                        mag_viz_matches = array_mag_vizier[viz_matches]
-
-                        idx_min_mag = np.argmin(mag_viz_matches)
-                        best_viz_idx = viz_matches[idx_min_mag]
-                        best_viz_mag = mag_viz_matches[idx_min_mag]
-
-                        hip_mag = array_mag_hipparco[i_hip]
-
-                        if hip_mag < 9.0:
-                            mask_keep_vizier[viz_matches] = False
-                        elif best_viz_mag <= hip_mag:
-                            mask_keep_hipparco[i_hip] = False
-                        else:
-                            mask_keep_vizier[best_viz_idx] = False
-
-                hipparco_escluse = np.sum(~mask_keep_hipparco)
-                vizier_escluse = np.sum(~mask_keep_vizier)
-                print(f"Risolti {len(unique_hip_idx)} conflitti spaziali:")
-                print(f" -> Escluse {hipparco_escluse} stelle Hipparco (tenute Vizier perché più brillanti)")
-                print(f" -> Escluse {vizier_escluse} stelle Vizier (tenute Hipparco perché più brillanti)")
-
-                mask_keep_hipparco[tbl_hipparco_run_subset['Vmag'] >= 15] = False
-                tbl_hipparco_run_clean = tbl_hipparco_run_subset[mask_keep_hipparco].copy()
-                tbl_riquadro_esterno_vizier_CLEAN = tbl_riquadro_esterno_vizier[mask_keep_vizier]
-
-                with np.errstate(invalid='ignore'):
-                    mask_taglio = tbl_riquadro_esterno_vizier_CLEAN['Mag_sintetica'] < magnitudine_massima
-                tbl_vizier_cut = tbl_riquadro_esterno_vizier_CLEAN[mask_taglio].copy()
+                    # recupero la mia tabella precedentemente calcolata
+                    print("Distanza dal centro della run_name precedente <= 1.1 gradi: riutilizzo il catalogo Vizier e Hipparcos.")
+                    tbl_vizier_cut = tbl_vizier_cut_precedente.copy()
+                    tbl_hipparco_run_clean = tbl_hipparco_run_clean_precedente.copy()
 
             tbl_vizier_cut['Mag'] = tbl_vizier_cut['Mag_sintetica']
             tbl_hipparco_run_clean['Mag'] = tbl_hipparco_run_clean['Vmag']
 
             tbl_catalogate = tabella_catalogo(percorso_file, tbl_vizier_cut, tbl_hipparco_run_clean)
-            tbl_trovate, _ = analisi_image_segmentation(percorso_file, parametri_caricati)
+            tbl_trovate, _, somma_totale, fondo_medio = analisi_image_segmentation(percorso_file, parametri_caricati)
+
+            # salvo i miei dati del fondo appena estratti nel dizionario per la Fase 2/3
+            dizionario_sfondi[(run_name, n)] = {'somma': somma_totale, 'fondo_pp': fondo_medio}
+
+            # se mi trovo all'immagine 1 della run_name 1 aggiorno il mio s_ref
+            if run_name == 1 and n == 1:
+                s_ref = somma_totale
 
             df_trovate = tbl_trovate.to_pandas()
             df_catalogate = tbl_catalogate.to_pandas()
@@ -375,23 +409,33 @@ if __name__ == "__main__":
                         {'idx_t': idx_trov, 'idx_c': idx_cat, 'dist': d2d.deg,
                          'mag': df_catalogate.iloc[idx_cat]['Mag'].values})
                     matches.sort_values(by=['idx_t', 'mag'], inplace=True)
-                    matches['rank'] = matches.groupby('idx_t').cumcount() + 1
-                    matches['Corrispondenza'] = 'SI (Rank ' + matches['rank'].astype(str) + ')'
+                    matches['Rank'] = matches.groupby('idx_t').cumcount() + 1
+
+                    # imposto la corrispondenza a True per le associazioni positive
+                    matches['Corrispondenza'] = True
 
                     df_si = pd.concat([
                         df_trovate.iloc[matches['idx_t']].reset_index(drop=True),
-                        matches[['Corrispondenza']].reset_index(drop=True),
+                        # includo anche la colonna Rank nel mio dataframe unito
+                        matches[['Corrispondenza', 'Rank']].reset_index(drop=True),
                         df_catalogate.iloc[matches['idx_c']].reset_index(drop=True)
                     ], axis=1)
 
                     unmatched = list(set(range(len(df_trovate))) - set(matches['idx_t']))
                     df_no = df_trovate.iloc[unmatched].copy()
-                    df_no['Corrispondenza'] = 'NO'
-                    for c in df_catalogate.columns: df_no[c] = np.nan
+
+                    # imposto la corrispondenza a False per gli oggetti non associati e assegno NaN al Rank
+                    df_no['Corrispondenza'] = False
+                    df_no['Rank'] = 0
+
+                    for c in df_catalogate.columns: df_no[c] = 0
                     df_final = pd.concat([df_si, df_no], ignore_index=True)
                 else:
                     df_final = df_trovate.copy()
-                    df_final['Corrispondenza'] = 'NO'
+
+                    # imposto la corrispondenza a False e il Rank a NaN in caso di assenza del catalogo
+                    df_final['Corrispondenza'] = False
+                    df_final['Rank'] = 0
 
             coords_obj_all = SkyCoord(ra=np.atleast_1d(df_final['RA_centroid'].values) * u.deg,
                                       dec=np.atleast_1d(df_final['DEC_centroid'].values) * u.deg)
@@ -420,40 +464,33 @@ if __name__ == "__main__":
                     global_tracker_labels.extend(nuove_labels)
 
             df_final['label'] = final_labels
-            df_final['run_id'] = run
-            df_final['img_index'] = n
 
             if 'label' in df_final.columns: df_final.sort_values('label', inplace=True)
             cols = df_final.columns.tolist()
             if 'ID' in cols and 'Catalogo' in cols:
                 cols.remove('Catalogo')
                 cols.insert(cols.index('ID'), 'Catalogo')
+                df_final = df_final[cols]
 
-            final_cols = df_final.columns.tolist()
-            for c in ['run_id', 'img_index']:
-                if c in final_cols: final_cols.remove(c)
-            if 'Corrispondenza' in final_cols:
-                idx_corr = final_cols.index('Corrispondenza')
-                final_cols.insert(idx_corr, 'img_index')
-                final_cols.insert(idx_corr, 'run_id')
-            else:
-                final_cols.insert(0, 'run_id')
-                final_cols.insert(1, 'img_index')
+            file_out = output_dir / f'run_{run_name}_stelle_trovate_e_catalogate_immagine_{n:03d}.csv'
 
-            df_final = df_final[final_cols]
-            file_out = output_dir / f'run_{run}_stelle_trovate_e_catalogate_immagine_{n:03d}.csv'
-            salva_csv_con_header_fits(df_final, dict(fits.getheader(percorso_file)),
+            # creo il mio dizionario dei metadati e inserisco i valori di run_name e indice immagine
+            header_dict = dict(fits.getheader(percorso_file))
+            header_dict['RUN_ID'] = run_name
+            header_dict['IMG_INDEX'] = n
+
+            salva_csv_con_header_fits(df_final, header_dict,
                                       file_out, str(percorso_file), parametri_caricati)
 
         # =============================================================================
-        # Avvio la fase 2 e 3 per estrarre i raggi massimi e il flusso fisso per la mia run
+        # Avvio la fase 2 e 3 per estrarre i raggi massimi e il flusso fisso per la mia run_name
         # =============================================================================
-        print(f"--- FASE 2 & 3: Analisi Fotometria Fissa per Run {run} ---")
+        print(f"--- FASE 2 & 3: Analisi Fotometria Fissa per Run {run_name} ---")
 
-        file_csv_list = sorted([f for f in output_dir.glob('*.csv')])
+        file_csv_list = sorted([f for f in output_dir.glob('*immagine*.csv')])
 
         for f in file_csv_list:
-            file_csv_generati_nella_run.append((f, run))
+            file_csv_generati_nella_run.append((f, run_name))
 
         all_ids = []
         all_radii = []
@@ -502,19 +539,17 @@ if __name__ == "__main__":
             path_fits = str(file_trovato)
             data_sub, median_bg, _ = elabora_file_fits(path_fits)
 
-            img_idx = df_frame['img_index'].iloc[0] if 'img_index' in df_frame.columns else int(
-                nome_fits.split('.')[0][-3:])
-            run_idx = df_frame['run_id'].iloc[0] if 'run_id' in df_frame.columns else run
+            # recupero i miei identificativi dai metadati anziché dalle colonne
+            img_idx = int(header_info.get('IMG_INDEX', int(nome_fits.split('.')[0][-3:])))
+            run_idx = int(header_info.get('RUN_ID', run_name))
 
             fondo_pp = 0.0
-            if df_somma_pixel is not None:
-                s_t_df = df_somma_pixel[(df_somma_pixel['Run'] == run_idx) & (df_somma_pixel['im'] == img_idx)]
-                if not s_t_df.empty:
-                    s_t = s_t_df['Somma_Pixel_Esterni'].values[0]
-                    if 'fondo_per_pixel' in s_t_df.columns:
-                        fondo_pp = s_t_df['fondo_per_pixel'].values[0]
-                else:
-                    s_t = s_ref
+
+            # recupero i miei dati del fondo direttamente dal dizionario in memoria
+            sfondi_correnti = dizionario_sfondi.get((run_idx, img_idx))
+            if sfondi_correnti is not None:
+                s_t = sfondi_correnti['somma']
+                fondo_pp = sfondi_correnti['fondo_pp']
             else:
                 s_t = s_ref
 
@@ -564,9 +599,9 @@ if __name__ == "__main__":
             salva_csv_con_header_aggiornato(df_frame, header_info, file_csv)
 
         # =============================================================================
-        # Avvio la fase 4 per calcolare statistiche e ID per la mia singola run corrente
+        # Avvio la fase 4 per calcolare statistiche e ID per la mia singola run_name corrente
         # =============================================================================
-        print(f"\n--- FASE 4: Statistiche Locali e Ripetizioni per Run {run} ---")
+        print(f"\n--- FASE 4: Statistiche Locali e Ripetizioni per Run {run_name} ---")
 
         if not file_csv_generati_nella_run:
             continue
@@ -587,10 +622,10 @@ if __name__ == "__main__":
         run_df['run_unique_id'] = np.nan
         run_df['run_unique_id'] = run_df['run_unique_id'].astype(object)
 
-        mask_si = run_df['Corrispondenza'].str.startswith('SI', na=False)
+        mask_si = run_df['Corrispondenza'] == True
         run_df.loc[mask_si, 'run_unique_id'] = "CAT_" + run_df.loc[mask_si, 'ID'].astype(str)
 
-        mask_no = run_df['Corrispondenza'] == 'NO'
+        mask_no = run_df['Corrispondenza'] == False
         df_no_run = run_df[mask_no].copy()
 
         df_no_run.sort_values('file_index', inplace=True)
@@ -637,7 +672,7 @@ if __name__ == "__main__":
         print("Eseguo il filtraggio temporale e delle ripetizioni minime...")
 
         run_df['da_eliminare_temporale'] = False
-        mask_no_temp = run_df['Corrispondenza'] == 'NO'
+        mask_no_temp = run_df['Corrispondenza'] == False
 
         for uid, group in run_df[mask_no_temp].groupby('run_unique_id'):
             indici_file = group['file_index'].values
@@ -651,10 +686,10 @@ if __name__ == "__main__":
         conteggi_aggiornati = run_df['run_unique_id'].value_counts()
         id_da_scartare = conteggi_aggiornati[conteggi_aggiornati < 2].index
 
-        mask_da_scartare_rip = (run_df['Corrispondenza'] == 'NO') & (run_df['run_unique_id'].isin(id_da_scartare))
+        mask_da_scartare_rip = (run_df['Corrispondenza'] == False) & (run_df['run_unique_id'].isin(id_da_scartare))
         run_df = run_df[~mask_da_scartare_rip]
 
-        print("Calcolo statistiche di run e riorganizzazione colonne...")
+        print("Calcolo statistiche di run_name e riorganizzazione colonne...")
         # tengo traccia solo del flusso base richiesto e rimuovo tutti gli step di decorrelazione locale
         cols_flux = ['flusso_fisso_max_run_senza_correzioni',
                      'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura']
@@ -665,18 +700,18 @@ if __name__ == "__main__":
         run_df['fondo_per_pixel'] = pd.to_numeric(run_df.get('fondo_per_pixel', np.nan), errors='coerce')
 
         run_df['ID'] = run_df['ID'].astype(object)
-        mask_no_match = run_df['Corrispondenza'] == 'NO'
+        mask_no_match = run_df['Corrispondenza'] == False
         run_df.loc[mask_no_match, 'ID'] = run_df.loc[mask_no_match, 'run_unique_id']
 
         # =============================================================================
         # FASE 5: Decorrelazione della singola Run (Senza Formattazione Decimali)
         # =============================================================================
-        print(f"\n--- FASE 5: Calcolo Decorrelazione delle Stelle per la Run {run} ---")
+        print(f"\n--- FASE 5: Calcolo Decorrelazione delle Stelle per la Run {run_name} ---")
 
         # definisco unicamente il flusso corretto per eseguire la decorrelazione
         cols_tutti_flussi_glob = ['flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura']
 
-        # creo una nuova colonna per raggruppare i dati all'interno della mia run
+        # creo una nuova colonna per raggruppare i dati all'interno della mia run_name
         run_df['stat_group_id'] = np.where(
             run_df['run_unique_id'].astype(str).str.startswith('INT_'),
             run_df['label'],
@@ -686,7 +721,7 @@ if __name__ == "__main__":
         nuovi_flussi_globali = []
         dizionario_nuove_colonne = {}
 
-        for c in tqdm(cols_tutti_flussi_glob, desc=f"Decorrelazione Ensemble Run {run}"):
+        for c in tqdm(cols_tutti_flussi_glob, desc=f"Decorrelazione Ensemble Run {run_name}"):
             new_col = f"{c}_DECORRELAZIONE_STELLE_GLOBALE"
             nuovi_flussi_globali.append(new_col)
 
@@ -737,14 +772,129 @@ if __name__ == "__main__":
         # unisco le statistiche al mio dataframe in un colpo solo
         run_df = pd.concat([run_df, pd.DataFrame(dizionario_statistiche)], axis=1)
 
-        # riordino e salvo tutti i miei file per questa run
+        # =================================================================
+        # ESECUZIONE FIT DELLA RUN PRIMA DEL SALVATAGGIO
+        # =================================================================
+        print("--- Esecuzione FIT Fotometrico della Run ---")
+        flusso_target = 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'
+        col_media = f'media_{flusso_target}'
+        col_std = f'std_{flusso_target}'
+
+        fit_results = {}
+
+        # isolo unicamente le mie righe necessarie per non analizzare duplicati
+        df_fit_base = run_df.drop_duplicates(subset=['stat_group_id']).copy()
+
+        # filtro i miei oggetti mantendendo solo quelli catalogati validi sotto la magnitudine limite e non saturi
+        mask_catalogati = df_fit_base['Corrispondenza'] == True
+        mask_mag = df_fit_base['Mag'] <= 10.0
+        mask_sature = df_fit_base['saturazione'] == True
+        mask_valida = (df_fit_base[col_media].notna()) & (df_fit_base[col_media] > 0) & (
+            df_fit_base[col_std].notna()) & (df_fit_base[col_std] > 0)
+
+        df_fit_clean = df_fit_base[mask_catalogati & mask_mag & ~mask_sature & mask_valida].copy()
+
+        if len(df_fit_clean) > 2:
+            X = df_fit_clean['Mag'].values
+            Y_flux = df_fit_clean[col_media].values
+            sigma_flux = df_fit_clean[col_std].values
+
+            # calcolo il mio numero di bin
+            n_bins = max(5, int(np.sqrt(len(X))))
+
+            # ordino i miei array basandomi sulla magnitudine
+            sort_idx = np.argsort(X)
+            X_sorted = X[sort_idx]
+            Y_sorted = Y_flux[sort_idx]
+            Err_sorted = sigma_flux[sort_idx]
+
+            # divido i miei array in chunk di uguale dimensione
+            X_chunks = np.array_split(X_sorted, n_bins)
+            Y_chunks = np.array_split(Y_sorted, n_bins)
+            Err_chunks = np.array_split(Err_sorted, n_bins)
+
+            X_binned, Y_binned, Err_binned = [], [], []
+
+            # assemblo i miei bin
+            for x_bin, y_bin, err_bin in zip(X_chunks, Y_chunks, Err_chunks):
+                if len(x_bin) > 0:
+                    y_media_semplice = np.mean(y_bin)
+                    if len(y_bin) > 1:
+                        y_errore_semplice = np.std(y_bin, ddof=1) / np.sqrt(len(y_bin))
+                        if y_errore_semplice == 0:
+                            y_errore_semplice = np.mean(err_bin)
+                    else:
+                        y_errore_semplice = err_bin[0]
+                    X_binned.append(np.mean(x_bin))
+                    Y_binned.append(y_media_semplice)
+                    Err_binned.append(y_errore_semplice)
+
+            X_binned = np.array(X_binned)
+            Y_binned = np.array(Y_binned)
+            Err_binned = np.array(Err_binned)
+
+            # converto i miei flussi usando la scala logaritmica e propago l'errore
+            Y_log_binned = np.log10(Y_binned)
+            sigma_log_binned = (1 / np.log(10)) * (Err_binned / Y_binned)
+
+            try:
+                # eseguo il mio fit lineare sui dati binnati
+                popt, pcov = curve_fit(modello_lineare, X_binned, Y_log_binned, sigma=sigma_log_binned,
+                                       absolute_sigma=True)
+                m_fit, q_fit = popt
+                err_m, err_q = np.sqrt(np.diag(pcov))
+
+                y_model_binned = modello_lineare(X_binned, m_fit, q_fit)
+                dof = len(X_binned) - 2
+                chi2 = np.sum(((Y_log_binned - y_model_binned) / sigma_log_binned) ** 2)
+                chi2_red = chi2 / dof if dof > 0 else 0
+
+                # raccolgo i risultati del mio fit in un dizionario
+                fit_results = {
+                    'FIT_M': round(m_fit, 4),
+                    'FIT_EM': round(err_m, 4),
+                    'FIT_Q': round(q_fit, 4),
+                    'FIT_EQ': round(err_q, 4),
+                    'FIT_CHI2': round(chi2_red, 4)
+                }
+                print(f"Fit completato: m={m_fit:.4f}±{err_m:.4f}, q={q_fit:.4f}±{err_q:.4f}, chi2_red={chi2_red:.2f}")
+
+                # disegno e salvo il mio grafico del fit
+                plt.figure(figsize=(10, 7))
+                plt.errorbar(X, Y_flux, yerr=sigma_flux, fmt='o', markersize=2, color='blue', ecolor='lightblue',
+                             alpha=0.5, label='Catalogati Validi')
+                plt.errorbar(X_binned, Y_binned, yerr=Err_binned, fmt='o', markersize=6, color='green', ecolor='green',
+                             capsize=3, label='Bin Fit')
+                x_plot = np.linspace(min(X) - 0.5, max(X) + 0.5, 100)
+                y_plot_log = modello_lineare(x_plot, m_fit, q_fit)
+                plt.plot(x_plot, 10 ** y_plot_log, 'g--', linewidth=2,
+                         label=f'Fit: log(F)=({m_fit:.2f})M + ({q_fit:.2f})')
+                plt.yscale('log')
+                plt.gca().invert_xaxis()
+                plt.xlabel("Mag")
+                plt.ylabel("Flusso Base")
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.close()
+
+            except Exception as e:
+                print(f"Errore nel curve_fit: {e}")
+        else:
+            print("Punti insufficienti per il fit in questa run_name.")
+
+        # riordino e salvo tutti i miei file per questa run_name
         files_groups_run = run_df.groupby('original_file_path')
 
-        # calcolo le ripetizioni locali alla mia run basandomi sul mio stat_group_id
+        # calcolo le ripetizioni locali alla mia run_name basandomi sul mio stat_group_id
         run_repetition_counts = run_df['stat_group_id'].value_counts()
 
-        for file_path, df_file in tqdm(files_groups_run, desc=f"Salvataggio finale FASE 5 Run {run}"):
+        for file_path, df_file in tqdm(files_groups_run, desc=f"Salvataggio finale FASE 5 Run {run_name}"):
             header_orig = leggi_header_da_csv(file_path)
+
+            # aggiorno il mio header aggiungendo i valori del fit se sono stati calcolati
+            if fit_results:
+                header_orig.update(fit_results)
+
             cols = df_file.columns.tolist()
 
             # elimino le mie colonne di servizio, inclusa stat_group_id
@@ -759,7 +909,7 @@ if __name__ == "__main__":
 
             df_file = df_file.copy()
 
-            # assegno le mie ripetizioni aggiornate per questa run
+            # assegno le mie ripetizioni aggiornate per questa run_name
             df_file['ripetizioni'] = df_file['stat_group_id'].map(run_repetition_counts)
             if 'ripetizioni' not in cols:
                 if 'saturazione' in cols:
@@ -789,5 +939,75 @@ if __name__ == "__main__":
                 f.write(f"# NOME_FILE: {nome_solo}\n")
                 f.write("#\n")
                 df_final_save.to_csv(f, index=False)
+
+        # =================================================================
+        # ESTRAZIONE ISOLABILE DEGLI OGGETTI NON CATALOGATI
+        # =================================================================
+
+        # inizializzo il mio nuovo dataframe includendo le coordinate
+        mydf = pd.DataFrame(columns=[
+            'label',
+            'RA_centroid',
+            'DEC_centroid',
+            'ripetizioni',
+            'media_flusso_fisso_max_run_senza_correzioni',
+            'std_flusso_fisso_max_run_senza_correzioni',
+            'media_flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE',
+            'std_flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'
+        ])
+
+        # filtro i miei oggetti isolando solo quelli senza corrispondenza
+        maschera_no_cat = run_df['Corrispondenza'] == False
+        dati_senza_corrispondenza = run_df[maschera_no_cat].copy()
+
+        # calcolo la mia colonna delle ripetizioni
+        dati_senza_corrispondenza['ripetizioni'] = dati_senza_corrispondenza['stat_group_id'].map(run_repetition_counts)
+
+        # elimino i miei duplicati per mantenere un'unica riga riassuntiva per oggetto
+        dati_senza_corrispondenza = dati_senza_corrispondenza.drop_duplicates(subset=['label'])
+        n_no_match = len(dati_senza_corrispondenza)
+
+        # popolo il mio dataframe con i dati estratti per le colonne indicate
+        for col in mydf.columns:
+            if col in dati_senza_corrispondenza.columns:
+                mydf[col] = dati_senza_corrispondenza[col].values
+
+        # decido il nome del mio nuovo file csv per gli oggetti estranei
+        file_out_mydf = output_dir / f"run_{run_name}_oggetti_non_catalogati.csv"
+
+        # aggiorno l'header anche per il file degli estranei
+        header_per_non_cat = header_orig.copy() if 'header_orig' in locals() else {}
+        if fit_results:
+            header_per_non_cat.update(fit_results)
+
+        # aggiungo la lunghezza dei miei dati senza corrispondenza ai metadati
+        header_per_non_cat["N_NO_MATCH"] = n_no_match
+
+        # recupero il nome FITS dell'ultima iterazione rimasto in memoria
+        nome_fits_per_non_cat = nome_solo if 'nome_solo' in locals() else str(file_out_mydf.name)
+
+        # salvo la mia nuova tabella scrivendo i metadati con il cancelletto all'inizio
+        with open(file_out_mydf, 'w') as f:
+            f.write("# Header FITS:\n")
+            f.write("# Numero di falsi positivi esclusi sicuramente: 0\n")
+            for k, v in header_per_non_cat.items():
+                if k not in ['PERCORSO_FILE', 'NOME_FILE'] and not k.startswith("Numero di falsi"):
+                    f.write(f"# {k}: {v}\n")
+            f.write(f"# NOME_FILE: {nome_fits_per_non_cat}\n")
+            f.write("#\n")
+            mydf.to_csv(f, index=False)
+
+        print("Fase di conversione: converto tutti i csv in parquet")
+        tutti_i_file_csv = sorted([str(f) for f in output_dir.glob('*.csv')])
+
+        # itero sulla mia lista per eseguire le operazioni su ogni singolo file
+        for file_csv in tqdm(tutti_i_file_csv):
+
+
+            converti_csv_in_parquet(file_csv)
+
+        # Libero la mia memoria per questa run_name
+        del run_df
+        gc.collect()
 
 print("\n--- ELABORAZIONE COMPLETATA CON SUCCESSO ---")

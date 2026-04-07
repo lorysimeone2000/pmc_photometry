@@ -89,7 +89,7 @@ for run in RUN_TO_ANALYZE:
         print(f"cartella trovata in {path_cartella}")
 
     # estraggo i miei file parquet seguendo il pattern richiesto
-    files_parquet = sorted(list(path_cartella.glob(f"run_{run}_immagine_*.parquet")))
+    files_parquet = sorted(list(path_cartella.glob(f"run_{run}_stelle_trovate_e_catalogate_immagine_*.parquet")))
     print(f"Run {run}: Trovati {len(files_parquet)} file parquet. Caricamento in corso...")
 
     for f in tqdm(files_parquet, leave=False):

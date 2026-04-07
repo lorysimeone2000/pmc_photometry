@@ -342,7 +342,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             # salvo il mio grafico
             plt.savefig(f"fit_binnato_{flusso}_style.png")
 
-            # plt.show()
+            plt.show()
 
             plt.close()
 

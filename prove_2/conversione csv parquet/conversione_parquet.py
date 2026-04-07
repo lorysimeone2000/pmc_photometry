@@ -45,32 +45,52 @@ def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
 
 
 
+def converti_valore(valore):
+    valore = str(valore).strip()
+    if not valore: return valore
+    try:
+        return int(valore)
+    except ValueError:
+        pass
+    try:
+        return float(valore)
+    except ValueError:
+        pass
+    if valore.upper() in ['T', 'TRUE']: return True
+    if valore.upper() in ['F', 'FALSE']: return False
+    return valore
+
+
+import json
+import pyarrow.parquet as pq
+
+
 def leggi_header_da_parquet(filename):
     # inizializzo il mio dizionario vuoto per ospitare i metadati estratti
     header_dict = {}
 
     try:
-        # leggo esclusivamente lo schema del file Parquet per accedere ai metadati
-        schema = pq.read_schema(filename)
-        metadati = schema.metadata
+        # leggo unicamente i metadati del file Parquet senza caricare il dataframe in memoria
+        meta = pq.read_metadata(filename)
+        custom_metadata = meta.metadata
 
-        # verifico se i metadati esistono e se contengono la mia chiave personalizzata
-        if metadati and b'metadati_intestazione_csv' in metadati:
-            # decodifico la stringa da byte a testo normale usando la codifica utf-8
-            metadati_testo = metadati[b'metadati_intestazione_csv'].decode('utf-8')
+        # verifico se la mia chiave personalizzata esiste all'interno dei metadati
+        if custom_metadata and b"astro_metadata" in custom_metadata:
 
-            # analizzo ogni riga della mia stringa di testo
-            for riga in metadati_testo.split('\n'):
-                if riga.startswith('#'):
-                    # pulisco la riga rimuovendo il cancelletto e gli spazi
-                    riga_pulita = riga.strip()[1:].strip()
+            # decodifico i byte e parso la stringa JSON per ricreare il mio dizionario Python
+            dizionario_meta = json.loads(custom_metadata[b"astro_metadata"].decode("utf-8"))
 
-                    # verifico che la riga contenga un separatore valido
-                    if riga_pulita and ': ' in riga_pulita:
-                        # separo la mia chiave dal valore
-                        chiave, valore = riga_pulita.split(': ', 1)
-                        # aggiungo l'elemento al mio dizionario usando la funzione di conversione
-                        header_dict[chiave] = converti_valore(valore)
+            # estraggo il mio header FITS dal dizionario
+            header_fits = dizionario_meta.get("FITS_HEADER", {})
+
+            # integro i parametri del FITS header nel mio dizionario finale
+            for k, v in header_fits.items():
+                header_dict[k] = converti_valore(v)
+
+            # estraggo e integro tutte le altre chiavi escludendo l'header FITS
+            for chiave, valore in dizionario_meta.items():
+                if chiave != "FITS_HEADER":
+                    header_dict[chiave] = converti_valore(valore)
 
     except Exception:
         pass
@@ -107,7 +127,7 @@ def leggi_file_parametri(percorso):
 
 def converti_csv_in_parquet(percorso_csv):
     # genero in automatico il nome del file Parquet sostituendo l'estensione
-    file_parquet = percorso_csv.replace('.csv', '.parquet')
+    file_parquet = str(percorso_csv).replace('.csv', '.parquet')
 
     # estraggo i metadati aprendo il file in lettura e isolando le righe che iniziano con "#"
     metadati_estratti = []
@@ -143,10 +163,11 @@ def converti_csv_in_parquet(percorso_csv):
 
     # elimino definitivamente il file CSV originale
     os.remove(percorso_csv)
+    print(f"File convertito in Parquet. Il vecchio CSV ({percorso_csv}) è stato eliminato.")
 
 
 
-def converti_valore(valore):
+def converti_valore_bis(valore):
     valore = str(valore).strip()
     if not valore: return valore
     try: return int(valore)
@@ -188,7 +209,7 @@ def salva_csv_con_header_fits(dataframe, header_fits, filename, nome_file_fits, 
 
 def salva_tabella_parquet(dataframe, header_fits, filename, nome_file_fits, parametri_seg=None, num_run=None,
                           num_immagine=None):
-    # 1. Preparo il mio dizionario dei metadati
+    # preparo il mio dizionario dei metadati
     meta_dict = {
         "NOME_FILE_FITS": os.path.basename(str(nome_file_fits)),
         "FITS_HEADER": {str(k): str(v).replace('\n', ' ') for k, v in header_fits.items()},
@@ -203,15 +224,15 @@ def salva_tabella_parquet(dataframe, header_fits, filename, nome_file_fits, para
     if parametri_seg:
         meta_dict["PARAMETRI_SEGMENTAZIONE"] = {str(k): v for k, v in parametri_seg.items()}
 
-    # 2. Converto il DataFrame in una Tabella PyArrow
+    # converto il DataFrame in una Tabella PyArrow
     table = pa.Table.from_pandas(dataframe)
 
-    # 3. Serializzo il dizionario in JSON e lo aggiungo ai miei metadati della tabella
+    # serializzo il dizionario in JSON e lo aggiungo ai miei metadati della tabella
     custom_metadata = table.schema.metadata or {}
     custom_metadata.update({b"astro_metadata": json.dumps(meta_dict).encode("utf-8")})
     table = table.replace_schema_metadata(custom_metadata)
 
-    # 4. Scrivo su disco
+    # scrivo su disco
     pq.write_table(table, filename)
 
 

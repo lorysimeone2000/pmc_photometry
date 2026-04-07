@@ -46,7 +46,7 @@ from funzioni.astrometria import *
 run_list = [1, 2, 3]  # definisco la lista delle run da analizzare
 base_path = BASE_DIR / "tabelle/tabelle_unite"
 
-KRON_TARGET = 2000
+KRON_TARGET = 150
 
 # indice del file nella lista da usare come riferimento per trovare l'ID della stella
 INDICE_IMMAGINE_RIFERIMENTO = 26

@@ -146,7 +146,7 @@ df_match = df_match_raw.groupby('label').agg(agg_dict).reset_index()
 
 # isolo le mie stelle sature usando il mio dataframe raggruppato
 if 'saturazione' in df_match.columns:
-    mask_sature = df_match['saturazione'].astype(str).str.startswith('SI')
+    mask_sature = df_match['saturazione'] == True
     df_sature = df_match[mask_sature].copy()
     # tengo i miei non saturi per il fit
     df_fit_potential = df_match[~mask_sature].copy()

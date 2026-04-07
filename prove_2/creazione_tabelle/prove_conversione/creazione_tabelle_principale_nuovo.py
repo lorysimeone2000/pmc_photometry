@@ -2,6 +2,9 @@ import pandas as pd
 from photutils.background import Background2D, MedianBackground
 from astropy.convolution import convolve
 from photutils.segmentation import make_2dgaussian_kernel
+import matplotlib
+
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from photutils.segmentation import SourceCatalog
@@ -127,17 +130,9 @@ if __name__ == "__main__":
                                       dec=tbl_catalogo_hipparco['_DEJ2000'],
                                       unit=u.deg)
 
-    file_somma_pixel = cerca_file_nel_progetto(BASE_DIR, "risultati_somma_pixel.csv")
-    if file_somma_pixel:
-        df_somma_pixel = pd.read_csv(file_somma_pixel)
-        s_ref_df = df_somma_pixel[(df_somma_pixel['Run'] == 1) & (df_somma_pixel['im'] == 35)]
-        if not s_ref_df.empty:
-            s_ref = s_ref_df['Somma_Pixel_Esterni'].values[0]
-        else:
-            s_ref = 1.0
-    else:
-        df_somma_pixel = None
-        s_ref = 1.0
+    # imposto il mio s_ref di base e il dizionario per i fondi
+    s_ref = 1.0
+    dizionario_sfondi = {}
 
     next_internal_id = 1
 
@@ -147,15 +142,6 @@ if __name__ == "__main__":
         # leggo il dataframe della curva
         df_curva = pd.read_csv(file_curva_pmc)
 
-        # stabilisco i limiti di lunghezza d'onda delle singole bande
-        limiti_bande = {
-            'gmag': (400, 550),
-            'rmag': (550, 700),
-            'imag': (680, 840),
-            'zmag': (820, 920),
-            'ymag': (920, 1050)
-        }
-
         limiti_bande = scarica_intervalli_bande_ps1_da_descrizioni()
         print(f"Limiti bande: \n{limiti_bande}")
 
@@ -163,18 +149,26 @@ if __name__ == "__main__":
 
         # itero sulle bande per calcolare l'area sottesa alla curva per ciascun range
         for nome_banda, (w_min, w_max) in limiti_bande.items():
-            # applico la maschera di taglio per l'intervallo corrente
+            # applico la mia maschera di taglio per l'intervallo corrente
             maschera_w = (df_curva['Wavelength'] >= w_min) & (df_curva['Wavelength'] <= w_max)
-            # calcolo l'integrale tramite il metodo dei trapezi per estrarre la porzione di efficienza
+            # calcolo il mio integrale tramite il metodo dei trapezi per estrarre la porzione di efficienza
             area = np.trapezoid(df_curva['QE'][maschera_w], x=df_curva['Wavelength'][maschera_w])
             pesi_estratti.append(area)
 
         # converto in array e normalizzo in modo che la somma finale sia pari a 1
         pesi_estratti = np.array(pesi_estratti)
-        pesi_ideali_globali = pesi_estratti / np.sum(pesi_estratti)
+        somma_pesi = np.sum(pesi_estratti)
+        pesi_ideali_globali = pesi_estratti / somma_pesi
+
+        # calcolo il mio peso per la banda Vmag di Hipparco nell'intervallo 500-600 nm
+        maschera_vmag = (df_curva['Wavelength'] >= 500) & (df_curva['Wavelength'] <= 600)
+        area_vmag = np.trapezoid(df_curva['QE'][maschera_vmag], x=df_curva['Wavelength'][maschera_vmag])
+        peso_hipparco = area_vmag / somma_pesi
     else:
         # imposto i pesi standard in caso di mancato ritrovamento del csv
         pesi_ideali_globali = np.array([0.458, 0.326, 0.133, 0.055, 0.028])
+        # imposto il mio peso di fallback per hipparco
+        peso_hipparco = 0.35
 
     for run in RUN:
         print(f"\n==================== ELABORAZIONE RUN {run} ====================")
@@ -194,7 +188,7 @@ if __name__ == "__main__":
             continue
 
         cartella_prove = BASE_DIR
-        cartella_tabelle = cartella_tabelle = cartella_prove / "tabelle"
+        cartella_tabelle = cartella_prove / "tabelle"
         output_dir = cartella_tabelle / "tabelle_unite" / f"tabelle_unite_run_{run}"
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -241,8 +235,6 @@ if __name__ == "__main__":
                     flusso = 10 ** (-0.4 * array_dati)
 
                     # sostituisco i dati mancanti con un flusso pari a zero
-                    # assumo che se il catalogo non ha visto la stella in questa banda,
-                    # il suo contributo di luce qui è nullo
                     flusso_pulito = np.nan_to_num(flusso, nan=0.0)
                     flussi.append(flusso_pulito)
 
@@ -250,7 +242,6 @@ if __name__ == "__main__":
                 array_pesi = pesi_ideali_globali[:, None]
 
                 # calcolo il flusso pesato totale senza normalizzare per le bande mancanti
-                # in questo modo le stelle fredde mantengono i loro pesi ottici alti moltiplicati per zero
                 flusso_finale = np.sum(flussi * array_pesi, axis=0)
 
                 with np.errstate(divide='ignore', invalid='ignore'):
@@ -263,6 +254,20 @@ if __name__ == "__main__":
                 distanze_hip = centro.separation(coords_hipparco_global)
                 mask_hip_fov = distanze_hip < raggio_ricerca
                 tbl_hipparco_run_subset = tbl_catalogo_hipparco[mask_hip_fov]
+
+                # calcolo il mio flusso di Hipparco, applico il peso e riconverto in magnitudine
+                colonna_vmag = tbl_hipparco_run_subset['Vmag']
+                array_dati_hip = colonna_vmag.filled(np.nan) if hasattr(colonna_vmag, 'filled') else np.array(
+                    colonna_vmag)
+                flusso_hip = 10 ** (-0.4 * array_dati_hip)
+                flusso_hip_pulito = np.nan_to_num(flusso_hip, nan=0.0)
+                flusso_hip_pesato = flusso_hip_pulito * peso_hipparco
+
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    mag_hip_pesata = np.where(flusso_hip_pesato > 0, -2.5 * np.log10(flusso_hip_pesato), 99.0)
+
+                tbl_hipparco_run_subset['Vmag'] = mag_hip_pesata
+
                 coords_hipparco_run_subset = coords_hipparco_global[mask_hip_fov]
                 exclusion_radii_run_subset = exclusion_radii_deg[mask_hip_fov]
 
@@ -332,7 +337,14 @@ if __name__ == "__main__":
             tbl_hipparco_run_clean['Mag'] = tbl_hipparco_run_clean['Vmag']
 
             tbl_catalogate = tabella_catalogo(percorso_file, tbl_vizier_cut, tbl_hipparco_run_clean)
-            tbl_trovate, _ = analisi_image_segmentation(percorso_file, parametri_caricati)
+            tbl_trovate, _, somma_totale, fondo_medio = analisi_image_segmentation(percorso_file, parametri_caricati)
+
+            # salvo i miei dati del fondo appena estratti nel dizionario per la Fase 2/3
+            dizionario_sfondi[(run, n)] = {'somma': somma_totale, 'fondo_pp': fondo_medio}
+
+            # se mi trovo all'immagine 1 della run 1 aggiorno il mio s_ref
+            if run == 1 and n == 1:
+                s_ref = somma_totale
 
             df_trovate = tbl_trovate.to_pandas()
             df_catalogate = tbl_catalogate.to_pandas()
@@ -507,14 +519,12 @@ if __name__ == "__main__":
             run_idx = df_frame['run_id'].iloc[0] if 'run_id' in df_frame.columns else run
 
             fondo_pp = 0.0
-            if df_somma_pixel is not None:
-                s_t_df = df_somma_pixel[(df_somma_pixel['Run'] == run_idx) & (df_somma_pixel['im'] == img_idx)]
-                if not s_t_df.empty:
-                    s_t = s_t_df['Somma_Pixel_Esterni'].values[0]
-                    if 'fondo_per_pixel' in s_t_df.columns:
-                        fondo_pp = s_t_df['fondo_per_pixel'].values[0]
-                else:
-                    s_t = s_ref
+
+            # recupero i miei dati del fondo direttamente dal dizionario in memoria
+            sfondi_correnti = dizionario_sfondi.get((run_idx, img_idx))
+            if sfondi_correnti is not None:
+                s_t = sfondi_correnti['somma']
+                fondo_pp = sfondi_correnti['fondo_pp']
             else:
                 s_t = s_ref
 
@@ -737,6 +747,116 @@ if __name__ == "__main__":
         # unisco le statistiche al mio dataframe in un colpo solo
         run_df = pd.concat([run_df, pd.DataFrame(dizionario_statistiche)], axis=1)
 
+        # =================================================================
+        # ESECUZIONE FIT DELLA RUN PRIMA DEL SALVATAGGIO
+        # =================================================================
+        print("--- Esecuzione FIT Fotometrico della Run ---")
+        flusso_target = 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'
+        col_media = f'media_{flusso_target}'
+        col_std = f'std_{flusso_target}'
+
+        fit_results = {}
+
+        # isolo unicamente le mie righe necessarie per non analizzare duplicati
+        df_fit_base = run_df.drop_duplicates(subset=['stat_group_id']).copy()
+
+        # filtro i miei oggetti mantendendo solo quelli catalogati validi sotto la magnitudine limite e non saturi
+        mask_catalogati = df_fit_base['Corrispondenza'].str.startswith('SI', na=False)
+        mask_mag = df_fit_base['Mag'] <= 10.0
+        mask_sature = df_fit_base['saturazione'] == True
+        mask_valida = (df_fit_base[col_media].notna()) & (df_fit_base[col_media] > 0) & (
+            df_fit_base[col_std].notna()) & (df_fit_base[col_std] > 0)
+
+        df_fit_clean = df_fit_base[mask_catalogati & mask_mag & ~mask_sature & mask_valida].copy()
+
+        if len(df_fit_clean) > 2:
+            X = df_fit_clean['Mag'].values
+            Y_flux = df_fit_clean[col_media].values
+            sigma_flux = df_fit_clean[col_std].values
+
+            # calcolo il mio numero di bin
+            n_bins = max(5, int(np.sqrt(len(X))))
+
+            # ordino i miei array basandomi sulla magnitudine
+            sort_idx = np.argsort(X)
+            X_sorted = X[sort_idx]
+            Y_sorted = Y_flux[sort_idx]
+            Err_sorted = sigma_flux[sort_idx]
+
+            # divido i miei array in chunk di uguale dimensione
+            X_chunks = np.array_split(X_sorted, n_bins)
+            Y_chunks = np.array_split(Y_sorted, n_bins)
+            Err_chunks = np.array_split(Err_sorted, n_bins)
+
+            X_binned, Y_binned, Err_binned = [], [], []
+
+            # assemblo i miei bin
+            for x_bin, y_bin, err_bin in zip(X_chunks, Y_chunks, Err_chunks):
+                if len(x_bin) > 0:
+                    y_media_semplice = np.mean(y_bin)
+                    if len(y_bin) > 1:
+                        y_errore_semplice = np.std(y_bin, ddof=1) / np.sqrt(len(y_bin))
+                        if y_errore_semplice == 0:
+                            y_errore_semplice = np.mean(err_bin)
+                    else:
+                        y_errore_semplice = err_bin[0]
+                    X_binned.append(np.mean(x_bin))
+                    Y_binned.append(y_media_semplice)
+                    Err_binned.append(y_errore_semplice)
+
+            X_binned = np.array(X_binned)
+            Y_binned = np.array(Y_binned)
+            Err_binned = np.array(Err_binned)
+
+            # converto i miei flussi usando la scala logaritmica e propago l'errore
+            Y_log_binned = np.log10(Y_binned)
+            sigma_log_binned = (1 / np.log(10)) * (Err_binned / Y_binned)
+
+            try:
+                # eseguo il mio fit lineare sui dati binnati
+                popt, pcov = curve_fit(modello_lineare, X_binned, Y_log_binned, sigma=sigma_log_binned,
+                                       absolute_sigma=True)
+                m_fit, q_fit = popt
+                err_m, err_q = np.sqrt(np.diag(pcov))
+
+                y_model_binned = modello_lineare(X_binned, m_fit, q_fit)
+                dof = len(X_binned) - 2
+                chi2 = np.sum(((Y_log_binned - y_model_binned) / sigma_log_binned) ** 2)
+                chi2_red = chi2 / dof if dof > 0 else 0
+
+                # raccolgo i risultati del mio fit in un dizionario
+                fit_results = {
+                    'FIT_M': round(m_fit, 4),
+                    'FIT_EM': round(err_m, 4),
+                    'FIT_Q': round(q_fit, 4),
+                    'FIT_EQ': round(err_q, 4),
+                    'FIT_CHI2': round(chi2_red, 4)
+                }
+                print(f"Fit completato: m={m_fit:.4f}±{err_m:.4f}, q={q_fit:.4f}±{err_q:.4f}, chi2_red={chi2_red:.2f}")
+
+                # disegno e salvo il mio grafico del fit
+                plt.figure(figsize=(10, 7))
+                plt.errorbar(X, Y_flux, yerr=sigma_flux, fmt='o', markersize=2, color='blue', ecolor='lightblue',
+                             alpha=0.5, label='Catalogati Validi')
+                plt.errorbar(X_binned, Y_binned, yerr=Err_binned, fmt='o', markersize=6, color='green', ecolor='green',
+                             capsize=3, label='Bin Fit')
+                x_plot = np.linspace(min(X) - 0.5, max(X) + 0.5, 100)
+                y_plot_log = modello_lineare(x_plot, m_fit, q_fit)
+                plt.plot(x_plot, 10 ** y_plot_log, 'g--', linewidth=2,
+                         label=f'Fit: log(F)=({m_fit:.2f})M + ({q_fit:.2f})')
+                plt.yscale('log')
+                plt.gca().invert_xaxis()
+                plt.xlabel("Mag")
+                plt.ylabel("Flusso Base")
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.close()
+
+            except Exception as e:
+                print(f"Errore nel curve_fit: {e}")
+        else:
+            print("Punti insufficienti per il fit in questa run.")
+
         # riordino e salvo tutti i miei file per questa run
         files_groups_run = run_df.groupby('original_file_path')
 
@@ -745,6 +865,11 @@ if __name__ == "__main__":
 
         for file_path, df_file in tqdm(files_groups_run, desc=f"Salvataggio finale FASE 5 Run {run}"):
             header_orig = leggi_header_da_csv(file_path)
+
+            # aggiorno il mio header aggiungendo i valori del fit se sono stati calcolati
+            if fit_results:
+                header_orig.update(fit_results)
+
             cols = df_file.columns.tolist()
 
             # elimino le mie colonne di servizio, inclusa stat_group_id
@@ -789,5 +914,68 @@ if __name__ == "__main__":
                 f.write(f"# NOME_FILE: {nome_solo}\n")
                 f.write("#\n")
                 df_final_save.to_csv(f, index=False)
+
+        # =================================================================
+        # ESTRAZIONE ISOLABILE DEGLI OGGETTI NON CATALOGATI
+        # =================================================================
+
+        # inizializzo il mio nuovo dataframe includendo le coordinate
+        mydf = pd.DataFrame(columns=[
+            'label',
+            'RA_centroid',
+            'DEC_centroid',
+            'ripetizioni',
+            'media_flusso_fisso_max_run_senza_correzioni',
+            'std_flusso_fisso_max_run_senza_correzioni',
+            'media_flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE',
+            'std_flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'
+        ])
+
+        # filtro i miei oggetti isolando solo quelli senza corrispondenza
+        maschera_no_cat = run_df['Corrispondenza'] == 'NO'
+        dati_senza_corrispondenza = run_df[maschera_no_cat].copy()
+
+        # calcolo la mia colonna delle ripetizioni
+        dati_senza_corrispondenza['ripetizioni'] = dati_senza_corrispondenza['stat_group_id'].map(run_repetition_counts)
+
+        # elimino i miei duplicati per mantenere un'unica riga riassuntiva per oggetto
+        dati_senza_corrispondenza = dati_senza_corrispondenza.drop_duplicates(subset=['label'])
+        n_no_match = len(dati_senza_corrispondenza)
+
+        # popolo il mio dataframe con i dati estratti per le colonne indicate
+        for col in mydf.columns:
+            if col in dati_senza_corrispondenza.columns:
+                mydf[col] = dati_senza_corrispondenza[col].values
+
+        # decido il nome del mio nuovo file csv per gli oggetti estranei
+        file_out_mydf = output_dir / f"run_{run}_oggetti_non_catalogati.csv"
+
+        # aggiorno l'header anche per il file degli estranei
+        header_per_non_cat = header_orig.copy() if 'header_orig' in locals() else {}
+        if fit_results:
+            header_per_non_cat.update(fit_results)
+
+        # aggiungo la lunghezza dei miei dati senza corrispondenza ai metadati
+        header_per_non_cat["N_NO_MATCH"] = n_no_match
+
+        # recupero il nome FITS dell'ultima iterazione rimasto in memoria
+        nome_fits_per_non_cat = nome_solo if 'nome_solo' in locals() else str(file_out_mydf.name)
+
+        # salvo la mia nuova tabella scrivendo i metadati con il cancelletto all'inizio
+        with open(file_out_mydf, 'w') as f:
+            f.write("# Header FITS:\n")
+            f.write("# Numero di falsi positivi esclusi sicuramente: 0\n")
+            for k, v in header_per_non_cat.items():
+                if k not in ['PERCORSO_FILE', 'NOME_FILE'] and not k.startswith("Numero di falsi"):
+                    f.write(f"# {k}: {v}\n")
+            f.write(f"# NOME_FILE: {nome_fits_per_non_cat}\n")
+            f.write("#\n")
+            mydf.to_csv(f, index=False)
+
+
+
+        # Libero la mia memoria per questa run
+        del run_df
+        gc.collect()
 
 print("\n--- ELABORAZIONE COMPLETATA CON SUCCESSO ---")

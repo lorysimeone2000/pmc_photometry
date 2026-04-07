@@ -3,8 +3,8 @@ import subprocess
 import os
 
 # definisco la mia data di inizio e la mia data di fine
-data_inizio = datetime.date(2024, 12, 28)
-data_fine = datetime.date(2025, 3, 1)
+data_inizio = datetime.date(2024, 1, 1)
+data_fine = datetime.date(2025, 4, 15)
 
 # imposto la durata del mio intervallo aggiungendo 4 giorni alla data di inizio per avere blocchi di 5 giorni esatti
 giorni_da_aggiungere = 5

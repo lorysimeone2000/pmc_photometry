@@ -370,6 +370,17 @@ if __name__ == "__main__":
                         scarica_nuovo_catalogo = False
 
                 if scarica_nuovo_catalogo:
+
+                    # individuo il percorso esatto della cache di astroquery nel mio sistema
+                    astroquery_cache_dir = os.path.join(paths.get_cache_dir(), 'astroquery')
+
+                    # verifico se la cartella esiste prima di procedere
+                    if os.path.exists(astroquery_cache_dir):
+                        # elimino l'intera cartella e tutto il suo contenuto per liberare spazio
+                        shutil.rmtree(astroquery_cache_dir)
+                        # ricreo la cartella vuota per evitare errori nelle esecuzioni future
+                        os.makedirs(astroquery_cache_dir)
+
                     tentativi_massimi = 5
                     attesa = 10
                     for tentativo in range(tentativi_massimi):

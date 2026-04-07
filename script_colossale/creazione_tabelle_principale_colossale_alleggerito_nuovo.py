@@ -60,6 +60,7 @@ warnings.filterwarnings('ignore', message='.*failed to converge.*', category=Use
 warnings.simplefilter('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', category=VerifyWarning)
 warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
+warnings.filterwarnings('ignore', message='.*deblending mode.*')
 
 
 # =============================================================================

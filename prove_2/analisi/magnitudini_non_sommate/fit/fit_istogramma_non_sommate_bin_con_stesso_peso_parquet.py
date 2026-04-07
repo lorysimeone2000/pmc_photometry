@@ -1,7 +1,6 @@
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
-matplotlib.use('Agg')
 import numpy as np
 import os
 import sys
@@ -81,7 +80,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
 
 for run in RUN_TO_ANALYZE:
     nome_cartella = f"tabelle_unite_run_{run}"
-    path_cartella = cerca_cartella_nel_progetto(BASE_DIR / "tabelle", nome_cartella)
+    path_cartella = cerca_cartella_nel_progetto(BASE_DIR / "tabelle_alleggerite", nome_cartella)
 
     if path_cartella is None:
         print(f"Attenzione: Cartella {nome_cartella} non trovata.")
@@ -89,12 +88,17 @@ for run in RUN_TO_ANALYZE:
     else:
         print(f"cartella trovata in {path_cartella}")
 
-    files_csv = sorted(list(path_cartella.glob("*.csv")))
-    print(f"Run {run}: Trovati {len(files_csv)} file. Caricamento in corso...")
+    # estraggo i miei file parquet seguendo il pattern richiesto
+    files_parquet = sorted(list(path_cartella.glob(f"run_{run}_immagine_*.parquet")))
+    print(f"Run {run}: Trovati {len(files_parquet)} file parquet. Caricamento in corso...")
 
-    for f in tqdm(files_csv, leave=False):
+    for f in tqdm(files_parquet, leave=False):
         try:
-            df_temp = pd.read_csv(f, comment='#', usecols=lambda c: c in cols_needed)
+            # leggo il mio dataset parquet
+            df_temp = pd.read_parquet(f)
+            # mantengo solamente le colonne che mi servono e che sono effettivamente presenti
+            colonne_valide = [c for c in cols_needed if c in df_temp.columns]
+            df_temp = df_temp[colonne_valide].copy()
             df_temp['run_origin'] = run
             lista_dfs.append(df_temp)
         except Exception as e:
@@ -111,15 +115,16 @@ print(f"Totale righe caricate: {len(df_total)}")
 # 2. PREPARAZIONE DATI PER IL FIT E IL GRAFICO
 # =============================================================================
 
-# deduplico i miei dati ordinandoli
+# deduplico i miei dati ordinandoli per etichetta e magnitudine (crescente)
 df_total_sorted = df_total.sort_values(by=['label', 'Mag'], ascending=[True, True])
 
-# ora che il valore di Mag più basso è il primo di ogni gruppo, tengo la prima occorrenza
+# ora che il valore di Mag più basso è il primo di ogni gruppo, tengo la prima occorrenza per ogni label
 df_unique = df_total_sorted.drop_duplicates(subset=['label'], keep='first').copy()
 print(f"Oggetti UNICI totali (Catalogati + Non): {len(df_unique)}")
 
 # isolo i miei non catalogati e rimuovo i duplicati per mantenere un solo elemento per label
-mask_match = df_unique['Corrispondenza'].astype(str).str.startswith('SI')
+# applico la mia maschera considerando che la colonna corrispondenza è un booleano
+mask_match = df_unique['Corrispondenza'] == True
 df_no_match = df_unique[~mask_match].copy()
 df_no_match = df_no_match.drop_duplicates(subset=['label'])
 
@@ -146,7 +151,7 @@ df_match = df_match_raw.groupby('label').agg(agg_dict).reset_index()
 
 # isolo le mie stelle sature usando il mio dataframe raggruppato
 if 'saturazione' in df_match.columns:
-    mask_sature = df_match['saturazione'].astype(str).str.startswith('SI')
+    mask_sature = df_match['saturazione'] == True
     df_sature = df_match[mask_sature].copy()
     # tengo i miei non saturi per il fit
     df_fit_potential = df_match[~mask_sature].copy()
@@ -347,6 +352,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             # salvo il mio grafico
             plt.savefig(f"fit_bin_pesi_uguali.png")
 
+            # mostro il mio grafico a schermo
             plt.show()
 
             plt.close()

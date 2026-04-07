@@ -1,0 +1,6 @@
+media_costanza: 15.69625375826819
+mediana_costanza: 5.61
+std_costanza: 27.45414208139336
+num_regioni_100%: 117
+num_anomalie_presenza: 1546
+classi_stabilita: {'Molto instabile': 1437, 'Molto stabile': 130, 'Instabile': 59, 'Stabile': 22, 'Moderatamente stabile': 15}

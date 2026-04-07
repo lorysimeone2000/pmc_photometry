@@ -1,7 +1,5 @@
 import pandas as pd
-import matplotlib
 import matplotlib.pyplot as plt
-matplotlib.use('Agg')
 import numpy as np
 import os
 import sys
@@ -60,7 +58,7 @@ def modello_lineare(mag, m, q):
 
 
 # configuro le mie impostazioni di base
-RUN_TO_ANALYZE = [1]
+RUN_TO_ANALYZE = [1, 2, 3]
 
 # definisco il flusso esatto che voglio analizzare applicando la correzione additiva e la decorrelazione globale
 FLUSSI_DA_ANALIZZARE = [
@@ -113,9 +111,8 @@ print(f"Totale righe caricate: {len(df_total)}")
 
 # deduplico i miei dati ordinandoli
 df_total_sorted = df_total.sort_values(by=['label', 'Mag'], ascending=[True, True])
-
-# ora che il valore di Mag più basso è il primo di ogni gruppo, tengo la prima occorrenza
-df_unique = df_total_sorted.drop_duplicates(subset=['label'], keep='first').copy()
+# prendo solo i miei primi valori per ID
+df_unique = df_total_sorted.drop_duplicates(subset=['ID'], keep='first').copy()
 print(f"Oggetti UNICI totali (Catalogati + Non): {len(df_unique)}")
 
 # isolo i miei non catalogati e rimuovo i duplicati per mantenere un solo elemento per label
@@ -211,31 +208,29 @@ for flusso in FLUSSI_DA_ANALIZZARE:
         Y_flux = df_fit_curr[col_media].values
         sigma_flux = df_fit_curr[col_std].values
 
-        # definisco il mio numero di bin
+        # definisco i miei bin di larghezza uguale
         n_bins = max(5, int(np.sqrt(len(X))))
-
-        # ordino i miei array per magnitudine prima di spezzarli in chunk
-        sort_idx = np.argsort(X)
-        X_sorted = X[sort_idx]
-        Y_sorted = Y_flux[sort_idx]
-        Err_sorted = sigma_flux[sort_idx]
-
-        # divido i miei array in blocchi con lo stesso numero di stelle
-        X_chunks = np.array_split(X_sorted, n_bins)
-        Y_chunks = np.array_split(Y_sorted, n_bins)
-        Err_chunks = np.array_split(Err_sorted, n_bins)
+        bins = np.linspace(X.min(), X.max(), n_bins + 1)
 
         X_binned = []
         Y_binned = []
         Err_binned = []
 
-        # assemblo i miei bin
-        for x_bin, y_bin, err_bin in zip(X_chunks, Y_chunks, Err_chunks):
-            if len(x_bin) > 0:
-                # calcolo la mia media semplice del flusso
+        # raggruppo i miei dati nei bin per creare i punti del fit
+        for i in range(n_bins):
+            if i == n_bins - 1:
+                mask = (X >= bins[i]) & (X <= bins[i + 1])
+            else:
+                mask = (X >= bins[i]) & (X < bins[i + 1])
+
+            if np.sum(mask) > 0:
+                x_bin = X[mask]
+                y_bin = Y_flux[mask]
+                err_bin = sigma_flux[mask]
+
+                # calcolo la mia media semplice nel bin
                 y_media_semplice = np.mean(y_bin)
 
-                # calcolo la mia deviazione standard della media
                 if len(y_bin) > 1:
                     y_errore_semplice = np.std(y_bin, ddof=1) / np.sqrt(len(y_bin))
                     if y_errore_semplice == 0:
@@ -330,7 +325,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             y_plot_log = modello_lineare(x_plot, m_fit, q_fit)
 
             label_fit = (rf'Fit Binnato: log(F)=({m_fit:.2f}$\pm${err_m:.2f})M + ({q_fit:.2f}$\pm${err_q:.2f})'
-                         rf'$\chi^2_R$={chi2_red:.2f}')
+                         rf'\n$\chi^2_R$={chi2_red:.2f}')
 
             plt.plot(x_plot, 10 ** y_plot_log, 'g--', linewidth=2, label=label_fit, zorder=16)
 
@@ -339,15 +334,15 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             plt.gca().invert_xaxis()
             plt.xlabel("Magnitudine Catalogo (Mag)", fontsize=12)
             plt.ylabel(f"Media {flusso} (ADU)", fontsize=12)
-            plt.title(f"Calibrazione Fotometrica Globale (Run {RUN_TO_ANALYZE}) - {flusso} \n metodo bin uguali", fontsize=14)
+            plt.title(f"Calibrazione Fotometrica Globale (Run {RUN_TO_ANALYZE}) - {flusso} \n metodo bin", fontsize=14)
             plt.grid(True, which="both", ls="-", alpha=0.2)
             plt.legend(fontsize=11, loc='best')
             plt.tight_layout()
 
             # salvo il mio grafico
-            plt.savefig(f"fit_bin_pesi_uguali.png")
+            plt.savefig(f"fit_binnato_{flusso}_style.png")
 
-            plt.show()
+            # plt.show()
 
             plt.close()
 

@@ -1056,6 +1056,10 @@ if __name__ == "__main__":
             if colonna_base in cols:
                 cols.remove(colonna_base)
 
+            colonna_base = 'raggio_fisso_max_run'
+            if colonna_base in cols:
+                cols.remove(colonna_base)
+
             df_file = df_file.copy()
             df_file['ripetizioni'] = df_file['ID'].map(run_repetition_counts_global)
             if 'ripetizioni' not in cols:

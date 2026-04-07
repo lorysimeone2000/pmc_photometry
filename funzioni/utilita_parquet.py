@@ -6,6 +6,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import numpy as np
 import argparse
+import pyarrow.parquet as pq
+import json
 
 
 def cerca_file_nel_progetto(base_dir, nome_file_esatto):
@@ -39,6 +41,9 @@ def cerca_cartella_nel_progetto(base_dir, nome_cartella_esatto):
     return cartelle_trovate[0]
 
 
+
+
+
 def converti_valore(valore):
     valore = str(valore).strip()
     if not valore: return valore
@@ -55,19 +60,41 @@ def converti_valore(valore):
     return valore
 
 
-def leggi_header_da_csv(filename):
-    header_dict = {}
-    with open(filename, 'r') as f:
-        for line in f:
-            if line.startswith('#'):
-                clean_line = line.strip()[1:].strip()
-                if clean_line and ': ' in clean_line:
-                    key, value = clean_line.split(': ', 1)
-                    header_dict[key] = converti_valore(value)
-            else:
-                break
-    return header_dict
+import json
+import pyarrow.parquet as pq
 
+
+def leggi_header_da_parquet(filename):
+    # inizializzo il mio dizionario vuoto per ospitare i metadati estratti
+    header_dict = {}
+
+    try:
+        # leggo unicamente i metadati del file Parquet senza caricare il dataframe in memoria
+        meta = pq.read_metadata(filename)
+        custom_metadata = meta.metadata
+
+        # verifico se la mia chiave personalizzata esiste all'interno dei metadati
+        if custom_metadata and b"astro_metadata" in custom_metadata:
+
+            # decodifico i byte e parso la stringa JSON per ricreare il mio dizionario Python
+            dizionario_meta = json.loads(custom_metadata[b"astro_metadata"].decode("utf-8"))
+
+            # estraggo il mio header FITS dal dizionario
+            header_fits = dizionario_meta.get("FITS_HEADER", {})
+
+            # integro i parametri del FITS header nel mio dizionario finale
+            for k, v in header_fits.items():
+                header_dict[k] = converti_valore(v)
+
+            # estraggo e integro tutte le altre chiavi escludendo l'header FITS
+            for chiave, valore in dizionario_meta.items():
+                if chiave != "FITS_HEADER":
+                    header_dict[chiave] = converti_valore(valore)
+
+    except Exception:
+        pass
+
+    return header_dict
 
 def leggi_file_parametri(percorso):
     # creo il mio parser per catturare il percorso passato da terminale
@@ -117,7 +144,6 @@ def salva_tabella_parquet(dataframe, header_fits, filename, nome_file_fits, para
     meta_dict = {
         "NOME_FILE_FITS": os.path.basename(str(nome_file_fits)),
         "FITS_HEADER": {str(k): str(v).replace('\n', ' ') for k, v in header_fits.items()},
-        "NOTE": "Numero di falsi positivi esclusi sicuramente: 0"
     }
 
     # inserisco i miei numeri di run e immagine nei metadati se forniti

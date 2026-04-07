@@ -1079,6 +1079,9 @@ if __name__ == "__main__":
             if 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura' in cols:
                 cols.remove('flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura')
 
+            if 'raggio_fisso_max_run' in cols:
+                cols.remove('raggio_fisso_max_run')
+
             df_file = df_file.copy()
             df_file['ripetizioni'] = df_file['stat_group_id'].map(run_repetition_counts_global)
 
@@ -1108,7 +1111,11 @@ if __name__ == "__main__":
                 num_immagine=img_idx_orig
             )
 
-        # inizializzo il mio nuovo dataframe richiesto includendo le coordinate
+        # =================================================================
+        # ESTRAZIONE ISOLABILE DEGLI OGGETTI NON CATALOGATI
+        # =================================================================
+
+        # inizializzo il mio nuovo dataframe includendo le coordinate
         mydf = pd.DataFrame(columns=[
             'label',
             'RA_centroid',
@@ -1120,7 +1127,7 @@ if __name__ == "__main__":
             'std_flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'
         ])
 
-        # filtro i miei oggetti isolando solo quelli senza corrispondenza (valore booleano False)
+        # filtro i miei oggetti isolando solo quelli senza corrispondenza
         maschera_no_cat = run_df['Corrispondenza'] == False
         dati_senza_corrispondenza = run_df[maschera_no_cat].copy()
 
@@ -1130,6 +1137,7 @@ if __name__ == "__main__":
 
         # elimino i miei duplicati per mantenere un'unica riga riassuntiva per oggetto
         dati_senza_corrispondenza = dati_senza_corrispondenza.drop_duplicates(subset=['label'])
+        n_no_match = len(dati_senza_corrispondenza)
 
         # popolo il mio dataframe con i dati estratti per le colonne indicate
         for col in mydf.columns:
@@ -1137,22 +1145,29 @@ if __name__ == "__main__":
                 mydf[col] = dati_senza_corrispondenza[col].values
 
         # decido il nome del mio nuovo file parquet per gli oggetti estranei
-        file_out_mydf = output_dir / f"{run_name}_oggetti_non_catalogati.parquet"
+        file_out_mydf = output_dir / f"run_{run}_oggetti_non_catalogati.parquet"
 
         # aggiorno l'header anche per il file degli estranei
         header_per_non_cat = header_orig.copy() if 'header_orig' in locals() else {}
         if fit_results:
             header_per_non_cat.update(fit_results)
 
-        # salvo la mia nuova tabella
+        # aggiungo la lunghezza dei miei dati senza corrispondenza ai metadati
+        header_per_non_cat["N_NO_MATCH"] = n_no_match
+
+        # recupero il nome FITS dell'ultima iterazione rimasto in memoria (es. immagine_115.fit)
+        nome_fits_per_non_cat = nome_fits_orig if 'nome_fits_orig' in locals() else str(file_out_mydf.name)
+
+        # salvo la mia nuova tabella passando il nome FITS corretto
         salva_tabella_parquet(
             mydf,
             header_per_non_cat,
             file_out_mydf,
-            str(file_out_mydf.name),
+            nome_fits_per_non_cat,  # <--- Sostituito str(file_out_mydf.name) con il nome FITS reale
             parametri_caricati
         )
 
+        # Libero la memoria per questa run
         del run_df
         gc.collect()
 

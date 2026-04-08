@@ -38,7 +38,7 @@ if lista_df:
         numero_di_run_in_cui_appare=('run_provenienza', 'nunique'),
         somma_ripetizioni_intra_run=('ripetizioni', 'sum'),
         RA_medio=('RA_centroid', 'mean'),
-        DE_medio=('DE_centroid', 'mean')
+        DE_medio=('DEC_centroid', 'mean')
     ).reset_index()
 
     # ordino la mia tabella dalla label più frequente a quella meno frequente
@@ -129,11 +129,11 @@ df_labels = pd.concat(lista_df_non_cat, ignore_index=True)
 
 stat_obj = df_labels.groupby('label').agg({
     'RA_centroid': 'mean',
-    'DE_centroid': 'mean'
+    'DEC_centroid': 'mean'
 }).reset_index()
 
 coords_oggetti = SkyCoord(ra=stat_obj['RA_centroid'].values * u.deg,
-                          dec=stat_obj['DE_centroid'].values * u.deg)
+                          dec=stat_obj['DEC_centroid'].values * u.deg)
 
 copertura_totale = np.zeros(len(stat_obj), dtype=int)
 presenza_reale = np.zeros(len(stat_obj), dtype=int)

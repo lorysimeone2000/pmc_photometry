@@ -52,7 +52,7 @@ df = pd.read_csv(percorso_csv)
 df.columns = df.columns.str.strip()
 
 # Mi assicuro che le colonne numeriche siano del tipo corretto
-numeric_cols = ['RA_centroid', 'DE_centroid', 'Copertura_Immagini', 'Presenza_Effettiva', 'Costanza_Percentuale']
+numeric_cols = ['RA_centroid', 'DEC_centroid', 'Copertura_Immagini', 'Presenza_Effettiva', 'Costanza_Percentuale']
 for col in numeric_cols:
     df[col] = pd.to_numeric(df[col], errors='coerce')
 
@@ -170,7 +170,7 @@ plt.close()
 # 7. GRAFICO 4: Mappa spaziale RA vs DEC
 # ------------------------------
 plt.figure(figsize=(14, 10))
-scatter = plt.scatter(df_clean['RA_centroid'], df_clean['DE_centroid'],
+scatter = plt.scatter(df_clean['RA_centroid'], df_clean['DEC_centroid'],
                       c=df_clean['Costanza_Percentuale'], cmap='RdYlGn_r',
                       s=15, alpha=0.6, edgecolors='black', linewidth=0.3)
 plt.colorbar(scatter, label='Constancy (%)', fraction=0.046, pad=0.04)
@@ -218,7 +218,7 @@ plt.close()
 # 9. GRAFICO 6: Heatmap 2D (hexbin) della costanza
 # ------------------------------
 plt.figure(figsize=(14, 10))
-hb = plt.hexbin(df_clean['RA_centroid'], df_clean['DE_centroid'],
+hb = plt.hexbin(df_clean['RA_centroid'], df_clean['DEC_centroid'],
                 C=df_clean['Costanza_Percentuale'], gridsize=80,
                 cmap='plasma', mincnt=1, edgecolors='none')
 plt.colorbar(hb, label='Constancy (%)', fraction=0.046, pad=0.04)
@@ -283,7 +283,7 @@ fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
 top20 = df_clean.nlargest(20, 'Costanza_Percentuale')
 bars1 = ax1.barh(range(len(top20)), top20['Costanza_Percentuale'].values, color='green', alpha=0.7)
 ax1.set_yticks(range(len(top20)))
-ax1.set_yticklabels([f"{row['RA_centroid']:.2f}, {row['DE_centroid']:.2f}" for _, row in top20.iterrows()], fontsize=8)
+ax1.set_yticklabels([f"{row['RA_centroid']:.2f}, {row['DEC_centroid']:.2f}" for _, row in top20.iterrows()], fontsize=8)
 ax1.set_xlabel('Constancy (%)', fontsize=12)
 ax1.set_title('Top 20 Regions by Constancy', fontsize=14, fontweight='bold')
 ax1.invert_yaxis()
@@ -293,7 +293,7 @@ ax1.grid(True, alpha=0.3, axis='x')
 bottom20 = df_clean.nsmallest(20, 'Costanza_Percentuale')
 bars2 = ax2.barh(range(len(bottom20)), bottom20['Costanza_Percentuale'].values, color='red', alpha=0.7)
 ax2.set_yticks(range(len(bottom20)))
-ax2.set_yticklabels([f"{row['RA_centroid']:.2f}, {row['DE_centroid']:.2f}" for _, row in bottom20.iterrows()],
+ax2.set_yticklabels([f"{row['RA_centroid']:.2f}, {row['DEC_centroid']:.2f}" for _, row in bottom20.iterrows()],
                     fontsize=8)
 ax2.set_xlabel('Constancy (%)', fontsize=12)
 ax2.set_title('Bottom 20 Regions by Constancy', fontsize=14, fontweight='bold')

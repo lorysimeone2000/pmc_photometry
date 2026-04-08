@@ -12,6 +12,7 @@ import warnings
 from astropy.wcs import FITSFixedWarning
 from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyUserWarning
+from collections import Counter
 
 # gestisco i warning ignorandoli
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
@@ -86,6 +87,7 @@ if not lista_percorsi_parquet:
 
 print("--- FASE 0: Ricavo gli ID comuni presenti in tutte le run ---")
 id_comuni = None
+conteggio_totale_id = Counter()
 
 # eseguo un ciclo su ogni run per estrarre gli ID univoci
 for run in tqdm(run_list):
@@ -109,7 +111,11 @@ for run in tqdm(run_list):
         try:
             # leggo solo la colonna ID per massimizzare le prestazioni
             df_tmp = pd.read_parquet(f_par, columns=['label'])
-            id_run_corrente.update(df_tmp['label'].dropna().unique())
+            labels = df_tmp['label'].dropna()
+            id_run_corrente.update(labels.unique())
+
+            # aggiorno il conteggio totale delle presenze per ogni ID in tutte le run
+            conteggio_totale_id.update(labels)
         except Exception:
             pass
 
@@ -119,11 +125,15 @@ for run in tqdm(run_list):
     else:
         id_comuni = id_comuni.intersection(id_run_corrente)
 
+# filtro l'insieme degli ID comuni mantenendo solo quelli che compaiono almeno 70 volte in totale
+if id_comuni is not None:
+    id_comuni = {id_obj for id_obj in id_comuni if conteggio_totale_id[id_obj] >= 70}
+
 if not id_comuni:
-    print("Errore: nessun ID comune trovato in tutte le run indicate.")
+    print("Errore: nessun ID comune trovato in tutte le run indicate con almeno 70 comparse totali.")
     exit()
 
-print(f"Trovati {len(id_comuni)} ID che compaiono in tutte le {len(run_list)} run.")
+print(f"Trovati {len(id_comuni)} ID che compaiono in tutte le {len(run_list)} run e con almeno 70 presenze totali.")
 
 # --- FASE 1: IDENTIFICAZIONE STELLA TARGET ---
 
@@ -141,7 +151,7 @@ tbl_ref = Table.from_pandas(df_ref)
 # filtro solo le stelle che hanno una corrispondenza nel catalogo verificando che il booleano sia True
 mask_si = tbl_ref['Corrispondenza'] == True
 
-# mi assicuro che la stella compaia almeno una volta in tutte e tre le run
+# mi assicuro che la stella compaia almeno una volta in tutte e tre le run e rispetti il limite minimo di comparse
 mask_comuni = np.isin(tbl_ref['label'], list(id_comuni))
 
 # unisco le due condizioni
@@ -185,9 +195,10 @@ def converti_valore(valore):
     return valore
 
 
-# definisco l'unica colonna che mi interessa studiare
+# definisco le due colonne che mi interessa studiare
 colonna_target = 'flusso_fisso_max_run_senza_correzioni'
-all_data = {colonna_target: []}
+colonna_corretta = 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'
+all_data = {colonna_target: [], colonna_corretta: []}
 
 all_times = []
 t0_global = None
@@ -230,8 +241,8 @@ for run in run_list:
             if t0_global is None:
                 t0_global = t_curr
 
-            # sottraggo il tempo di base per avere il tempo relativo e converto da millisecondi a secondi
-            tempo_relativo = (t_curr - t0_global) / 1000.0 if t0_global is not None else 0
+            # sottraggo il tempo di base per avere il tempo relativo e converto da millisecondi a minuti
+            tempo_relativo = (t_curr - t0_global) / 60000.0 if t0_global is not None else 0
 
             mask_target = tbl_frame['label'] == id_stella_target
             stella_nel_frame = tbl_frame[mask_target]
@@ -246,8 +257,19 @@ for run in run_list:
                     all_data[colonna_target].append(val)
                 else:
                     all_data[colonna_target].append(np.nan)
+
+                # estraggo i dati anche per la colonna del flusso corretto
+                if colonna_corretta in stella_nel_frame.colnames:
+                    try:
+                        val_corr = float(stella_nel_frame[colonna_corretta][0])
+                    except (ValueError, TypeError):
+                        val_corr = np.nan
+                    all_data[colonna_corretta].append(val_corr)
+                else:
+                    all_data[colonna_corretta].append(np.nan)
             else:
                 all_data[colonna_target].append(np.nan)
+                all_data[colonna_corretta].append(np.nan)
 
             all_times.append(tempo_relativo)
 
@@ -275,32 +297,91 @@ def calc_stats(arr, mask):
     return 0.0, 0.0
 
 
+def plot_andamento_a_tratti(t_arr, y_arr, valid_mask, colore, etichetta):
+    # aggiungo l'etichetta solo al primo tratto per non duplicarla nella legenda
+    etichetta_aggiunta = False
+    t_ultimo_prev = None
+    y_ultimo_prev = None
+
+    t_inizio = -1.0  # inizializzo a un valore negativo per includere lo 0
+
+    for r_idx, (run_num, t_end) in enumerate(run_boundaries):
+        # creo la maschera per la run corrente
+        mask_run_corrente = valid_mask & (t_arr > t_inizio) & (t_arr <= t_end)
+
+        if np.sum(mask_run_corrente) > 0:
+            t_corrente = t_arr[mask_run_corrente]
+            y_corrente = y_arr[mask_run_corrente]
+
+            # traccio i punti della run con linea continua
+            plt.plot(t_corrente, y_corrente,
+                     marker='o', linestyle='-', linewidth=1., markersize=1, alpha=0.8, color=colore,
+                     label=etichetta if not etichetta_aggiunta else "")
+            etichetta_aggiunta = True
+
+            # traccio il segmento tratteggiato che unisce questa run alla precedente
+            if t_ultimo_prev is not None:
+                plt.plot([t_ultimo_prev, t_corrente[0]], [y_ultimo_prev, y_corrente[0]],
+                         linestyle='--', linewidth=1., alpha=0.5, color=colore)
+
+            # aggiorno l'ultimo punto per il ciclo successivo
+            t_ultimo_prev = t_corrente[-1]
+            y_ultimo_prev = y_corrente[-1]
+
+        t_inizio = t_end
+
+
 print(f"\n=== GENERAZIONE GRAFICO PER {colonna_target} ===")
 
 arr = np.array(all_data[colonna_target])
 mask = (arr > 0) & (~np.isnan(arr))
 
-if np.sum(mask) == 0:
-    print(f"Nessun dato valido per {colonna_target}, impossibile generare il grafico.")
+# preparo gli array e la maschera per la seconda colonna
+arr_corr = np.array(all_data[colonna_corretta])
+mask_corr = (arr_corr > 0) & (~np.isnan(arr_corr))
+
+if np.sum(mask) == 0 and np.sum(mask_corr) == 0:
+    print("Nessun dato valido da rappresentare, impossibile generare il grafico.")
 else:
-    media, std = calc_stats(arr, mask)
-    err_pct = (std / media * 100) if media != 0 else 0
+    # identifico il tempo limite della prima run per il calcolo della sigma
+    t_end_run1 = run_boundaries[0][1] if len(run_boundaries) > 0 else times_arr[-1]
+
+    # creo le maschere filtrando solo i dati appartenenti alla prima run
+    mask_run1 = mask & (times_arr <= t_end_run1)
+    mask_corr_run1 = mask_corr & (times_arr <= t_end_run1)
+
+    # calcolo le statistiche sulla prima run per il flusso originale
+    media_run1, std_run1 = calc_stats(arr, mask_run1)
+    err_pct_run1 = (std_run1 / media_run1 * 100) if media_run1 != 0 else 0
+
+    # calcolo le statistiche sulla prima run per il flusso corretto
+    media_corr_run1, std_corr_run1 = calc_stats(arr_corr, mask_corr_run1)
+    err_pct_corr_run1 = (std_corr_run1 / media_corr_run1 * 100) if media_corr_run1 != 0 else 0
 
     # creo la singola figura
     plt.figure(figsize=(12, 6))
 
-    plt.plot(times_arr[mask], arr[mask],
-             marker='o', linestyle='-', linewidth=1., markersize=1, alpha=0.8, color='blue',
-             label=rf"Media Flusso Globale ($\sigma$: {err_pct:.2f}%)")
+    if np.sum(mask) > 0:
+        # richiamo la funzione per plottare il flusso originale a tratti
+        plot_andamento_a_tratti(times_arr, arr, mask, 'blue',
+                                rf"Global Mean Flux ($\sigma$ 1st run: {err_pct_run1:.2f}%)")
 
-    # disegno le linee divisorie per evidenziare le run
+    if np.sum(mask_corr) > 0:
+        # richiamo la funzione per plottare il flusso corretto a tratti sovrapposti
+        plot_andamento_a_tratti(times_arr, arr_corr, mask_corr, 'red',
+                                rf"Corrected Flux ($\sigma$ 1st run: {err_pct_corr_run1:.2f}%)")
+
+    # disegno le linee divisorie per evidenziare le run e aggiungo i testi
     for r_idx, (run_num, t_end) in enumerate(run_boundaries):
         plt.axvline(x=t_end, color='gray', linestyle='--', alpha=0.6)
+        # aggiungo il testo richiesto accanto alle linee divisorie
+        plt.text(t_end, 0.95, f'end of run {run_num}', color='gray', ha='right', va='top', rotation=90,
+                 transform=plt.gca().get_xaxis_transform())
 
-    plt.title(f'Andamento della Stella ID {id_stella_target}\nTarget Kron ~ {KRON_TARGET} | {colonna_target}',
+    plt.title(f'Trend of Star ID {id_stella_target}\nTarget Kron ~ {KRON_TARGET} | {colonna_target}',
               fontsize=12, fontweight='bold')
-    plt.xlabel("Tempo dall'inizio della Run 1 (secondi)")
-    plt.ylabel("Flusso (ADU)")
+    plt.xlabel("Time from the beginning of Run 1 (minutes)")
+    plt.ylabel("Flux (ADU)")
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.legend(fontsize='medium', loc='best')
 

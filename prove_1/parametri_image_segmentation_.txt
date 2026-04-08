@@ -1,7 +1,0 @@
-parametro valore
-
-fwhm 3.0
-size 5
-threshold_sigma 9
-threshold_assoluta 3.5
-pixel 3

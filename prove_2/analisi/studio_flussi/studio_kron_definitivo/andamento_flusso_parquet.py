@@ -48,7 +48,7 @@ from funzioni.astrometria_parquet import *
 run_list = [1, 2, 3]  # definisco la lista delle run da analizzare
 base_path = BASE_DIR / "tabelle_alleggerite"
 
-KRON_TARGET = 2000
+KRON_TARGET = 350
 
 # imposto l'indice del file nella lista da usare come riferimento per trovare l'ID della stella
 INDICE_IMMAGINE_RIFERIMENTO = 26
@@ -70,7 +70,7 @@ for root, dirs, files in os.walk(cartella_parquet):
     file_parquet.extend([
         os.path.join(root, f)
         for f in files
-        if f.endswith('.parquet') and f"run_{INDICE_RUN_DI_RIFERIMENTO}_immagine_" in f
+        if f.endswith('.parquet') and f"run_{INDICE_RUN_DI_RIFERIMENTO}_stelle_trovate_e_catalogate_immagine_" in f
     ])
 
 file_parquet = sorted(file_parquet)
@@ -98,7 +98,7 @@ for run in tqdm(run_list):
         file_parquet_run.extend([
             os.path.join(root, f)
             for f in files
-            if f.endswith('.parquet') and f"run_{run}_immagine_" in f
+            if f.endswith('.parquet') and f"run_{run}_stelle_trovate_e_catalogate_immagine_" in f
         ])
 
     file_parquet_run = sorted(file_parquet_run)
@@ -154,7 +154,7 @@ if len(tbl_catalogate_ref) == 0:
 
 # calcolo la differenza assoluta tra i flussi trovati e il target
 differenze = np.abs(tbl_catalogate_ref[
-                        'media_flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'] - KRON_TARGET)
+                        'flusso_fisso_max_run_senza_correzioni'] - KRON_TARGET)
 
 # trovo l'indice della differenza minima
 idx_min = np.argmin(differenze)
@@ -186,7 +186,7 @@ def converti_valore(valore):
 
 
 # definisco l'unica colonna che mi interessa studiare
-colonna_target = 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE'
+colonna_target = 'flusso_fisso_max_run_senza_correzioni'
 all_data = {colonna_target: []}
 
 all_times = []
@@ -290,7 +290,7 @@ else:
     plt.figure(figsize=(12, 6))
 
     plt.plot(times_arr[mask], arr[mask],
-             marker='o', linestyle='-', linewidth=1.5, markersize=4, alpha=0.8, color='blue',
+             marker='o', linestyle='-', linewidth=1., markersize=1, alpha=0.8, color='blue',
              label=rf"Media Flusso Globale ($\sigma$: {err_pct:.2f}%)")
 
     # disegno le linee divisorie per evidenziare le run

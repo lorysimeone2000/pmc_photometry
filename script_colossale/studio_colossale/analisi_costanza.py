@@ -146,21 +146,27 @@ plt.close()
 # 6. GRAFICO 3: Bar plot classi di stabilità
 # ------------------------------
 plt.figure(figsize=(12, 8))
-counts_ordered = [stabilita_counts[cat] for cat in order if cat in stabilita_counts]
+
+# Uso .get(cat, 0) per avere sempre 5 elementi e prevenire errori di lunghezza se una classe è assente
+counts_ordered = [stabilita_counts.get(cat, 0) for cat in order]
 bars = plt.bar(order, counts_ordered, color=colors_box, edgecolor='black', linewidth=1.5)
 plt.title('Number of Objects by Stability Class', fontsize=14, fontweight='bold')
 plt.xlabel('Stability Class', fontsize=12)
 plt.ylabel('Number of Objects', fontsize=12)
-plt.yscale('log')
+
+# Applica la scala logaritmica solo se ci sono valori per evitare errori grafici
+if max(counts_ordered) > 0:
+    plt.yscale('log')
 plt.grid(True, alpha=0.3, axis='y')
 
-# Aggiungo le percentuali sulle barre
+# Aggiungo le percentuali sulle barre ignorando quelle a zero
 total = len(df_clean)
 for bar, count in zip(bars, counts_ordered):
-    height = bar.get_height()
-    plt.text(bar.get_x() + bar.get_width() / 2., height,
-             f'{count}\n({count / total * 100:.1f}%)',
-             ha='center', va='bottom', fontsize=9, fontweight='bold')
+    if count > 0:
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width() / 2., height,
+                 f'{count}\n({count / total * 100:.1f}%)',
+                 ha='center', va='bottom', fontsize=9, fontweight='bold')
 
 plt.xticks(rotation=45, ha='right')
 salva_plot_con_titolo('Numero di Oggetti per Classe di Stabilita')
@@ -234,23 +240,47 @@ plt.close()
 # ------------------------------
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
 
+# Definisco una mappa per i colori e i valori di explode per adattarmi dinamicamente alle classi presenti
+mappa_colori = {
+    'Very unstable': '#d73027',
+    'Unstable': '#fc8d59',
+    'Moderately stable': '#fee08b',
+    'Stable': '#d9ef8b',
+    'Very stable': '#1a9850'
+}
+mappa_explode = {
+    'Very unstable': 0.05,
+    'Unstable': 0.02,
+    'Moderately stable': 0.02,
+    'Stable': 0.02,
+    'Very stable': 0.05
+}
+
 # Plotto tutte le categorie
-colors_all = ['#d73027', '#fc8d59', '#fee08b', '#d9ef8b', '#1a9850']
+colori_effettivi1 = [mappa_colori[cat] for cat in stabilita_counts.index]
+explode_effettivo1 = [mappa_explode[cat] for cat in stabilita_counts.index]
+
 wedges1, texts1, autotexts1 = ax1.pie(stabilita_counts.values,
                                       labels=stabilita_counts.index,
-                                      autopct='%1.1f%%', colors=colors_all,
+                                      autopct='%1.1f%%', colors=colori_effettivi1,
                                       textprops={'fontsize': 11},
-                                      explode=(0.05, 0.02, 0.02, 0.02, 0.05))
+                                      explode=explode_effettivo1)
 ax1.set_title('Complete Distribution of Stability Classes', fontsize=14, fontweight='bold')
 
 # Plotto solo le categorie non dominanti (escludo "Very unstable" per vedere meglio)
 non_dominanti = stabilita_counts[stabilita_counts.index != 'Very unstable']
-colors_non = ['#fc8d59', '#fee08b', '#d9ef8b', '#1a9850']
-wedges2, texts2, autotexts2 = ax2.pie(non_dominanti.values,
-                                      labels=non_dominanti.index,
-                                      autopct='%1.1f%%', colors=colors_non,
-                                      textprops={'fontsize': 11})
-ax2.set_title('Distribution (excluding "Very unstable" category)', fontsize=14, fontweight='bold')
+
+# Se ci sono ancora dati da plottare creo il secondo grafico, altrimenti lascio uno spazio informativo
+if len(non_dominanti) > 0:
+    colori_effettivi2 = [mappa_colori[cat] for cat in non_dominanti.index]
+    wedges2, texts2, autotexts2 = ax2.pie(non_dominanti.values,
+                                          labels=non_dominanti.index,
+                                          autopct='%1.1f%%', colors=colori_effettivi2,
+                                          textprops={'fontsize': 11})
+    ax2.set_title('Distribution (excluding "Very unstable" category)', fontsize=14, fontweight='bold')
+else:
+    ax2.text(0.5, 0.5, 'Nessun dato per questa selezione', ha='center', va='center', fontsize=12)
+    ax2.axis('off')
 
 plt.tight_layout()
 salva_plot_con_titolo('Pie Chart Classi di Stabilita')

@@ -184,8 +184,18 @@ if __name__ == "__main__":
     s_ref = 1.0
     dizionario_sfondi = {}
 
-    global_tracker_coords = None
-    global_tracker_labels = []
+    CATALOGO_PERSISTENTE_FILE = BASE_DIR / "catalogo_stelle_persistente_COLOSSALE.parquet"
+
+    # inizializzo il mio tracker GLOBALE (persistente tra le run)
+    global_tracker_coords, global_tracker_labels = carica_catalogo_persistente(CATALOGO_PERSISTENTE_FILE)
+
+    # se il catalogo è vuoto, lo inizializzo a None
+    if global_tracker_coords is None:
+        global_tracker_coords = None
+        global_tracker_labels = []
+
+    # definisco la mia variabile per tracciare se ci sono state nuove aggiunte in questa run
+    nuove_aggiunte_in_run = False
 
     next_internal_id = 1
 
@@ -604,26 +614,63 @@ if __name__ == "__main__":
             final_labels = np.empty(len(df_final), dtype=object)
 
             if global_tracker_coords is None:
-                global_tracker_coords = coords_obj_all
-                global_tracker_labels = [f"RA_{ra:.3f}DEC{dec:.3f}" for ra, dec in
+                # se sono alla prima run, prima immagine: creo il mio nuovo tracker
+                # uso 2 cifre decimali per stabilità tra le mie run
+                global_tracker_labels = [f"RA_{ra:.2f}DEC{dec:.2f}" for ra, dec in
                                          zip(coords_obj_all.ra.deg, coords_obj_all.dec.deg)]
+                global_tracker_coords = coords_obj_all
                 final_labels[:] = global_tracker_labels
+                nuove_aggiunte_in_run = True
+
+                # salvo immediatamente il mio catalogo
+                salva_catalogo_persistente(global_tracker_coords, global_tracker_labels, CATALOGO_PERSISTENTE_FILE)
             else:
+                # eseguo il match con il mio tracker globale (persistente)
                 idx_match, d2d, _ = coords_obj_all.match_to_catalog_sky(global_tracker_coords)
                 mask_match = d2d < dist_ripetizione
+
+                # assegno le mie etichette esistenti
                 for i in np.where(mask_match)[0]:
                     final_labels[i] = global_tracker_labels[idx_match[i]]
+
+                # trovo le mie nuove stelle
                 nuovi_idx = np.where(~mask_match)[0]
                 if len(nuovi_idx) > 0:
                     nuove_coords = coords_obj_all[nuovi_idx]
-                    nuove_labels = [f"RA_{ra:.3f}__DEC_{dec:.3f}" for ra, dec in
-                                    zip(nuove_coords.ra.deg, nuove_coords.dec.deg)]
+
+                    # genero le mie nuove etichette con 2 cifre decimali
+                    nuove_labels_temp = [f"RA_{ra:.2f}DEC{dec:.2f}" for ra, dec in
+                                         zip(nuove_coords.ra.deg, nuove_coords.dec.deg)]
+
+                    # risolvo le possibili collisioni con le etichette esistenti
+                    nuove_labels = []
+                    labels_esistenti_set = set(global_tracker_labels)
+                    for label in nuove_labels_temp:
+                        if label not in labels_esistenti_set:
+                            nuove_labels.append(label)
+                        else:
+                            # in caso di collisione: aggiungo il mio suffisso numerico
+                            contatore = 1
+                            while f"{label}_{contatore}" in labels_esistenti_set:
+                                contatore += 1
+                            nuova_label = f"{label}_{contatore}"
+                            nuove_labels.append(nuova_label)
+                            labels_esistenti_set.add(nuova_label)
+
+                    # assegno le mie nuove etichette
                     for i, l_idx in enumerate(nuovi_idx):
                         final_labels[l_idx] = nuove_labels[i]
-                    nuovi_ra = np.concatenate([global_tracker_coords.ra.deg, nuove_coords.ra.deg])
-                    nuovi_dec = np.concatenate([global_tracker_coords.dec.deg, nuove_coords.dec.deg])
-                    global_tracker_coords = SkyCoord(ra=nuovi_ra * u.deg, dec=nuovi_dec * u.deg)
+
+                    # aggiorno il mio tracker globale
+                    nuove_ra = np.concatenate([global_tracker_coords.ra.deg, nuove_coords.ra.deg])
+                    nuove_dec = np.concatenate([global_tracker_coords.dec.deg, nuove_coords.dec.deg])
+                    global_tracker_coords = SkyCoord(ra=nuove_ra * u.deg, dec=nuove_dec * u.deg)
                     global_tracker_labels.extend(nuove_labels)
+
+                    nuove_aggiunte_in_run = True
+
+                    # salvo il mio catalogo aggiornato (ogni volta che ci sono nuove stelle)
+                    salva_catalogo_persistente(global_tracker_coords, global_tracker_labels, CATALOGO_PERSISTENTE_FILE)
 
             df_final['label'] = final_labels
 
@@ -643,6 +690,10 @@ if __name__ == "__main__":
 
             salva_csv_con_header_fits(df_final, header_dict,
                                       file_out, str(percorso_file), parametri_caricati)
+
+        if nuove_aggiunte_in_run:
+            salva_catalogo_persistente(global_tracker_coords, global_tracker_labels, CATALOGO_PERSISTENTE_FILE)
+            nuove_aggiunte_in_run = False
 
         # =============================================================================
         # Avvio la fase 2 e 3 per estrarre i raggi massimi e il flusso fisso per la mia run_name

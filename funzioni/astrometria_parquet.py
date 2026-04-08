@@ -11,6 +11,7 @@ from astropy.convolution import convolve
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 from astropy.table import Table, vstack
+from pathlib import Path
 
 # importo la funzione di ricerca interna al mio nuovo modulo
 from .utilita import cerca_file_nel_progetto
@@ -127,6 +128,67 @@ def tabella_catalogo(image_file_, tbl_vizier_cut, tbl_hipparco_run_clean):
     return tbl_unita[mask_bordo]
 
 
+def carica_catalogo_persistente(percorso_catalogo="catalogo_persistente.parquet"):
+    """Carica il catalogo persistente da file se esiste"""
+    # definisco il mio percorso file come oggetto Path
+    file_path = Path(percorso_catalogo)
+
+    if file_path.exists():
+        try:
+            df_cat = pd.read_parquet(file_path)
+            if len(df_cat) > 0:
+                coords = SkyCoord(
+                    ra=df_cat['RA_centroid'].values * u.deg,
+                    dec=df_cat['DEC_centroid'].values * u.deg
+                )
+                labels = df_cat['label'].tolist()
+                print(f"Catalogo persistente caricato: {len(labels)} stelle")
+                return coords, labels
+        except Exception as e:
+            print(f"Errore nel caricamento del catalogo persistente: {e}")
+    return None, []
+
+
+def salva_catalogo_persistente(coords, labels, percorso_catalogo="catalogo_persistente.parquet"):
+    """Salva il catalogo persistente su file (sovrascrive)"""
+    if coords is None or len(labels) == 0:
+        return
+
+    # definisco il mio percorso file come oggetto Path
+    file_path = Path(percorso_catalogo)
+
+    df_cat = pd.DataFrame({
+        'RA_centroid': coords.ra.deg,
+        'DEC_centroid': coords.dec.deg,
+        'label': labels
+    })
+    df_cat.to_parquet(file_path, index=False)
+
+
+def aggiorna_catalogo_persistente(nuove_coords, nuove_labels, percorso_catalogo="catalogo_persistente.parquet"):
+    """Aggiorna il catalogo persistente con nuove stelle (senza duplicati)"""
+    # Carica il catalogo esistente passandogli il mio percorso
+    coords_esistenti, labels_esistenti = carica_catalogo_persistente(percorso_catalogo)
+
+    if coords_esistenti is None:
+        # Nessun catalogo esistente, crea nuovo
+        salva_catalogo_persistente(nuove_coords, nuove_labels, percorso_catalogo)
+        return nuove_coords, nuove_labels
+
+    # Combina vecchie e nuove stelle
+    tutte_ra = np.concatenate([coords_esistenti.ra.deg, nuove_coords.ra.deg])
+    tutte_dec = np.concatenate([coords_esistenti.dec.deg, nuove_coords.dec.deg])
+    tutte_labels = labels_esistenti + nuove_labels
+
+    # Crea nuovo SkyCoord
+    tutte_coords = SkyCoord(ra=tutte_ra * u.deg, dec=tutte_dec * u.deg)
+
+    # Salva
+    salva_catalogo_persistente(tutte_coords, tutte_labels, percorso_catalogo)
+
+    return tutte_coords, tutte_labels
+
+
 def analisi_image_segmentation(percorso_file_, parametri_globali):
     data, fondo_iniziale, w = elabora_file_fits(percorso_file_)
     fwhm = parametri_globali.get('fwhm', 3.0)
@@ -235,6 +297,7 @@ def analisi_image_segmentation(percorso_file_, parametri_globali):
     fondo_medio = somma_parziale / pixel_contati if pixel_contati > 0 else 0
 
     return tbl_filtrato, parametri_globali, somma_totale, fondo_medio
+
 
 def modello_lineare(mag, m, q):
     return m * mag + q

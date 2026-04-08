@@ -73,8 +73,8 @@ FLUSSI_DA_ANALIZZARE = [
 print(f"--- Caricamento dati per Fit Globale ---")
 lista_dfs = []
 
-# aggiungo alla mia lista tutte le colonne dei flussi che mi servono successivamente per il filtro
-cols_needed = ['label', 'ID', 'Corrispondenza', 'Mag', 'saturazione']
+# aggiungo alla mia lista tutte le colonne dei flussi e le coordinate dei centroidi per il calcolo delle distanze
+cols_needed = ['label', 'ID', 'Corrispondenza', 'Mag', 'saturazione', 'xcentroid', 'ycentroid']
 for flusso in FLUSSI_DA_ANALIZZARE:
     cols_needed.extend([f"media_{flusso}", f"std_{flusso}"])
 
@@ -156,10 +156,12 @@ if not df_sature.empty:
 print(f"Oggetti di base analizzabili per il fit (Match SI, No Saturi, Mag <= {SOGLIA_MAG_FIT}): {len(df_fit_clean)}")
 
 # =============================================================================
-# 3. FIT LINEARE E PLOTTING CICLICO
+# 3. FIT LINEARE PER AREE DI DISTANZA DAL BORDO E PLOTTING
 # =============================================================================
 
-# inizio il mio ciclo sui tipi di flussi da analizzare
+# definisco le mie dimensioni del sensore per il calcolo dei bordi
+W_IMG, H_IMG = 3072, 2048
+
 for flusso in FLUSSI_DA_ANALIZZARE:
     col_media = f"media_{flusso}"
     col_std = f"std_{flusso}"
@@ -172,58 +174,84 @@ for flusso in FLUSSI_DA_ANALIZZARE:
         print(f"Le colonne per '{flusso}' non sono presenti nel dataset. Salto l'analisi.")
         continue
 
-    # isolo solo i miei elementi che hanno flussi ed errori positivi validi
+    # isolo solo i miei elementi che hanno flussi, errori e coordinate validi
     mask_flusso_valido = (
             (df_fit_clean[col_media].notna()) & (df_fit_clean[col_media] > 0) &
-            (df_fit_clean[col_std].notna()) & (df_fit_clean[col_std] > 0)
+            (df_fit_clean[col_std].notna()) & (df_fit_clean[col_std] > 0) &
+            (df_fit_clean['xcentroid'].notna()) & (df_fit_clean['ycentroid'].notna())
     )
     df_fit_curr = df_fit_clean[mask_flusso_valido].copy()
 
-    # filtro i miei validi anche per i saturi
+    if len(df_fit_curr) == 0:
+        continue
+
+    # calcolo la mia distanza dal bordo più vicino per ogni stella
+    df_fit_curr['dist_bordo'] = np.minimum.reduce([
+        df_fit_curr['xcentroid'],
+        df_fit_curr['ycentroid'],
+        W_IMG - df_fit_curr['xcentroid'],
+        H_IMG - df_fit_curr['ycentroid']
+    ])
+
+    # divido le mie distanze in 5 aree uguali e ordino gli intervalli
+    df_fit_curr['area_bordo'] = pd.cut(df_fit_curr['dist_bordo'], bins=5)
+    aree = sorted(df_fit_curr['area_bordo'].unique())
+
+    # filtro i miei validi anche per i saturi (solo per plottarli)
     if not df_sature.empty and col_media in df_sature.columns:
         mask_sature_valido = (df_sature[col_media].notna()) & (df_sature[col_media] > 0)
         df_sature_plot = df_sature[mask_sature_valido].copy()
     else:
         df_sature_plot = pd.DataFrame()
 
-    # filtro i miei validi anche per i non matchati
+    # filtro i miei validi anche per i non matchati (solo per plottarli)
     if not df_no_match.empty and col_media in df_no_match.columns:
         mask_no_match_valido = (df_no_match[col_media].notna()) & (df_no_match[col_media] > 0)
         df_no_match_plot = df_no_match[mask_no_match_valido].copy()
     else:
         df_no_match_plot = pd.DataFrame()
 
-    if len(df_fit_curr) > 2:
-        # estraggo i miei dati originali X, Y e relativi errori
-        X = df_fit_curr['Mag'].values
-        Y_flux = df_fit_curr[col_media].values
-        sigma_flux = df_fit_curr[col_std].values
+    # preparo la mia palette di colori per distinguere le 5 aree
+    colori_aree = ['blue', 'green', 'purple', 'teal', 'magenta']
 
-        # definisco il mio numero di bin
+    # inizio la costruzione della mia figura
+    plt.figure(figsize=(14, 10))
+
+    # itero sulle mie 5 aree per calcolare e disegnare i fit separatamente
+    for idx_area, area in enumerate(aree):
+        df_area = df_fit_curr[df_fit_curr['area_bordo'] == area]
+
+        if len(df_area) < 3:
+            print(f"Area {idx_area + 1} saltata: non ho abbastanza punti validi.")
+            continue
+
+        nome_area = f"{area.left:.0f}-{area.right:.0f} px"
+        colore = colori_aree[idx_area % len(colori_aree)]
+
+        # estraggo i miei dati originali X, Y e relativi errori per l'area corrente
+        X = df_area['Mag'].values
+        Y_flux = df_area[col_media].values
+        sigma_flux = df_area[col_std].values
+
+        # definisco il mio numero di bin specifico per quest'area
         n_bins = max(5, int(np.sqrt(len(X))))
 
-        # ordino i miei array per magnitudine prima di spezzarli in chunk
+        # ordino i miei array per magnitudine prima di spezzarli
         sort_idx = np.argsort(X)
         X_sorted = X[sort_idx]
         Y_sorted = Y_flux[sort_idx]
         Err_sorted = sigma_flux[sort_idx]
 
-        # divido i miei array in blocchi con lo stesso numero di stelle
         X_chunks = np.array_split(X_sorted, n_bins)
         Y_chunks = np.array_split(Y_sorted, n_bins)
         Err_chunks = np.array_split(Err_sorted, n_bins)
 
-        X_binned = []
-        Y_binned = []
-        Err_binned = []
+        X_binned, Y_binned, Err_binned = [], [], []
 
         # assemblo i miei bin
         for x_bin, y_bin, err_bin in zip(X_chunks, Y_chunks, Err_chunks):
             if len(x_bin) > 0:
-                # calcolo la mia media semplice del flusso
                 y_media_semplice = np.mean(y_bin)
-
-                # calcolo la mia deviazione standard della media
                 if len(y_bin) > 1:
                     y_errore_semplice = np.std(y_bin, ddof=1) / np.sqrt(len(y_bin))
                     if y_errore_semplice == 0:
@@ -231,9 +259,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
                 else:
                     y_errore_semplice = err_bin[0]
 
-                x_mean = np.mean(x_bin)
-
-                X_binned.append(x_mean)
+                X_binned.append(np.mean(x_bin))
                 Y_binned.append(y_media_semplice)
                 Err_binned.append(y_errore_semplice)
 
@@ -241,108 +267,93 @@ for flusso in FLUSSI_DA_ANALIZZARE:
         Y_binned = np.array(Y_binned)
         Err_binned = np.array(Err_binned)
 
-        # applico il mio logaritmo ai dati binnati
+        # applico il mio logaritmo ai dati binnati e propago l'errore
         Y_log_binned = np.log10(Y_binned)
-
-        # propago il mio errore sui dati binnati
         sigma_log_binned = (1 / np.log(10)) * (Err_binned / Y_binned)
 
         try:
-            # eseguo il mio fit lineare usando i miei dati binnati
+            # eseguo il mio fit lineare sull'area specifica
             popt, pcov = curve_fit(modello_lineare, X_binned, Y_log_binned, sigma=sigma_log_binned, absolute_sigma=True)
             m_fit, q_fit = popt
             err_m, err_q = np.sqrt(np.diag(pcov))
 
-            # calcolo il mio Chi Quadro ridotto
             y_model_binned = modello_lineare(X_binned, m_fit, q_fit)
-            chi2 = np.sum(((Y_log_binned - y_model_binned) / sigma_log_binned) ** 2)
             dof = len(X_binned) - 2
-            chi2_red = chi2 / dof if dof > 0 else 0
+            chi2_red = (np.sum(((Y_log_binned - y_model_binned) / sigma_log_binned) ** 2) / dof) if dof > 0 else 0
 
-            print(f"Risultati Fit Binnato per {flusso}:")
-            print(f"m = {m_fit:.4f} ± {err_m:.4f}")
-            print(f"q = {q_fit:.4f} ± {err_q:.4f}")
-            print(f"Chi2 Ridotto = {chi2_red:.2f}")
+            print(
+                f"Area {idx_area + 1} [{nome_area}]: m = {m_fit:.4f}±{err_m:.4f}, q = {q_fit:.4f}±{err_q:.4f}, Chi2_R = {chi2_red:.2f}")
 
-            # =============================================================================
-            # 4. PLOTTING (STILE AGGIORNATO)
-            # =============================================================================
-            plt.figure(figsize=(12, 9))
+            # ---------------------------------------------------------
+            # DISEGNO GLI ELEMENTI PER L'AREA CORRENTE
+            # ---------------------------------------------------------
 
-            # disegno i miei punti originali (Blu con barre errore chiare)
+            # disegno i miei punti originali (trasparenti)
             plt.errorbar(
                 X, Y_flux, yerr=sigma_flux,
-                fmt='o', markersize=1, color='blue', ecolor='lightblue', alpha=0.7,
-                label=f'Catalogati Validi ({len(X)})'
+                fmt='o', markersize=2, color=colore, alpha=0.3,
+                label=f'Punti {nome_area} (N={len(X)})'
             )
 
-            # disegno i miei bin usati per il fit (Verdi)
+            # disegno i miei bin usati per il fit (scuri con contorno)
             plt.errorbar(
                 X_binned, Y_binned, yerr=Err_binned,
-                fmt='o', markersize=5, color='green', ecolor='green', capsize=3, alpha=0.9,
-                label=f'Bin Fit ({len(X_binned)})', zorder=15
+                fmt='o', markersize=6, color=colore, capsize=3, alpha=0.9, markeredgecolor='black'
             )
 
-            # disegno le mie stelle sature (X Rosse)
-            if not df_sature_plot.empty:
-                plt.scatter(
-                    df_sature_plot['Mag'],
-                    df_sature_plot[col_media],
-                    s=40, c='red', marker='x', linewidth=1,
-                    label=f'Sature (Escluse) ({len(df_sature_plot)})', zorder=20
-                )
-
-            # disegno i miei oggetti senza corrispondenza (Rombi Arancioni)
-            if not df_no_match_plot.empty:
-                mag_fittizia = np.min(X) - 1.5 if len(X) > 0 else 4.0
-                plt.scatter(
-                    np.full(len(df_no_match_plot), mag_fittizia),
-                    df_no_match_plot[col_media],
-                    s=40, c='orange', marker='D', edgecolors='black', alpha=0.8,
-                    label=f'NON Catalogati ({len(df_no_match_plot)})', zorder=10
-                )
-
-                plt.annotate("Mag Fittizia",
-                             xy=(mag_fittizia, np.mean(df_no_match_plot[col_media])),
-                             xytext=(mag_fittizia, np.max(df_no_match_plot[col_media]) * 1.5),
-                             arrowprops=dict(facecolor='black', arrowstyle='->'),
-                             ha='center')
-
-                x_min_plot = min(np.min(X), mag_fittizia - 0.5)
-            else:
-                x_min_plot = np.min(X) - 0.5
-
-            # disegno la mia retta di fit
+            # disegno la mia retta di fit per questa area
+            x_min_plot = np.min(X) - 0.5
             x_max_plot = np.max(X) + 0.5
             x_plot = np.linspace(x_min_plot, x_max_plot, 100)
             y_plot_log = modello_lineare(x_plot, m_fit, q_fit)
 
-            label_fit = (rf'Fit Binnato: log(F)=({m_fit:.2f}$\pm${err_m:.2f})M + ({q_fit:.2f}$\pm${err_q:.2f})'
-                         rf'$\chi^2_R$={chi2_red:.2f}')
-
-            plt.plot(x_plot, 10 ** y_plot_log, 'g--', linewidth=2, label=label_fit, zorder=16)
-
-            # configuro il mio grafico
-            plt.yscale('log')
-            plt.gca().invert_xaxis()
-            plt.xlabel("Magnitudine Catalogo (Mag)", fontsize=12)
-            plt.ylabel(f"Media {flusso} (ADU)", fontsize=12)
-            plt.title(f"Calibrazione Fotometrica Globale (Run {RUN_TO_ANALYZE}) - {flusso} \n metodo bin uguali", fontsize=14)
-            plt.grid(True, which="both", ls="-", alpha=0.2)
-            plt.legend(fontsize=11, loc='best')
-            plt.tight_layout()
-
-            # salvo il mio grafico
-            plt.savefig(f"fit_bin_pesi_uguali.png")
-
-            # mostro il mio grafico a schermo
-            plt.show()
-
-            plt.close()
+            label_fit = rf'Fit {nome_area}: log(F)=({m_fit:.2f})M + ({q_fit:.2f})'
+            plt.plot(x_plot, 10 ** y_plot_log, linestyle='--', linewidth=2, color=colore, label=label_fit, zorder=16)
 
         except Exception as e:
-            print(f"Errore durante l'esecuzione del fit per {flusso}: {e}")
-    else:
-        print(f"Non ho abbastanza punti validi per eseguire il fit di {flusso}.")
+            print(f"Errore durante l'esecuzione del fit per l'area {nome_area}: {e}")
+
+    # =============================================================================
+    # DISEGNO GLI ELEMENTI GLOBALI (Saturi e Non Catalogati)
+    # =============================================================================
+
+    if not df_sature_plot.empty:
+        plt.scatter(
+            df_sature_plot['Mag'], df_sature_plot[col_media],
+            s=40, c='red', marker='x', linewidth=1,
+            label=f'Sature Globale ({len(df_sature_plot)})', zorder=20
+        )
+
+    if not df_no_match_plot.empty:
+        mag_fittizia = np.min(df_fit_curr['Mag']) - 1.5 if len(df_fit_curr) > 0 else 4.0
+        plt.scatter(
+            np.full(len(df_no_match_plot), mag_fittizia), df_no_match_plot[col_media],
+            s=40, c='orange', marker='D', edgecolors='black', alpha=0.8,
+            label=f'NON Catalogati Globale ({len(df_no_match_plot)})', zorder=10
+        )
+
+        plt.annotate("Mag Fittizia",
+                     xy=(mag_fittizia, np.mean(df_no_match_plot[col_media])),
+                     xytext=(mag_fittizia, np.max(df_no_match_plot[col_media]) * 1.5),
+                     arrowprops=dict(facecolor='black', arrowstyle='->'), ha='center')
+
+    # configuro il mio grafico finale
+    plt.yscale('log')
+    plt.gca().invert_xaxis()
+    plt.xlabel("Magnitudine Catalogo (Mag)", fontsize=12)
+    plt.ylabel(f"Media {flusso} (ADU)", fontsize=12)
+    plt.title(f"Calibrazione Fotometrica per Aree di Distanza dal Bordo (Run {RUN_TO_ANALYZE})", fontsize=14)
+    plt.grid(True, which="both", ls="-", alpha=0.2)
+
+    # sposto la legenda fuori dal grafico se ci sono troppe voci
+    plt.legend(fontsize=9, loc='center left', bbox_to_anchor=(1, 0.5))
+    plt.tight_layout()
+
+    # salvo il mio grafico
+    plt.savefig(f"fit_bin_aree_bordo.png")
+
+    # mostro il mio grafico a schermo
+    plt.show()
+    plt.close()
 
 print("\n--- ELABORAZIONE COMPLETATA CON SUCCESSO ---")

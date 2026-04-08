@@ -1,1 +1,0 @@
-find "$(pwd)" -name "*.fits" -type f | sort -n > lista_immagini_run_1.txt

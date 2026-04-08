@@ -70,4 +70,4 @@ for indice, comando in enumerate(comandi_validi, start=1):
         print(f"\nATTENZIONE: L'esecuzione si è interrotta con un errore (codice {risultato.returncode}).")
         print("Ignoro l'errore e passo al lancio successivo.")
         
-print("\nElaborazione della coda terminata.")
+print("\nFINE TOTALE")

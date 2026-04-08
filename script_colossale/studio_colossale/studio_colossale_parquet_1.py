@@ -1,5 +1,23 @@
 import pandas as pd
 from pathlib import Path
+import pyarrow.parquet as pq
+import json
+import numpy as np
+import warnings
+import re
+from astropy.wcs import WCS, FITSFixedWarning
+from astropy.coordinates import SkyCoord, Angle
+import astropy.units as u
+from astropy.io import fits
+from astropy.io.fits.verify import VerifyWarning
+from tqdm import tqdm
+
+from prove_2.analisi.andamento_anomalie.path_non_correlate_tutte import cerca_cartella_nel_progetto
+
+# ignoro i warning per mantenere l'output pulito
+warnings.filterwarnings('ignore', category=FITSFixedWarning)
+warnings.filterwarnings('ignore', category=VerifyWarning)
+
 
 
 def trova_cartella_base(nome_target="Lorenzo"):
@@ -55,9 +73,11 @@ if lista_df:
     print(f" -> Oggetti Persistenti (apparsi in >= {soglia_alta_frequenza} run): {len(oggetti_persistenti)}")
     print(f" -> Eventi Singoli (apparsi in esattamente 1 run): {len(eventi_singoli)}")
 
+    cartella_output = cerca_cartella_nel_progetto(BASE_DIR , "studio_colossale")
+
     # salvo i risultati in file csv per poterli ispezionare
-    output_persistenti = cartella_tabelle / "analisi_oggetti_persistenti.csv"
-    output_eventi = cartella_tabelle / "analisi_eventi_singoli.csv"
+    output_persistenti = cartella_output / "analisi_oggetti_persistenti.csv"
+    output_eventi = cartella_output / "analisi_eventi_singoli.csv"
 
     oggetti_persistenti.to_csv(output_persistenti, index=False)
     eventi_singoli.to_csv(output_eventi, index=False)
@@ -67,39 +87,13 @@ if lista_df:
 else:
     print("Non ho trovato nessun file *_oggetti_non_catalogati.parquet nella directory specificata.")
 
-import pandas as pd
-from pathlib import Path
-import pyarrow.parquet as pq
-import json
-import numpy as np
-import warnings
-import re
-from astropy.wcs import WCS, FITSFixedWarning
-from astropy.coordinates import SkyCoord, Angle
-import astropy.units as u
-from astropy.io import fits
-from tqdm import tqdm
-
-warnings.filterwarnings('ignore', category=FITSFixedWarning)
-
-
-def trova_cartella_base(nome_target="Lorenzo"):
-    path_corrente = Path(__file__).resolve()
-    for parent in [path_corrente] + list(path_corrente.parents):
-        if parent.name == nome_target:
-            return parent
-    return path_corrente.parent
-
 
 def pulisci_e_converti_header(header_raw):
-    """
-    Converto i valori dell'header nei tipi corretti (float/int) per Astropy
-    ed elimino eventuali commenti o spazi residui.
-    """
+    # converto i valori dell'header nei tipi corretti ed elimino eventuali commenti
     header_pulito = {}
     for k, v in header_raw.items():
         if isinstance(v, str):
-            # Estraggo solo la parte prima dell'eventuale commento '/' o '='
+            # estraggo solo la parte prima dell'eventuale commento '/' o '='
             val_str = re.split(r'[=/]', v)[0].strip().replace("'", "")
             try:
                 if '.' in val_str or 'E' in val_str.upper():
@@ -107,14 +101,11 @@ def pulisci_e_converti_header(header_raw):
                 else:
                     header_pulito[k] = int(val_str)
             except ValueError:
-                header_pulito[k] = val_str  # Rimane stringa se non è numerico (es. CTYPE)
+                header_pulito[k] = val_str  # rimane stringa se non è numerico
         else:
             header_pulito[k] = v
     return header_pulito
 
-
-BASE_DIR = trova_cartella_base("Lorenzo")
-cartella_tabelle = BASE_DIR / "tabelle_COLOSSALE_alleggerito"
 
 file_riassunti = list(cartella_tabelle.rglob("*_oggetti_non_catalogati.parquet"))
 file_immagini = list(cartella_tabelle.rglob("*_immagine_*.parquet"))
@@ -142,22 +133,32 @@ print(f"Analisi dinamica su {len(file_immagini)} immagini...")
 
 for f_img in tqdm(file_immagini):
     schema = pq.read_schema(f_img)
-    meta_raw = schema.metadata.get(b"astro_metadata")
 
-    if not meta_raw: continue
+    # verifico la presenza della mia nuova chiave dei metadati
+    if not schema.metadata or b'metadati_intestazione_csv' not in schema.metadata:
+        continue
 
-    metadata = json.loads(meta_raw.decode("utf-8"))
-    header_raw = metadata.get("FITS_HEADER", {})
+    # estraggo il mio testo puro dei metadati
+    metadati_testo = schema.metadata[b'metadati_intestazione_csv'].decode('utf-8')
+
+    # costruisco il mio dizionario estrapolando i dati riga per riga
+    header_raw = {}
+    for riga in metadati_testo.split('\n'):
+        if riga.startswith('#'):
+            riga_pulita = riga.strip()[1:].strip()
+            if riga_pulita and ': ' in riga_pulita:
+                chiave, valore = riga_pulita.split(': ', 1)
+                header_raw[chiave] = valore
 
     if not header_raw: continue
 
-    # Applico la pulizia per evitare il TypeError sulle stringhe
+    # applico la pulizia per evitare il TypeError sulle stringhe
     header_final = pulisci_e_converti_header(header_raw)
 
     try:
         w = WCS(fits.Header(header_final))
 
-        # Uso i valori già convertiti per RA e DEC
+        # uso i valori già convertiti per RA e DEC
         ra_c = header_final.get("RA")
         dec_c = header_final.get("DEC")
 
@@ -169,7 +170,7 @@ for f_img in tqdm(file_immagini):
             distanze = centro_img.separation(coords_oggetti)
             copertura_totale += (distanze <= raggio_fov).astype(int)
 
-            # Controllo presenza effettiva nel file
+            # controllo la mia presenza effettiva nel file
             df_img = pd.read_parquet(f_img)
             presenza_reale += stat_obj['label'].isin(df_img['label'].values).astype(int)
 
@@ -185,7 +186,7 @@ with np.errstate(divide='ignore', invalid='ignore'):
 stat_obj.loc[stat_obj['Costanza_Percentuale'] > 100, 'Costanza_Percentuale'] = 100.0
 stat_obj['Costanza_Percentuale'] = stat_obj['Costanza_Percentuale'].fillna(0.0)
 
-#output_path = cartella_tabelle / "analisi_costanza_dinamica_ULTRA_PRECISA.csv"
-stat_obj.sort_values('Costanza_Percentuale', ascending=False).to_csv("analisi_costanza_dinamica_ULTRA_PRECISA.csv", index=False)
+stat_obj.sort_values('Costanza_Percentuale', ascending=False).to_csv("analisi_costanza_dinamica_ULTRA_PRECISA.csv",
+                                                                     index=False)
 
-print(f"\nAnalisi completata. File: {"analisi_costanza_dinamica_ULTRA_PRECISA.csv"}")
+print(f"\nAnalisi completata. File: analisi_costanza_dinamica_ULTRA_PRECISA.csv")

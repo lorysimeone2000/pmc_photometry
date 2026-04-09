@@ -146,7 +146,7 @@ if __name__ == "__main__":
     tentativi_massimi = 10
     risultato_hip = None
 
-    for tentativo in range(tentativi_massimi):
+'''    for tentativo in range(tentativi_massimi):
         try:
             risultato_hip = vizier_hip.query_constraints(Vmag="<16")
             if risultato_hip and len(risultato_hip) > 0:
@@ -155,7 +155,7 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Tentativo {tentativo + 1}/{tentativi_massimi} fallito: {e}")
             if tentativo < tentativi_massimi - 1:
-                time.sleep(10)  # Attendo 10 secondi prima di riprovare
+                time.sleep(10)  # Attendo 10 secondi prima di riprovare'''
 
     # VERIFICO CHE IL RISULTATO NON SIA VUOTO
     if not risultato_hip or len(risultato_hip) == 0:

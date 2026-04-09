@@ -31,7 +31,7 @@ with open(file_comandi, "w") as file_out:
         str_fine = fine_intervallo.strftime("%Y%m%d")
         
         # assemblo la mia riga di comando e la scrivo nel file
-        riga_comando = f"python3 creazione_tabelle_principale_colossale_alleggerito_nuovo.py n {str_inizio} {str_fine}\n"
+        riga_comando = f"python3 creazione_tabelle_principale_colossale_alleggerito_nuovo.py s {str_inizio} {str_fine}\n"
         file_out.write(riga_comando)
         
         # aggiorno la mia data corrente al giorno immediatamente successivo alla fine dell'intervallo appena scritto

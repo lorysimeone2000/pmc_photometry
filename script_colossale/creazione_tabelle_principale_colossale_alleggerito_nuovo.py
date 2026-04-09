@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib
 import argparse
 import json
+import pyarrow as pa
 import pyarrow.parquet as pq
 import shutil
 from astropy.config import paths
@@ -135,25 +136,6 @@ if __name__ == "__main__":
         # ricreo la cartella vuota per evitare errori nelle esecuzioni future
         os.makedirs(astroquery_cache_dir)
 
-    vizier_hip = Vizier(
-        catalog="I/239/hip_main",
-        columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag'],
-        row_limit=-1
-    )
-    risultato_hip = vizier_hip.query_constraints(Vmag="<16")
-    tbl_catalogo_hipparco = risultato_hip[0]
-
-    if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
-        tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
-        tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
-    print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
-
-    exclusion_radii_deg = np.full(len(tbl_catalogo_hipparco), 2.5 / 3600.0)
-
-    coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],
-                                      dec=tbl_catalogo_hipparco['_DEJ2000'],
-                                      unit=u.deg)
-
     file_curva_pmc = cerca_file_nel_progetto(BASE_DIR, "curva_PMC.csv")
     if file_curva_pmc is not None:
         df_curva = pd.read_csv(file_curva_pmc)
@@ -186,11 +168,19 @@ if __name__ == "__main__":
 
     CATALOGO_PERSISTENTE_FILE = BASE_DIR / "catalogo_stelle_persistente_COLOSSALE.parquet"
 
-    # inizializzo il mio tracker GLOBALE (persistente tra le run)
-    global_tracker_coords, global_tracker_labels = carica_catalogo_persistente(CATALOGO_PERSISTENTE_FILE)
-
-    # se il catalogo è vuoto, lo inizializzo a None
-    if global_tracker_coords is None:
+    # leggo il mio catalogo persistente tramite pyarrow nativo per ottimizzare i tempi di caricamento
+    if CATALOGO_PERSISTENTE_FILE.exists():
+        tabella_cat = pq.read_table(CATALOGO_PERSISTENTE_FILE)
+        if tabella_cat.num_rows > 0:
+            global_tracker_coords = SkyCoord(
+                ra=tabella_cat['RA_centroid'].to_numpy() * u.deg,
+                dec=tabella_cat['DEC_centroid'].to_numpy() * u.deg
+            )
+            global_tracker_labels = tabella_cat['label'].to_pylist()
+        else:
+            global_tracker_coords = None
+            global_tracker_labels = []
+    else:
         global_tracker_coords = None
         global_tracker_labels = []
 
@@ -291,6 +281,49 @@ if __name__ == "__main__":
     if not files_per_giorno:
         print("\nERRORE: Nessun file FITS valido trovato (oppure tutti i file sono già stati processati).")
         sys.exit()
+
+    vizier_hip = Vizier(
+        catalog="I/239/hip_main",
+        columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag'],
+        row_limit=-1
+    )
+
+    # Aggiungo un timeout più lungo e tentativi multipli
+    tentativi_massimi = 10
+    risultato_hip = None
+
+    for tentativo in range(tentativi_massimi):
+        try:
+            risultato_hip = vizier_hip.query_constraints(Vmag="<16")
+            if risultato_hip and len(risultato_hip) > 0:
+                tbl_catalogo_hipparco = risultato_hip[0]
+                if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
+                    tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
+                    tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
+                print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
+
+                break
+        except Exception as e:
+            print(f"Tentativo {tentativo + 1}/{tentativi_massimi} fallito: {e}")
+            if tentativo < tentativi_massimi - 1:
+                time.sleep(10)  # Attendo 10 secondi prima di riprovare
+
+    # VERIFICO CHE IL RISULTATO NON SIA VUOTO
+    if not risultato_hip or len(risultato_hip) == 0 or risultato_hip is None:
+        print("Prendo la tabella Hipparco dalla memoria interna")
+        percorso_hip = cerca_file_nel_progetto(BASE_DIR, 'hip_main.fits')
+        # scarico l'intera tabella astropy dal file fits specificando l'estensione 1 e la chiamo tbl_catalogo_hipparco
+        tbl_catalogo_hipparco = Table.read(percorso_hip, format='fits', hdu=1)
+        if '_RA_icrs' in tbl_catalogo_hipparco.colnames:
+            tbl_catalogo_hipparco.rename_column('_RA_icrs', '_RAJ2000')
+            tbl_catalogo_hipparco.rename_column('_DE_icrs', '_DEJ2000')
+        print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
+
+    exclusion_radii_deg = np.full(len(tbl_catalogo_hipparco), 2.5 / 3600.0)
+
+    coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],
+                                      dec=tbl_catalogo_hipparco['_DEJ2000'],
+                                      unit=u.deg)
 
     soglia_tempo = 300.0
     soglia_spazio = 0.1
@@ -624,8 +657,8 @@ if __name__ == "__main__":
                 final_labels[:] = global_tracker_labels
                 nuove_aggiunte_in_run = True
 
-                # salvo immediatamente il mio catalogo
-                salva_catalogo_persistente(global_tracker_coords, global_tracker_labels, CATALOGO_PERSISTENTE_FILE)
+                # salvo immediatamente il mio catalogo utilizzando nativamente pyarrow
+                salva_catalogo_veloce(global_tracker_coords, global_tracker_labels, CATALOGO_PERSISTENTE_FILE)
             else:
                 # eseguo il match con il mio tracker globale (persistente)
                 idx_match, d2d, _ = coords_obj_all.match_to_catalog_sky(global_tracker_coords)
@@ -672,7 +705,7 @@ if __name__ == "__main__":
                     nuove_aggiunte_in_run = True
 
                     # salvo il mio catalogo aggiornato (ogni volta che ci sono nuove stelle)
-                    salva_catalogo_persistente(global_tracker_coords, global_tracker_labels, CATALOGO_PERSISTENTE_FILE)
+                    salva_catalogo_veloce(global_tracker_coords, global_tracker_labels, CATALOGO_PERSISTENTE_FILE)
 
             df_final['label'] = final_labels
 
@@ -694,7 +727,7 @@ if __name__ == "__main__":
                                       file_out, str(percorso_file), parametri_caricati)
 
         if nuove_aggiunte_in_run:
-            salva_catalogo_persistente(global_tracker_coords, global_tracker_labels, CATALOGO_PERSISTENTE_FILE)
+            salva_catalogo_veloce(global_tracker_coords, global_tracker_labels, CATALOGO_PERSISTENTE_FILE)
             nuove_aggiunte_in_run = False
 
         # =============================================================================
@@ -925,7 +958,7 @@ if __name__ == "__main__":
                 global_tracker_coords = None
 
             # sovrascrivo il mio file persistente per rendere effettiva l'eliminazione
-            salva_catalogo_persistente(global_tracker_coords, global_tracker_labels, CATALOGO_PERSISTENTE_FILE)
+            salva_catalogo_veloce(global_tracker_coords, global_tracker_labels, CATALOGO_PERSISTENTE_FILE)
             print(f"Rimosse {len(labels_da_rimuovere)} etichette fasulle dal catalogo persistente.")
 
         print("Calcolo statistiche di run_name e riorganizzazione colonne...")

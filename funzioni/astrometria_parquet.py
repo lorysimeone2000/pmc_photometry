@@ -13,6 +13,10 @@ import astropy.units as u
 from astropy.table import Table, vstack
 from pathlib import Path
 
+# importo le librerie pyarrow per gestire il salvataggio in formato parquet
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 # importo la funzione di ricerca interna al mio nuovo modulo
 from .utilita import cerca_file_nel_progetto
 

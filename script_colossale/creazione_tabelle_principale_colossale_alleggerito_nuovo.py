@@ -158,7 +158,7 @@ if __name__ == "__main__":
                 time.sleep(10)  # Attendo 10 secondi prima di riprovare'''
 
     # VERIFICO CHE IL RISULTATO NON SIA VUOTO
-    if not risultato_hip or len(risultato_hip) == 0:
+    if not risultato_hip or len(risultato_hip) == 0 or risultato_hip is None:
         print("Prendo la tabella Hipparco dalla memoria interna")
         percorso_hip = cerca_file_nel_progetto(BASE_DIR, 'hip_main.fits')
         # scarico l'intera tabella astropy dal file fits specificando l'estensione 1 e la chiamo tbl_catalogo_hipparco

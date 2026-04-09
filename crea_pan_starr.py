@@ -30,7 +30,7 @@ oggetti_totali = 0
 print("=== INIZIO DOWNLOAD VIA VIZIER API NATIVA (ASTROQUERY) ===")
 print(f"Totale riquadri da analizzare: {totale_riquadri}")
 
-# Avvio il cronometro globale
+# avvio il mio cronometro globale
 tempo_inizio = time.time()
 
 for dec in dec_centers:
@@ -75,11 +75,17 @@ for dec in dec_centers:
         minuti = int(tempo_stimato_sec // 60)
         secondi = int(tempo_stimato_sec % 60)
 
-        # 44 byte a riga convertiti in Megabyte
-        peso_stimato_mb = (oggetti_totali * 44) / (1024 * 1024)
+        # calcolo la stima del peso totale finale del file basandomi sulla media attuale
+        media_oggetti_per_riquadro = oggetti_totali / riquadri_elaborati
+        oggetti_totali_stimati = media_oggetti_per_riquadro * totale_riquadri
+        peso_totale_stimato_mb = (oggetti_totali_stimati * 44) / (1024 * 1024)
+
+        # calcolo anche il peso dei dati che ho già scaricato fisicamente
+        peso_attuale_mb = (oggetti_totali * 44) / (1024 * 1024)
 
         print(f"    -> ETA (Tempo rimasto) : ~{minuti} min {secondi} sec")
-        print(f"    -> Accumulo totale     : {oggetti_totali} stelle (Peso stimato file: {peso_stimato_mb:.2f} MB)")
+        print(f"    -> Accumulo attuale    : {oggetti_totali} stelle ({peso_attuale_mb:.2f} MB scaricati)")
+        print(f"    -> Stima PESO FINALE   : ~{peso_totale_stimato_mb:.2f} MB")
 
         time.sleep(1)
 
@@ -94,10 +100,10 @@ if lista_tabelle:
     oggetti_unici = len(tabella_pulita)
     peso_finale_mb = (oggetti_unici * 44) / (1024 * 1024)
     print(f"Stelle uniche finali: {oggetti_unici} (Rimosse {oggetti_totali - oggetti_unici} sovrapposizioni)")
-    print(f"Peso esatto dei dati: {peso_finale_mb:.2f} MB")
+    print(f"Peso esatto del file FITS: {peso_finale_mb:.2f} MB")
 
     nome_file = "panstarrs_dr2_mag15_finale.fits"
-    print(f"Salvataggio del file '{nome_file}'...")
+    print(f"Salvataggio del file '{nome_file}' in corso...")
     tabella_pulita.write(nome_file, format='fits', overwrite=True)
     print("FATTO! Dati scaricati e salvati in modo sicuro.")
 else:

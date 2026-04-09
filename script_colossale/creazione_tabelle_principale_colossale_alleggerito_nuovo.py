@@ -151,6 +151,11 @@ if __name__ == "__main__":
             risultato_hip = vizier_hip.query_constraints(Vmag="<16")
             if risultato_hip and len(risultato_hip) > 0:
                 tbl_catalogo_hipparco = risultato_hip[0]
+                if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
+                    tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
+                    tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
+                print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
+
                 break
         except Exception as e:
             print(f"Tentativo {tentativo + 1}/{tentativi_massimi} fallito: {e}")
@@ -162,12 +167,13 @@ if __name__ == "__main__":
         print("Prendo la tabella Hipparco dalla memoria interna")
         percorso_hip = cerca_file_nel_progetto(BASE_DIR, 'hip_main.fits')
         # scarico l'intera tabella astropy dal file fits specificando l'estensione 1 e la chiamo tbl_catalogo_hipparco
-        tbl_catalogo_hipparco = Table.read(percorso_hip, format='fits', hdu=0)
+        tbl_catalogo_hipparco = Table.read(percorso_hip, format='fits', hdu=1)
+        if '_RA_icrs' in tbl_catalogo_hipparco.colnames:
+            tbl_catalogo_hipparco.rename_column('_RA_icrs', '_RAJ2000')
+            tbl_catalogo_hipparco.rename_column('_DE_icrs', '_DEJ2000')
+        print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
 
-    if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
-        tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
-        tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
-    print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
+
 
     exclusion_radii_deg = np.full(len(tbl_catalogo_hipparco), 2.5 / 3600.0)
 

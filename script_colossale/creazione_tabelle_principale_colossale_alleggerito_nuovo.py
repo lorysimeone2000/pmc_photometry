@@ -98,7 +98,6 @@ vizier = Vizier(
     row_limit=-1,
 )
 
-
 # =============================================================================
 # BLOCCO DI ESECUZIONE (MAIN)
 # =============================================================================
@@ -107,7 +106,8 @@ if __name__ == "__main__":
 
     # aggiungo il mio analizzatore di argomenti da terminale
     parser = argparse.ArgumentParser(description="Elaborazione dati ASTRI1 con filtro temporale")
-    parser.add_argument("reprocess", type=str, choices=['s', 'n'], help="Effettuare il riprocessamento totale? ('s' per sì, 'n' per no)")
+    parser.add_argument("reprocess", type=str, choices=['s', 'n'],
+                        help="Effettuare il riprocessamento totale? ('s' per sì, 'n' per no)")
     parser.add_argument("start_date", type=str, help="La mia data di inizio nel formato YYYYMMDD")
     parser.add_argument("end_date", type=str, help="La mia data di fine nel formato YYYYMMDD")
     args = parser.parse_args()
@@ -229,7 +229,8 @@ if __name__ == "__main__":
     cartella_dati = Path(cartella_dati)
 
     # filtro le mie sottocartelle verificando che il loro nome rientri nell'intervallo temporale che ho specificato
-    sottocartelle = [d for d in cartella_dati.iterdir() if (d.is_dir() or d.is_symlink()) and args.start_date <= d.name <= args.end_date]
+    sottocartelle = [d for d in cartella_dati.iterdir() if
+                     (d.is_dir() or d.is_symlink()) and args.start_date <= d.name <= args.end_date]
 
     # inizializzo un dizionario per raggruppare preventivamente i file per cartella/giorno
     files_per_giorno = {}
@@ -523,7 +524,8 @@ if __name__ == "__main__":
                     tbl_hipparco_run_clean_precedente = tbl_hipparco_run_clean.copy()
                 else:
                     # recupero la mia tabella precedentemente calcolata
-                    print("Distanza dal centro della run_name precedente <= 1.1 gradi: riutilizzo il catalogo Vizier e Hipparcos.")
+                    print(
+                        "Distanza dal centro della run_name precedente <= 1.1 gradi: riutilizzo il catalogo Vizier e Hipparcos.")
                     tbl_vizier_cut = tbl_vizier_cut_precedente.copy()
                     tbl_hipparco_run_clean = tbl_hipparco_run_clean_precedente.copy()
 
@@ -894,13 +896,37 @@ if __name__ == "__main__":
                 if len(vicini) == 0:
                     run_df.at[idx_row, 'da_eliminare_temporale'] = True
 
+        # inizializzo il mio set per le etichette da rimuovere definitivamente
+        labels_da_rimuovere = set()
+        labels_da_rimuovere.update(run_df.loc[run_df['da_eliminare_temporale'] == True, 'label'].unique())
+
         run_df = run_df[~run_df['da_eliminare_temporale']].drop(columns=['da_eliminare_temporale'])
 
         conteggi_aggiornati = run_df['run_unique_id'].value_counts()
         id_da_scartare = conteggi_aggiornati[conteggi_aggiornati < 2].index
 
         mask_da_scartare_rip = (run_df['Corrispondenza'] == False) & (run_df['run_unique_id'].isin(id_da_scartare))
+
+        # aggiungo al mio set le etichette scartate per mancanza di ripetizioni
+        labels_da_rimuovere.update(run_df.loc[mask_da_scartare_rip, 'label'].unique())
+
         run_df = run_df[~mask_da_scartare_rip]
+
+        # purifico il mio catalogo persistente globale in memoria e su disco
+        if labels_da_rimuovere:
+            # individuo gli indici validi che non devo rimuovere
+            indici_da_tenere = [i for i, lbl in enumerate(global_tracker_labels) if lbl not in labels_da_rimuovere]
+
+            # aggiorno le mie variabili in memoria mantenendo solo gli oggetti validi
+            global_tracker_labels = [global_tracker_labels[i] for i in indici_da_tenere]
+            if len(indici_da_tenere) > 0:
+                global_tracker_coords = global_tracker_coords[indici_da_tenere]
+            else:
+                global_tracker_coords = None
+
+            # sovrascrivo il mio file persistente per rendere effettiva l'eliminazione
+            salva_catalogo_persistente(global_tracker_coords, global_tracker_labels, CATALOGO_PERSISTENTE_FILE)
+            print(f"Rimosse {len(labels_da_rimuovere)} etichette fasulle dal catalogo persistente.")
 
         print("Calcolo statistiche di run_name e riorganizzazione colonne...")
         # tengo traccia solo del flusso base richiesto e rimuovo tutti gli step di decorrelazione locale
@@ -1215,8 +1241,6 @@ if __name__ == "__main__":
 
         # itero sulla mia lista per eseguire le operazioni su ogni singolo file
         for file_csv in tqdm(tutti_i_file_csv):
-
-
             converti_csv_in_parquet(file_csv)
 
         # Libero la mia memoria per questa run_name

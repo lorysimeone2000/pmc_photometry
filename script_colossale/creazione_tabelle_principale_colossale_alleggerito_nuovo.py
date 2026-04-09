@@ -146,7 +146,7 @@ if __name__ == "__main__":
     tentativi_massimi = 10
     risultato_hip = None
 
-'''    for tentativo in range(tentativi_massimi):
+    '''for tentativo in range(tentativi_massimi):
         try:
             risultato_hip = vizier_hip.query_constraints(Vmag="<16")
             if risultato_hip and len(risultato_hip) > 0:

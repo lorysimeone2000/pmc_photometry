@@ -145,7 +145,7 @@ for run in tqdm(RUNS, desc="Avanzamento Globale Runs"):
     if cartella_csv_path is None:
         print(f"AVVISO: Cartella '{nome_cartella_csv}' non trovata. Salto la run {run}.")
         continue
-    lista_percorsi_csv = sorted([str(f) for f in cartella_csv_path.glob('*.csv')])
+    lista_percorsi_csv = sorted([str(f) for f in cartella_csv_path.glob('run_*_stelle_trovate_e_catalogate_immagine_*.csv')])
 
     # Cerco dinamicamente la cartella sorgenti_catalogate_run_X
     nome_cartella_csv_cat = f"tabelle/sorgenti_catalogate_run/sorgenti_catalogate_run_{run}"

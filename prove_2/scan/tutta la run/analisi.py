@@ -63,13 +63,13 @@ df_totale = pd.concat(lista_dataframes_interpolati)
 df_medio = df_totale.groupby('FWHM').mean().reset_index()
 
 # --- 4. TRACCIO IL GRAFICO ---
-# Impostazione dimensioni testo ottimali per un foglio A4
-plt.rc('font', size=12)
-plt.rc('axes', titlesize=13)
-plt.rc('axes', labelsize=12)
-plt.rc('xtick', labelsize=10)
-plt.rc('ytick', labelsize=10)
-plt.rc('legend', fontsize=10)
+# Impostazione dimensioni testo per subfigure in LaTeX (Titolo e Etichette raddoppiati)
+plt.rc('font', size=24)          # Dimensione base raddoppiata
+plt.rc('axes', titlesize=15)     # Titolo raddoppiato (da 13 a 26)
+plt.rc('axes', labelsize=24)     # Etichette assi X e Y raddoppiate (da 12 a 24)
+plt.rc('xtick', labelsize=10)    # Numeri asse X invariati
+plt.rc('ytick', labelsize=10)    # Numeri asse Y invariati
+plt.rc('legend', fontsize=10)    # Testo della legenda invariato
 
 # Dimensioni compatte adatte alla larghezza di un foglio A4
 plt.figure(figsize=(8, 6))
@@ -99,8 +99,9 @@ plt.xlabel('FWHM')
 plt.ylabel('Mean Number per Image')
 plt.yscale('symlog', linthresh=5.0)
 
-# Inserisco il titolo formale in inglese britannico
-plt.title(f'Parameter Scan: Unmatched Segmentations vs Lost Stars < Mag 10\n(Averaged over Runs {RUNS_TO_PROCESS})', pad=12)
+# Inserisco il titolo formale in inglese britannico.
+# Ho aumentato il 'pad' a 20 per dare respiro al titolo diventato molto grande.
+plt.title(f'Parameter Scan: Unmatched Segmentations vs Lost Stars < Mag 10\n(Averaged over Runs {RUNS_TO_PROCESS})', pad=20)
 
 ax = plt.gca()
 

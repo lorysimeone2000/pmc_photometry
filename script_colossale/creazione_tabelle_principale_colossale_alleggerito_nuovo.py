@@ -161,7 +161,7 @@ if __name__ == "__main__":
         print("Prendo la tabella Hipparco dalla memoria interna")
         percorso_hip = cerca_file_nel_progetto(BASE_DIR, 'hip_main.fits')
         # scarico l'intera tabella astropy dal file fits specificando l'estensione 1 e la chiamo tbl_catalogo_hipparco
-        tbl_catalogo_hipparco = Table.read(percorso_hip, format='fits', hdu=1)
+        tbl_catalogo_hipparco = Table.read(percorso_hip, format='fits', hdu=0)
 
     exclusion_radii_deg = np.full(len(tbl_catalogo_hipparco), 2.5 / 3600.0)
 

@@ -124,8 +124,6 @@ if __name__ == "__main__":
         exit()
     parametri_caricati = leggi_file_parametri(file_parametri)
 
-    print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
-
     # individuo il percorso esatto della cache di astroquery nel mio sistema
     astroquery_cache_dir = os.path.join(paths.get_cache_dir(), 'astroquery')
 
@@ -282,6 +280,8 @@ if __name__ == "__main__":
         print("\nERRORE: Nessun file FITS valido trovato (oppure tutti i file sono già stati processati).")
         sys.exit()
 
+    print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
+
     vizier_hip = Vizier(
         catalog="I/239/hip_main",
         columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag'],
@@ -300,7 +300,7 @@ if __name__ == "__main__":
                 if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
                     tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
                     tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
-                print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
+                print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos da Vizier.")
 
                 break
         except Exception as e:
@@ -308,11 +308,10 @@ if __name__ == "__main__":
             if tentativo < tentativi_massimi - 1:
                 time.sleep(10)  # Attendo 10 secondi prima di riprovare
 
-    # VERIFICO CHE IL RISULTATO NON SIA VUOTO
     if not risultato_hip or len(risultato_hip) == 0 or risultato_hip is None:
         print("Prendo la tabella Hipparco dalla memoria interna")
         percorso_hip = cerca_file_nel_progetto(BASE_DIR, 'hip_main.fits')
-        # scarico l'intera tabella astropy dal file fits specificando l'estensione 1 e la chiamo tbl_catalogo_hipparco
+        # scarico l'intera tabella astropy dal file fits
         tbl_catalogo_hipparco = Table.read(percorso_hip, format='fits', hdu=1)
         if '_RA_icrs' in tbl_catalogo_hipparco.colnames:
             tbl_catalogo_hipparco.rename_column('_RA_icrs', '_RAJ2000')

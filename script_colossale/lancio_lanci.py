@@ -3,8 +3,10 @@ import subprocess
 import os
 
 # definisco la mia data di inizio e la mia data di fine
-data_inizio = datetime.date(2024, 1, 1)
+data_inizio = datetime.date(2024, 9, 24)
 data_fine = datetime.date(2026, 4, 15)
+
+riscrittura = "s" # s per riprocessare dati già processati, n per non riprocessare dati già processati
 
 # imposto la durata del mio intervallo aggiungendo 4 giorni alla data di inizio per avere blocchi di 5 giorni esatti
 giorni_da_aggiungere = 5
@@ -31,7 +33,7 @@ with open(file_comandi, "w") as file_out:
         str_fine = fine_intervallo.strftime("%Y%m%d")
         
         # assemblo la mia riga di comando e la scrivo nel file
-        riga_comando = f"python3 creazione_tabelle_principale_colossale_alleggerito_nuovo.py s {str_inizio} {str_fine}\n"
+        riga_comando = f"python3 creazione_tabelle_principale_colossale_alleggerito_nuovo.py {riscrittura} {str_inizio} {str_fine}\n"
         file_out.write(riga_comando)
         
         # aggiorno la mia data corrente al giorno immediatamente successivo alla fine dell'intervallo appena scritto

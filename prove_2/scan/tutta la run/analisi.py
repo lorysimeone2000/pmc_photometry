@@ -63,7 +63,16 @@ df_totale = pd.concat(lista_dataframes_interpolati)
 df_medio = df_totale.groupby('FWHM').mean().reset_index()
 
 # --- 4. TRACCIO IL GRAFICO ---
-plt.figure(figsize=(12, 8))
+# Impostazione dimensioni testo ottimali per un foglio A4
+plt.rc('font', size=12)
+plt.rc('axes', titlesize=13)
+plt.rc('axes', labelsize=12)
+plt.rc('xtick', labelsize=10)
+plt.rc('ytick', labelsize=10)
+plt.rc('legend', fontsize=10)
+
+# Dimensioni compatte adatte alla larghezza di un foglio A4
+plt.figure(figsize=(8, 6))
 x_axis = df_medio['FWHM']
 
 for size_val in SIZES_TO_TEST:
@@ -75,28 +84,27 @@ for size_val in SIZES_TO_TEST:
         # traccio la linea continua per la media delle stelle perse
         plt.plot(x_axis, df_medio[col_perse_mean],
                  color=colors_perse[size_val], linestyle='-', linewidth=2,
-                 label=f'Mean Lost Stars (Mag < 10) - Size {size_val}')
+                 label=f'Lost Stars (Mag < 10) - Size {size_val}')
 
         # traccio la linea tratteggiata per la media dei falsi positivi
         plt.plot(x_axis, df_medio[col_fp_mean],
                  color=colors_fp[size_val], linestyle='--', linewidth=2,
-                 label=f'Mean False Positives (FP) - Size {size_val}')
+                 label=f'Unmatched Segmentations - Size {size_val}')
     else:
         print(f"Warning: Columns for Size {size_val} not found in the merged dataset.")
 
 # --- 5. FORMATTO IL GRAFICO ---
 plt.grid(True, which="both", linestyle='--', alpha=0.6)
 plt.xlabel('FWHM')
-plt.ylabel('MEAN Number per Image - Run Average')
+plt.ylabel('Mean Number per Image')
 plt.yscale('symlog', linthresh=5.0)
 
-# inserisco il titolo che riflette l'unificazione
-plt.title(f'UNIFIED Parameter Scan (Average over Runs {RUNS_TO_PROCESS})\nFalse Positives vs Lost Stars < Mag 10')
+# Inserisco il titolo formale in inglese britannico
+plt.title(f'Parameter Scan: Unmatched Segmentations vs Lost Stars < Mag 10\n(Averaged over Runs {RUNS_TO_PROCESS})', pad=12)
 
 ax = plt.gca()
 
 # definisco e applico le tacchette (ticks) personalizzate per l'asse y
-# conto di 1 in 1 per i valori da 0 a 5, poi avanzo di 5 in 5 da 10 a 80
 y_ticks = list(range(0, 6)) + list(range(10, 85, 5))
 ax.set_yticks(y_ticks)
 

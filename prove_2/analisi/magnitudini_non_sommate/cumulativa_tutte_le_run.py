@@ -269,31 +269,43 @@ bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 # Avvio il cronometro per il plot
 t0_plot = time.perf_counter()
 # 4. Creo il grafico a linee
-plt.figure(figsize=(14, 8))
+
+# Impostazione dimensioni testo ottimali per un foglio A4
+plt.rc('font', size=12)          # Dimensione testo base
+plt.rc('axes', titlesize=13)     # Titolo del grafico
+plt.rc('axes', labelsize=12)     # Etichette assi X e Y
+plt.rc('xtick', labelsize=10)    # Numeri asse X
+plt.rc('ytick', labelsize=10)    # Numeri asse Y
+plt.rc('legend', fontsize=10)    # Testo della legenda
+
+# Dimensioni del grafico (7x5 pollici è ideale per riempire la larghezza in un A4)
+plt.figure(figsize=(7, 5))
 
 # Disegno le Sorgenti Catalogate (Media)
 plt.plot(bin_centers, media_counts_cat,
          color='purple',
          linestyle='-',
          linewidth=1.5,
-         label='Sorgenti Catalogate (Media)')
+         label='Catalogued Sources (Mean)')
 
 # Disegno le Sorgenti Correlate (Media)
 plt.plot(bin_centers, media_counts_corr,
          color='red',
          linestyle='-',
          linewidth=1.5,
-         label='Sorgenti Correlate (Media)')
+         label='Correlated Sources (Mean)')
 
 # Imposto gli Assi
 plt.yscale('log')
-plt.xlabel('Magnitudine (Centri dei Bin)')
-plt.ylabel('Frequenza Media (Conteggi / Immagine)')
-titolo = f'Distribuzione Media delle Magnitudini: Catalogate vs Correlate (Run {RUNS}) versione sintetica nuova\n'
-titolo += f'Media di {totale_correlate / immagini_totali:.1f} match su {totale_catalogate / immagini_totali:.1f} catalogate per immagine'
+plt.xlabel('Magnitude (Bin Centres)')
+plt.ylabel('Mean Frequency (Counts / Image)')
+
+# Costruisco il titolo
+titolo = f'Mean Magnitude Distribution: Catalogued vs Correlated (Runs {RUNS})\n'
+titolo += f'Mean of {totale_correlate / immagini_totali:.1f} matches out of {totale_catalogate / immagini_totali:.1f} catalogued per image'
 if fwhm_usato and size_usato:
     titolo += f' (FWHM = {fwhm_usato}, size = {size_usato})'
-plt.title(titolo)
+plt.title(titolo, pad=12) # Aggiungo padding per staccare il titolo dal riquadro
 
 # Inverto l'asse X (magnitudini astronomiche)
 plt.gca().invert_xaxis()
@@ -305,5 +317,9 @@ plt.legend()
 plt.tight_layout()
 print(f"Tempo preparazione grafico Matplotlib: {time.perf_counter() - t0_plot:.3f} s")
 print("--- Fine monitoraggio, avvio render grafico ---")
+
+# Suggerimento: salvalo come PDF vettoriale per la tesi in LaTeX
+plt.savefig('magnitude_distribution.pdf', format='pdf', bbox_inches='tight')
+plt.savefig('magnitude_distribution.png', format='png', bbox_inches='tight')
 
 plt.show()

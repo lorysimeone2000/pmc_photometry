@@ -140,14 +140,38 @@ if __name__ == "__main__":
         columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag'],
         row_limit=-1
     )
-    risultato_hip = vizier_hip.query_constraints(Vmag="<16")
-    tbl_catalogo_hipparco = risultato_hip[0]
 
-    if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
-        tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
-        tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
-    print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
+    # Aggiungo un timeout più lungo e tentativi multipli
+    tentativi_massimi = 10
+    risultato_hip = None
 
+    for tentativo in range(tentativi_massimi):
+        try:
+            risultato_hip = vizier_hip.query_constraints(Vmag="<16")
+            if risultato_hip and len(risultato_hip) > 0:
+                break
+        except Exception as e:
+            print(f"Tentativo {tentativo + 1}/{tentativi_massimi} fallito: {e}")
+            if tentativo < tentativi_massimi - 1:
+                time.sleep(10)  # Attendo 10 secondi prima di riprovare
+
+    # VERIFICO CHE IL RISULTATO NON SIA VUOTO
+    if not risultato_hip or len(risultato_hip) == 0:
+        print("ERRORE: Impossibile scaricare il catalogo Hipparcos da VizieR.")
+        print("Provo a usare un catalogo alternativo o continuo con solo Vizier...")
+        # Creo una tabella vuota come fallback
+        from astropy.table import Table
+
+        tbl_catalogo_hipparco = Table(names=['HIP', '_RAJ2000', '_DEJ2000', 'Vmag'],
+                                      dtype=[int, float, float, float])
+        print("Catalogo Hipparcos vuoto. Continuo solo con Vizier.")
+    else:
+        tbl_catalogo_hipparco = risultato_hip[0]
+
+        if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
+            tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
+            tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
+        print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
     exclusion_radii_deg = np.full(len(tbl_catalogo_hipparco), 2.5 / 3600.0)
 
     coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],

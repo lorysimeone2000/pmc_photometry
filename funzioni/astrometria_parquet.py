@@ -148,6 +148,15 @@ def carica_catalogo_persistente(percorso_catalogo="catalogo_persistente.parquet"
             print(f"Errore nel caricamento del catalogo persistente: {e}")
     return None, []
 
+# definisco la mia funzione locale per scrivere il catalogo in parquet aggirando pandas e usando direttamente pyarrow
+def salva_catalogo_veloce(coords, labels, filepath):
+    if coords is not None and len(labels) > 0:
+        tbl_out = pa.Table.from_arrays(
+            [pa.array(coords.ra.deg), pa.array(coords.dec.deg), pa.array(labels)],
+            names=['RA_centroid', 'DEC_centroid', 'label']
+        )
+        pq.write_table(tbl_out, filepath)
+
 
 def salva_catalogo_persistente(coords, labels, percorso_catalogo="catalogo_persistente.parquet"):
     """Salva il catalogo persistente su file (sovrascrive)"""

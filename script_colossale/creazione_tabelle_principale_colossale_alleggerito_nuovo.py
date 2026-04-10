@@ -426,68 +426,21 @@ if __name__ == "__main__":
                         # ricreo la cartella vuota per evitare errori nelle esecuzioni future
                         os.makedirs(astroquery_cache_dir)
 
-
-                    # definisco la mia funzione interna che racchiude il tuo blocco intatto, permettendomi di usare il timeout
-                    def prima_esecuzione_query_vizier():
-                        tentativi_massimi = 5
-                        attesa = 10
-                        for tentativo in range(tentativi_massimi):
-                            try:
-                                riquadro_esterno_vizier = vizier.query_region(
-                                    coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
-                                    radius=raggio_ricerca
-                                )
-                                tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
-                                return tbl_riquadro_esterno_vizier
-                            except Exception as e:
-                                if tentativo < tentativi_massimi - 1:
-                                    time.sleep(attesa)
-                                else:
-                                    raise
-                        return None
-
-
-                    query_completata = False
-                    # avvio il mio blocco imponendogli il limite di 30 secondi richiesto
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                        futuro = executor.submit(prima_esecuzione_query_vizier)
+                    tentativi_massimi = 5
+                    attesa = 10
+                    for tentativo in range(tentativi_massimi):
                         try:
-                            tbl_riquadro_esterno_vizier = futuro.result(timeout=30)
-                            query_completata = True
-                        except concurrent.futures.TimeoutError:
-                            print("Query troppo lunga, chiamo il file di riserva")
-                            query_completata = False
-
-                    # in caso di fallimento o timeout eseguo la mia routine di riserva
-                    if not query_completata:
-                        file_riserva = cerca_file_nel_progetto(BASE_DIR, "panstarrs_dr2_mag15_finale.fits")
-                        if file_riserva is not None:
-                            # carico il mio file FITS locale e applico esattamente la stessa restrizione spaziale
-                            tabella_riserva = Table.read(file_riserva, format='fits')
-                            coords_riserva = SkyCoord(ra=tabella_riserva['RAJ2000'], dec=tabella_riserva['DEJ2000'], unit=(u.deg, u.deg), frame='icrs')
-                            maschera_raggio = centro.separation(coords_riserva) <= raggio_ricerca
-                            tbl_riquadro_esterno_vizier = tabella_riserva[maschera_raggio]
-                        else:
-                            print("file di riserva non trovato, faccio ripartire la query")
-                            # attendo il mio tempo di clemenza richiesto
-                            time.sleep(15)
-
-                            # rieseguo il mio secondo tentativo mantenendo invariata la logica di base
-                            tentativi_massimi = 5
-                            attesa = 10
-                            for tentativo in range(tentativi_massimi):
-                                try:
-                                    riquadro_esterno_vizier = vizier.query_region(
-                                        coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
-                                        radius=raggio_ricerca
-                                    )
-                                    tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
-                                    break
-                                except Exception as e:
-                                    if tentativo < tentativi_massimi - 1:
-                                        time.sleep(attesa)
-                                    else:
-                                        raise
+                            riquadro_esterno_vizier = vizier.query_region(
+                                coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
+                                radius=raggio_ricerca
+                            )
+                            tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+                            break
+                        except Exception as e:
+                            if tentativo < tentativi_massimi - 1:
+                                time.sleep(attesa)
+                            else:
+                                raise
 
                     # calcolo la magnitudine sintetica FLIR
                     bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']

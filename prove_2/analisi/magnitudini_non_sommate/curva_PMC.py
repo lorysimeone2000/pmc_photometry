@@ -9,11 +9,11 @@ fig, ax = plt.subplots(figsize=(10, 5))
 
 # Definizione degli intervalli delle bande con i relativi colori
 intervalli = {
-    'm_g [384;589]': (382, 591),    # banda g: da 400 a 550 nm
-    'm_r [589;726]': (591, 727),    # banda r: da 555 a 705 nm
-    'm_i [726;852]': (727, 852),    # banda i: da 688 a 850 nm
-    'm_z [852;946]': (852, 946),    # banda z: da 812 a 920 nm
-    'm_y [946;1026]': (946, 1026)    # banda y: da 922 a 1005 nm
+    'm_g [384;589]': (414, 551),    # banda g: da 400 a 550 nm
+    'm_r [589;726]': (551, 689),    # banda r: da 555 a 705 nm
+    'm_i [726;852]': (690, 819),    # banda i: da 688 a 850 nm
+    'm_z [852;946]': (819, 922),    # banda z: da 812 a 920 nm
+    'm_y [946;1026]': (922, 1001)    # banda y: da 922 a 1005 nm
 }
 
 # Mappa dei colori per le bande (sfumature tenui e riconoscibili)

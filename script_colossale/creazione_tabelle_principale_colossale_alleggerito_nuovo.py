@@ -1149,6 +1149,61 @@ if __name__ == "__main__":
                 plt.grid(True, alpha=0.3)
                 plt.close()
 
+                # --- SECONDA SOTTOFASE: Estrazione Magnitudini ed Errori ---
+
+                # estraggo la deviazione standard dei flussi per ogni bin e ne definisco i confini spaziali
+                std_binned_list = []
+                bin_edges = [-np.inf]
+                for i, y_bin in enumerate(Y_chunks):
+                    if len(y_bin) > 1:
+                        std_binned_list.append(np.std(y_bin, ddof=1))
+                    else:
+                        std_binned_list.append(0.0)
+
+                    if i < len(X_chunks) - 1:
+                        limite = (np.max(X_chunks[i]) + np.min(X_chunks[i + 1])) / 2.0
+                        bin_edges.append(limite)
+
+                bin_edges.append(np.inf)
+                std_binned_array = np.array(std_binned_list)
+
+                # applico la formula inversa sull'intero dataset per ricavare la magnitudine estratta
+                flussi_globali = pd.to_numeric(run_df[flusso_target], errors='coerce')
+                maschera_flussi_validi = flussi_globali > 0
+
+                mag_estratta_array = np.full(len(run_df), np.nan)
+                mag_estratta_array[maschera_flussi_validi] = (np.log10(
+                    flussi_globali[maschera_flussi_validi]) - q_fit) / m_fit
+                run_df['Mag_estratta'] = mag_estratta_array
+
+                # trovo in quale bin ricade ogni stella e associo la corretta deviazione standard locale
+                indici_bin = np.digitize(mag_estratta_array, bin_edges) - 1
+                indici_bin = np.clip(indici_bin, 0, len(std_binned_array) - 1)
+                err_flusso_stelle = std_binned_array[indici_bin]
+
+                # eseguo la propagazione degli errori derivante dal fit lineare binnato
+                err_mag_estratta_array = np.full(len(run_df), np.nan)
+                ln10 = np.log(10)
+
+                # calcolo le derivate parziali per i tre termini della propagazione
+                deriv_F = 1.0 / (flussi_globali[maschera_flussi_validi] * m_fit * ln10)
+                deriv_q = -1.0 / m_fit
+                deriv_m = - mag_estratta_array[maschera_flussi_validi] / m_fit
+
+                # estraggo la covarianza tra la pendenza e l'intercetta per completare il calcolo della varianza
+                covarianza_mq = pcov[0, 1]
+
+                varianza_mag = (deriv_F * err_flusso_stelle[maschera_flussi_validi]) ** 2 + \
+                               (deriv_q * err_q) ** 2 + \
+                               (deriv_m * err_m) ** 2 + \
+                               2 * deriv_q * deriv_m * covarianza_mq
+
+                err_mag_estratta_array[maschera_flussi_validi] = np.sqrt(np.maximum(varianza_mag, 0))
+
+                # inserisco la nuova colonna propagata immediatamente dopo la magnitudine estratta
+                indice_col_mag = run_df.columns.get_loc('Mag_estratta')
+                run_df.insert(indice_col_mag + 1, 'err_Mag_estratta', err_mag_estratta_array)
+
             except Exception as e:
                 print(f"Errore nel curve_fit: {e}")
         else:

@@ -97,7 +97,7 @@ print(f"Standard deviation: {np.std(kron_flux_mean):.2f}")
 
 # individuo la cartella di output
 cartella_output = None
-for cartella in BASE_DIR.rglob("studio_colossale"):
+for cartella in BASE_DIR.rglob("presenza_consecutiva"):
     cartella_output = cartella
     break
 

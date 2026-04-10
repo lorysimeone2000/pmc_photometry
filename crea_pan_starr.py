@@ -5,23 +5,23 @@ from astropy.table import vstack, unique
 import time
 import sys
 import warnings
+import pandas as pd
 
 warnings.simplefilter('ignore')
 
-# Configurazione di VizieR (nessun limite di righe)
+# configuro VizieR rimuovendo i limiti di magnitudine
 v = Vizier(
     columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag', 'imag', 'zmag', 'ymag'],
-    column_filters={'gmag': '<=15', 'rmag': '<=15', 'imag': '<=15', 'zmag': '<=15', 'ymag': '<=15'},
     row_limit=-1,
     timeout=600
 )
 
-# Griglia: riquadri da 10x10 gradi
+# definisco la mia griglia: riquadri da 10x10 gradi
 step = 10
 ra_centers = list(range(5, 360, step))
 dec_centers = list(range(-25, 90, step))
 
-# Contatori
+# inizializzo i miei contatori
 totale_riquadri = len(ra_centers) * len(dec_centers)
 riquadri_elaborati = 0
 lista_tabelle = []
@@ -66,7 +66,7 @@ for dec in dec_centers:
                 else:
                     print("    -> Passo al riquadro successivo.")
 
-        # === CALCOLO STIME IN TEMPO REALE ===
+        # calcolo le mie stime temporali in tempo reale
         tempo_trascorso = time.time() - tempo_inizio
         tempo_medio = tempo_trascorso / riquadri_elaborati
         riquadri_rimanenti = totale_riquadri - riquadri_elaborati
@@ -75,12 +75,12 @@ for dec in dec_centers:
         minuti = int(tempo_stimato_sec // 60)
         secondi = int(tempo_stimato_sec % 60)
 
-        # calcolo la stima del peso totale finale del file basandomi sulla media attuale
+        # calcolo la stima del peso totale finale del mio file
         media_oggetti_per_riquadro = oggetti_totali / riquadri_elaborati
         oggetti_totali_stimati = media_oggetti_per_riquadro * totale_riquadri
         peso_totale_stimato_mb = (oggetti_totali_stimati * 44) / (1024 * 1024)
 
-        # calcolo anche il peso dei dati che ho già scaricato fisicamente
+        # calcolo il peso attuale dei dati che ho in memoria
         peso_attuale_mb = (oggetti_totali * 44) / (1024 * 1024)
 
         print(f"    -> ETA (Tempo rimasto) : ~{minuti} min {secondi} sec")
@@ -100,11 +100,17 @@ if lista_tabelle:
     oggetti_unici = len(tabella_pulita)
     peso_finale_mb = (oggetti_unici * 44) / (1024 * 1024)
     print(f"Stelle uniche finali: {oggetti_unici} (Rimosse {oggetti_totali - oggetti_unici} sovrapposizioni)")
-    print(f"Peso esatto del file FITS: {peso_finale_mb:.2f} MB")
+    print(f"Peso equivalente dei dati: {peso_finale_mb:.2f} MB")
 
-    nome_file = "panstarrs_dr2_mag15_finale.fits"
+    nome_file = "panstarrs_dr2_completo.parquet"
     print(f"Salvataggio del file '{nome_file}' in corso...")
-    tabella_pulita.write(nome_file, format='fits', overwrite=True)
-    print("FATTO! Dati scaricati e salvati in modo sicuro.")
+
+    # converto la mia tabella astropy in un dataframe pandas
+    df_pulito = tabella_pulita.to_pandas()
+
+    # salvo il mio dataframe nel formato parquet
+    df_pulito.to_parquet(nome_file, index=False)
+
+    print("FATTO! Dati scaricati e salvati in modo sicuro nel formato Parquet.")
 else:
     print("Nessun dato recuperato.")

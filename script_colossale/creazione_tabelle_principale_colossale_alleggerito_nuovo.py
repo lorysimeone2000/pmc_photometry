@@ -5,6 +5,7 @@ import json
 import pyarrow as pa
 import pyarrow.parquet as pq
 import shutil
+import concurrent.futures
 from astropy.config import paths
 
 matplotlib.use('Agg')
@@ -123,8 +124,6 @@ if __name__ == "__main__":
         print("File dei parametri non trovato")
         exit()
     parametri_caricati = leggi_file_parametri(file_parametri)
-
-    print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
 
     # individuo il percorso esatto della cache di astroquery nel mio sistema
     astroquery_cache_dir = os.path.join(paths.get_cache_dir(), 'astroquery')
@@ -282,6 +281,8 @@ if __name__ == "__main__":
         print("\nERRORE: Nessun file FITS valido trovato (oppure tutti i file sono già stati processati).")
         sys.exit()
 
+    print("Scaricamento catalogo globale Hipparcos da VizieR in corso...")
+
     vizier_hip = Vizier(
         catalog="I/239/hip_main",
         columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag'],
@@ -300,7 +301,7 @@ if __name__ == "__main__":
                 if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
                     tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
                     tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
-                print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
+                print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos da Vizier.")
 
                 break
         except Exception as e:
@@ -308,11 +309,10 @@ if __name__ == "__main__":
             if tentativo < tentativi_massimi - 1:
                 time.sleep(10)  # Attendo 10 secondi prima di riprovare
 
-    # VERIFICO CHE IL RISULTATO NON SIA VUOTO
     if not risultato_hip or len(risultato_hip) == 0 or risultato_hip is None:
         print("Prendo la tabella Hipparco dalla memoria interna")
         percorso_hip = cerca_file_nel_progetto(BASE_DIR, 'hip_main.fits')
-        # scarico l'intera tabella astropy dal file fits specificando l'estensione 1 e la chiamo tbl_catalogo_hipparco
+        # scarico l'intera tabella astropy dal file fits
         tbl_catalogo_hipparco = Table.read(percorso_hip, format='fits', hdu=1)
         if '_RA_icrs' in tbl_catalogo_hipparco.colnames:
             tbl_catalogo_hipparco.rename_column('_RA_icrs', '_RAJ2000')
@@ -1148,6 +1148,61 @@ if __name__ == "__main__":
                 plt.legend()
                 plt.grid(True, alpha=0.3)
                 plt.close()
+
+                # --- SECONDA SOTTOFASE: Estrazione Magnitudini ed Errori ---
+
+                # estraggo la deviazione standard dei flussi per ogni bin e ne definisco i confini spaziali
+                std_binned_list = []
+                bin_edges = [-np.inf]
+                for i, y_bin in enumerate(Y_chunks):
+                    if len(y_bin) > 1:
+                        std_binned_list.append(np.std(y_bin, ddof=1))
+                    else:
+                        std_binned_list.append(0.0)
+
+                    if i < len(X_chunks) - 1:
+                        limite = (np.max(X_chunks[i]) + np.min(X_chunks[i + 1])) / 2.0
+                        bin_edges.append(limite)
+
+                bin_edges.append(np.inf)
+                std_binned_array = np.array(std_binned_list)
+
+                # applico la formula inversa sull'intero dataset per ricavare la magnitudine estratta
+                flussi_globali = pd.to_numeric(run_df[flusso_target], errors='coerce')
+                maschera_flussi_validi = flussi_globali > 0
+
+                mag_estratta_array = np.full(len(run_df), np.nan)
+                mag_estratta_array[maschera_flussi_validi] = (np.log10(
+                    flussi_globali[maschera_flussi_validi]) - q_fit) / m_fit
+                run_df['Mag_estratta'] = mag_estratta_array
+
+                # trovo in quale bin ricade ogni stella e associo la corretta deviazione standard locale
+                indici_bin = np.digitize(mag_estratta_array, bin_edges) - 1
+                indici_bin = np.clip(indici_bin, 0, len(std_binned_array) - 1)
+                err_flusso_stelle = std_binned_array[indici_bin]
+
+                # eseguo la propagazione degli errori derivante dal fit lineare binnato
+                err_mag_estratta_array = np.full(len(run_df), np.nan)
+                ln10 = np.log(10)
+
+                # calcolo le derivate parziali per i tre termini della propagazione
+                deriv_F = 1.0 / (flussi_globali[maschera_flussi_validi] * m_fit * ln10)
+                deriv_q = -1.0 / m_fit
+                deriv_m = - mag_estratta_array[maschera_flussi_validi] / m_fit
+
+                # estraggo la covarianza tra la pendenza e l'intercetta per completare il calcolo della varianza
+                covarianza_mq = pcov[0, 1]
+
+                varianza_mag = (deriv_F * err_flusso_stelle[maschera_flussi_validi]) ** 2 + \
+                               (deriv_q * err_q) ** 2 + \
+                               (deriv_m * err_m) ** 2 + \
+                               2 * deriv_q * deriv_m * covarianza_mq
+
+                err_mag_estratta_array[maschera_flussi_validi] = np.sqrt(np.maximum(varianza_mag, 0))
+
+                # inserisco la nuova colonna propagata immediatamente dopo la magnitudine estratta
+                indice_col_mag = run_df.columns.get_loc('Mag_estratta')
+                run_df.insert(indice_col_mag + 1, 'err_Mag_estratta', err_mag_estratta_array)
 
             except Exception as e:
                 print(f"Errore nel curve_fit: {e}")

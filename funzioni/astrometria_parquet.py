@@ -18,7 +18,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 # importo la funzione di ricerca interna al mio nuovo modulo
-from .utilita import cerca_file_nel_progetto
+from .utilita_parquet import cerca_file_nel_progetto
 
 
 def ottieni_coordinate_telescopio(nome_telescopio, base_dir):

@@ -190,6 +190,7 @@ if __name__ == "__main__":
 
     cartella_dati = cerca_cartella_intero_pc("ASTRI1")
     cartella_tabelle = BASE_DIR / "tabelle_COLOSSALE_alleggerito" / "tabelle_unite"
+    cartella_dati_1 = cartella_dati
 
     if cartella_dati is None or not Path(cartella_dati).exists():
         print(f"ERRORE: Cartella dati ASTRI1 non trovata.")
@@ -779,7 +780,7 @@ if __name__ == "__main__":
                 nome_fits = os.path.basename(str(percorso_raw))
 
             nome_fits = str(nome_fits).strip()
-            file_trovato = cerca_file_nel_progetto(BASE_DIR, nome_fits)
+            file_trovato = cerca_file_nel_progetto(cartella_dati_1, nome_fits)
 
             if file_trovato is None:
                 continue

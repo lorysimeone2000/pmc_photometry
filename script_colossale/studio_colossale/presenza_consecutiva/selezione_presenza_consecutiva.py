@@ -174,15 +174,7 @@ df_non_cat_aggiornato = df_non_cat[maschera_consecutivi].copy()
 # rimuovo le colonne di calcolo temporanee per ripulire il dataframe in output
 df_non_cat_aggiornato = df_non_cat_aggiornato.drop(columns=['min_indice', 'max_indice', 'consecutivi_attesi'])
 
-# cerco la cartella di output "studio_colossale"
-cartella_output = cerca_cartella_nel_progetto(BASE_DIR, "studio_colossale")
-
-# se la cartella non esiste, la creo partendo dalla directory del mio script principale
-if cartella_output is None:
-    cartella_output = BASE_DIR / "pmc_photometry" / "script_colossale" / "studio_colossale"
-    cartella_output.mkdir(parents=True, exist_ok=True)
-
-percorso_salvataggio = Path(cartella_output) / "oggetti_con_presenza_consecutiva.csv"
+percorso_salvataggio = BASE_DIR / "pmc_photometry" / "script_colossale" / "studio_colossale/presenza_consecutiva" / "oggetti_con_presenza_consecutiva.csv"
 
 # salvo il dataframe aggiornato
 df_non_cat_aggiornato.to_csv(percorso_salvataggio, index=False)

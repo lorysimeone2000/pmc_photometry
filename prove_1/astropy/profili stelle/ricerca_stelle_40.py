@@ -20,7 +20,7 @@ from photutils.segmentation import SourceFinder
 from photutils.detection import find_peaks
 from photutils.aperture import CircularAperture
 
-image_file = "/home/lorysimeone/tesi_magistrale/prove/20250106_231255.fits"  # prima immagine
+image_file = "/home/lorysimeone/tesi_magistrale/prove_1/20250106_231255.fits"  # prima immagine
 #image_file = "/home/lorysimeone/tesi_magistrale/prove/20250107_060735.fits" # seconda immagine
 #image_file = "/home/lorysimeone/tesi_magistrale/prove/20250120_run1/20250120_212815.fits" # run 1
 
@@ -41,7 +41,7 @@ plt.colorbar()
 plt.show()'''
 
 parametri = {}
-with open('/home/lorysimeone/tesi_magistrale/prove/parametri_image_segmentation.txt', 'r') as file:
+with open('/home/lorysimeone/tesi_magistrale/prove_1/parametri_image_segmentation.txt', 'r') as file:
     # Salta la prima riga (intestazione)
     next(file)
 

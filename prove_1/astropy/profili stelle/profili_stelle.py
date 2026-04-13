@@ -13,7 +13,7 @@ from astropy.utils.data import download_file
 from astropy.stats import sigma_clipped_stats
 
 #image_file  = "/home/lorysimeone/tesi_magistrale/prove/20250107_060735.fits"
-image_file = "/home/lorysimeone/tesi_magistrale/prove/20250106_231255.fits"
+image_file = "/home/lorysimeone/tesi_magistrale/prove_1/20250106_231255.fits"
 
 hdu_list = fits.open(image_file)
 hdu_list.info() # dà le informazioni del file
@@ -61,11 +61,11 @@ plt.show()'''
 # CALCOLO FWHM
 
 def calculate_fwhm(profile):
-    # Trova il valore massimo e minimo
+    # Trovo il valore massimo e minimo
     max_val = np.max(profile)
     min_val = np.min(profile)
 
-    # Calcola metà altezza
+    # Calcolo metà altezza
     half_max = min_val + (max_val - min_val) / 2
 
     # Trovo dove il profilo attraversa la metà altezza
@@ -73,7 +73,7 @@ def calculate_fwhm(profile):
     # creo un array booleano che indica per ogni posizione se il valore del profilo è sopra (True) o sotto (False) la metà altezza
     above_half_max = profile > half_max
 
-    # crovo gli indici dove il profilo supera la metà altezza
+    # trovo gli indici dove il profilo supera la metà altezza
     indices = np.where(above_half_max)[0] # prendo il primo indice True, ovvero sopra la metà altezza
 
     # Controllo se non ci sono punti sopra la metà altezza. Se vero, restituisce valori di default per evitare errori
@@ -116,12 +116,12 @@ def calculate_fwhm(profile):
     return fwhm, half_max, max_val, min_val, left_interp, right_interp
 
 
-# Calcola FWHM
-# Chiama la funzione con il profilo della stella e salva tutti i valori restituiti in variabili separate
+# Calcolo FWHM
+# Chiamo la funzione con il profilo della stella e salvo tutti i valori restituiti in variabili separate
 
 fwhm, half_max, max_val, min_val, left_edge, right_edge = calculate_fwhm(profilo)
 
-# Plot del profilo con FWHM
+# Genero il plot del profilo con FWHM
 plt.figure(figsize=(12, 6))
 
 # Profilo
@@ -132,7 +132,7 @@ plt.axhline(y=half_max, color='red', linestyle='--', linewidth=2, label=f'Metà 
 plt.axhline(y=max_val, color='green', linestyle=':', linewidth=1, label=f'Massimo: {max_val:.2f}')
 #plt.axhline(y=min_val, color='orange', linestyle=':', linewidth=1, label=f'Minimo: {min_val:.2f}')
 
-# Segna i bordi del FWHM
+# Segno i bordi del FWHM
 plt.axvline(x=left_edge, color='red', linestyle='--', linewidth=1, alpha=0.7)
 plt.axvline(x=right_edge, color='red', linestyle='--', linewidth=1, alpha=0.7)
 
@@ -142,11 +142,13 @@ plt.title(f'Profilo stellare - FWHM = {fwhm:.2f} pixel')
 plt.grid(axis='y', alpha=0.3)
 plt.legend()
 
-# Aggiungi testo con i valori
+# Aggiungo testo con i valori
 plt.text(0.02, 0.98, f'FWHM: {fwhm:.2f} pixel\nMassimo: {max_val:.2f}\nMetà altezza: {half_max:.2f}',
          transform=plt.gca().transAxes, verticalalignment='top',
          bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
+# Salvo il primo grafico in un file dedicato
+plt.savefig('grafico_fwhm.png', dpi=300)
 plt.show()
 
 print(f"\n=== RISULTATI FWHM ===")
@@ -177,7 +179,13 @@ ax.bar3d(x, y, z, dx, dy, dz, color=colors, alpha=0.7, shade=True)
 plt.tight_layout()
 plt.show()'''
 
+# Creo una nuova figura per assicurarmi che il secondo plot sia separato dal primo
+plt.figure()
+
 plt.imshow(porzione_stella, cmap="grey_r", norm=LogNorm()) #genero porzione immagine con scala di colori bianco e nero
 plt.gca().invert_yaxis() # inverto asse y
 plt.colorbar()
+
+# Salvo il secondo grafico in un altro file
+plt.savefig('immagine_porzione_stella.png', dpi=300)
 plt.show()

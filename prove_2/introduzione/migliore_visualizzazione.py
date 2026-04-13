@@ -124,13 +124,16 @@ plt.show()
 
 # Creazione istogramma
 
-'''print(type(image_data.flatten())) #verifico di aver creato un array 1D
+print(type(image_data.flatten())) #verifico di aver creato un array 1D
 print(image_data.flatten().shape) #dà le dimensioni dell'array
 
 histogram = plt.hist(image_data.flatten(), bins=256,range=(-0.5,255.5)) #genero l'istogramma dell'array con i valori
 plt.yscale("log")
+plt.savefig("histograma.png")
 
-plt.show()'''
+plt.show()
+
+quit()
 
 # Rimozione pixel isolati
 

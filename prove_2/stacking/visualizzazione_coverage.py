@@ -131,20 +131,39 @@ data_finale = total_data
 # preparo la visualizzazione
 norm = PowerNorm(gamma=3.)
 plt.figure(figsize=(10, 8))
-plt.subplot(projection=wcs_totale)
 
+# estraggo l'asse per poterne controllare le dimensioni dei font delle coordinate
+ax = plt.subplot(projection=wcs_totale)
+
+# --- INSERISCI QUESTE DUE RIGHE ---
+# Forzo la scala decimale per l'asse X (RA) e l'asse Y (Dec)
+ax.coords[0].set_major_formatter('d.ddd')
+ax.coords[1].set_major_formatter('d.ddd')
+# ----------------------------------
 
 # genero l'immagine
 plt.imshow(data_finale, cmap="gray", norm=norm, interpolation='nearest', origin='lower')
 
 # aggiusto le dimensioni della colorbar in modo che non superi l'altezza del riquadro dati
-plt.colorbar(label='Counts (Total Sum)', fraction=0.046, pad=0.04)
+# creo la colorbar omettendo il fontsize non supportato
+cbar = plt.colorbar(fraction=0.046, pad=0.04)
 
-plt.title(f'Coverage map over three runs \n(Max coverage={int(full_coverage_value)})')
+# imposto il label e modifico il font direttamente sull'asse della colorbar per il LaTeX
+cbar.set_label('Counts (Total Sum)', size=16)
 
-# aggiorno le etichette con le coordinate celesti
-plt.xlabel('RA')
-plt.ylabel('Dec')
+# ingrandisco i numeri lungo la colorbar
+cbar.ax.tick_params(labelsize=14)
 
-plt.savefig('coverage_map_run_1.png')
+# rimuovo il titolo per pulire il grafico come richiesto
+# plt.title(f'Coverage map over three runs \n(Max coverage={int(full_coverage_value)})')
+
+# aggiorno le etichette con le coordinate celesti e aumento il font
+plt.xlabel('RA', fontsize=16)
+plt.ylabel('Dec', fontsize=16)
+
+# ingrandisco le etichette numeriche delle coordinate WCS sugli assi principali
+ax.tick_params(axis='both', which='major', labelsize=14)
+
+# aggiungo bbox_inches='tight' per evitare che le scritte ingrandite vengano tagliate ai bordi
+plt.savefig('coverage_map_run_1.png', bbox_inches='tight')
 plt.show()

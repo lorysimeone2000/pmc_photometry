@@ -8,13 +8,22 @@ df = pd.read_csv('curva_PMC.csv')
 fig, ax = plt.subplots(figsize=(10, 5))
 
 # Definizione degli intervalli delle bande con i relativi colori
-intervalli = {
+intervalli = { # versione panstarr
     'm_g [384;589]': (414, 551),    # banda g: da 400 a 550 nm
     'm_r [589;726]': (551, 689),    # banda r: da 555 a 705 nm
     'm_i [726;852]': (690, 819),    # banda i: da 688 a 850 nm
     'm_z [852;946]': (819, 922),    # banda z: da 812 a 920 nm
     'm_y [946;1026]': (922, 1001)    # banda y: da 922 a 1005 nm
 }
+
+
+'''intervalli = { # versione classica
+    'm_g [384;589]': (400, 550),    # banda g: da 400 a 550 nm
+    'm_r [589;726]': (555, 705),    # banda r: da 555 a 705 nm
+    'm_i [726;852]': (688, 850),    # banda i: da 688 a 850 nm
+    'm_z [852;946]': (812, 920),    # banda z: da 812 a 920 nm
+    'm_y [946;1026]': (922, 1005)    # banda y: da 922 a 1005 nm
+}'''
 
 # Mappa dei colori per le bande (sfumature tenui e riconoscibili)
 colori_bande = {
@@ -41,15 +50,18 @@ ax.axvline(x=525, color='#111111', linestyle=':', linewidth=1.5)
 ax.set_xlim(300, 1100)
 ax.set_ylim(0, 90)
 
-# Aggiungo i testi descrittivi per gli assi X e Y
-ax.set_xlabel('Wavelength (nm)')
-ax.set_ylabel('Quantum Efficiency (%)')
+# Aggiungo i testi descrittivi per gli assi X e Y, impostando font grandi per la stampa su A4
+ax.set_xlabel('Wavelength (nm)', fontsize=16)
+ax.set_ylabel('Quantum Efficiency (%)', fontsize=16)
+
+# Ingrandisco le etichette numeriche sugli assi per renderle leggibili in scala
+ax.tick_params(axis='both', which='major', labelsize=14)
 
 # Posiziono il titolo in alto a sinistra, fuori dal perimetro del riquadro del grafico
 fig.text(0.08, 0.95, 'BFS-PGE-63S4M', fontsize=16, fontweight='bold', fontfamily='sans-serif')
 
-# Aggiungo la legenda per le bande
-ax.legend(loc='upper right', fontsize=8, framealpha=0.9)
+# Aggiungo la legenda per le bande, aumentando leggermente il font per la leggibilità
+ax.legend(loc='upper right', fontsize=12, framealpha=0.9)
 
 # Configuro la griglia per mostrare solo le linee orizzontali in tinta unita
 ax.yaxis.grid(True, linestyle='-', color='#c0c0c0', alpha=0.8)

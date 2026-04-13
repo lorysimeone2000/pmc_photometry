@@ -1,49 +1,91 @@
-#In questo codice costruisco la matrice dei valori di un file FITS, ne ricavo l'immagine in scala logaritmica e un istogramma dei valori dei pixel
 import pandas as pd
-from photutils.datasets import make_100gaussians_image
+import matplotlib
+import argparse
+import json
+import pyarrow as pa
+import pyarrow.parquet as pq
+import shutil
+import concurrent.futures
+from astropy.config import paths
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 from photutils.background import Background2D, MedianBackground
 from astropy.convolution import convolve
 from photutils.segmentation import make_2dgaussian_kernel
-import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
-from scipy.optimize import curve_fit
-from photutils.segmentation import detect_sources
 from photutils.segmentation import SourceCatalog
+from photutils.aperture import aperture_photometry, CircularAperture
 import numpy as np
+import time
 import os
+import sys
+import gc
+from scipy.optimize import curve_fit
+from tqdm import tqdm
+from astropy.wcs import WCS
+from astropy.wcs.utils import proj_plane_pixel_scales
+from astropy.io import fits
+from astropy.stats import sigma_clipped_stats
+from photutils.segmentation import SourceFinder
+import warnings
+from astropy.wcs import FITSFixedWarning
+from photutils.datasets import make_100gaussians_image
+from photutils.segmentation import detect_sources
 from astropy.visualization import SqrtStretch
 from astropy.visualization.mpl_normalize import ImageNormalize
 from photutils.segmentation import deblend_sources
 from astropy.visualization import simple_norm
 from astropy.convolution import Gaussian2DKernel
-from astropy.io import fits
 from astropy.utils.data import download_file
-from astropy.stats import sigma_clipped_stats
 from astropy.table import Table, vstack
-from photutils.segmentation import SourceFinder
 from photutils.detection import find_peaks
-from photutils.aperture import CircularAperture
-
-# Set up wcs
-from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 import astropy.coordinates as coord
+from astropy.coordinates import search_around_sky
 import astropy.units as u
 from astropy.utils.data import get_pkg_data_filename
 from astropy.wcs.wcsapi import SlicedLowLevelWCS
-
 from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
-
 from shapely.geometry import Point, Polygon
-# warning
-import warnings
 from astropy.io.fits.verify import VerifyWarning
-import warnings
-from astropy.wcs import FITSFixedWarning
-warnings.filterwarnings('ignore', category=FITSFixedWarning)
-
+from astropy.utils.exceptions import AstropyUserWarning
+from scipy.ndimage import label
+import re
 from pathlib import Path
+from astropy.time import Time
+
+# gestisco i warning ignorandoli per mantenere pulito il mio output
+warnings.filterwarnings('ignore', category=FITSFixedWarning)
+warnings.filterwarnings('ignore', message='.*failed to converge.*', category=UserWarning)
+warnings.simplefilter('ignore', category=FITSFixedWarning)
+warnings.filterwarnings('ignore', category=VerifyWarning)
+warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
+warnings.filterwarnings('ignore', message='.*deblending mode.*')
+
+
+# =============================================================================
+# 0. CONFIGURAZIONE PERCORSI E IMPORTAZIONE MODULI ESTERNI
+# =============================================================================
+
+def trova_cartella_base(nome_target="Lorenzo"):
+    path_corrente = Path(__file__).resolve()
+    for parent in [path_corrente] + list(path_corrente.parents):
+        if parent.name == nome_target:
+            return parent
+    print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory del mio script.")
+    return path_corrente.parent
+
+
+BASE_DIR = trova_cartella_base("Lorenzo")
+PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
+
+if PERCORSO_FUNZIONI not in sys.path:
+    sys.path.append(PERCORSO_FUNZIONI)
+
+# importo i moduli per il salvataggio in parquet e la relativa utilità
+from funzioni.utilita_parquet import *
+from funzioni.astrometria_parquet import *
 
 def converti_valore(valore):
     valore = str(valore).strip()  # Assicura che sia stringa prima dello strip
@@ -76,24 +118,7 @@ def leggi_header_da_csv(filename):
                 break
     return header_dict
 
-
-image_file = "/home/lorysimeone/tesi_magistrale/prove_1/20250106_231255.fits"  # prima immagine
-#image_file = "/home/lorysimeone/tesi_magistrale/prove/20250107_060735.fits" # seconda immagine
-
-run = 1
-
-cartella_csv_cat = f"/home/lorysimeone/tesi_magistrale/prove_2/tabelle/sorgenti_catalogate_run/sorgenti_catalogate_run_{run}"
-file_csv_cat = sorted([f for f in os.listdir(cartella_csv_cat) if f.endswith('.csv')])
-lista_percorsi_csv_cat = [os.path.join(cartella_csv_cat, file) for file in file_csv_cat]
-
-n_immagine = 35
-
-percorso_file_csv_cat = lista_percorsi_csv_cat[n_immagine]
-dataframe = pd.read_csv(percorso_file_csv_cat, comment='#')
-tbl_catalogate = Table.from_pandas(dataframe) # tabella di tutte le stelle catalogate
-
-header_info = leggi_header_da_csv(percorso_file_csv_cat)
-image_file = header_info.get('PERCORSO_FILE', '')
+image_file = cerca_file_nel_progetto(BASE_DIR, '20250120_232230.fits')
 
 hdu_list = fits.open(image_file)
 hdu_list.info() # dà le informazioni del file
@@ -122,13 +147,29 @@ plt.show()
 
 # Creazione istogramma
 
-'''print(type(image_data.flatten())) #verifico di aver creato un array 1D
+print(type(image_data.flatten())) #verifico di aver creato un array 1D
 print(image_data.flatten().shape) #dà le dimensioni dell'array
+
+# Inizializzo una nuova figura così evito che l'istogramma si sovrapponga agli assi dell'immagine precedente
+plt.figure(figsize=(10, 6))
 
 histogram = plt.hist(image_data.flatten(), bins=256,range=(-0.5,255.5)) #genero l'istogramma dell'array con i valori
 plt.yscale("log")
 
-plt.show()'''
+size = 25
+
+# Ingrandisco i testi per la stampa in scala
+plt.xlabel('Pixel values (ADU)', fontsize=size)
+plt.ylabel('Counts', fontsize=size)
+plt.xticks(fontsize=16)
+plt.yticks(fontsize=16)
+
+plt.tight_layout()
+plt.savefig("histogram.png", bbox_inches='tight')
+
+plt.show()
+
+quit()
 
 # Rimozione pixel isolati
 

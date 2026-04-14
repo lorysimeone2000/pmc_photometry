@@ -439,6 +439,8 @@ if __name__ == "__main__":
                     if file_parquet_panstarr.exists():
                         # controllo se il centro dell'immagine si trova entro 25 gradi dalla nebulosa del granchio
                         if distanza_crab.deg < 25.0:
+                            # stampo a schermo l'azione usando tqdm.write per non rompere la barra
+                            tqdm.write("File parquet trovato: estraggo i dati della Crab in locale...")
                             # leggo il catalogo dal file parquet locale e lo converto in tabella
                             df_panstarr = pd.read_parquet(file_parquet_panstarr)
                             tabella_panstarr_completa = Table.from_pandas(df_panstarr)
@@ -451,7 +453,7 @@ if __name__ == "__main__":
                             # creo la mia tabella finale ritagliata sul campo visivo dell'immagine
                             tbl_riquadro_esterno_vizier = tabella_panstarr_completa[maschera_raggio]
                         else:
-                            print("Sto eseguendo una query online su una regione lontana dalla Crab")
+                            tqdm.write("Sto eseguendo una query online su una regione lontana dalla Crab")
                             # eseguo la solita query standard se sono lontano dalla nebulosa
                             for tentativo in range(tentativi_massimi):
                                 try:
@@ -472,7 +474,7 @@ if __name__ == "__main__":
                             for tentativo in range(tentativi_massimi):
                                 try:
 
-                                    print("Sto eseguendo la query COLOSSALE sulla Crab...")
+                                    tqdm.write("Sto eseguendo la query COLOSSALE sulla Crab...")
                                     # eseguo la query centrata sulla nebulosa con raggio di 25 gradi
                                     riquadro_esterno_vizier = vizier.query_region(
                                         coords_crab,
@@ -499,7 +501,7 @@ if __name__ == "__main__":
                                         raise
                         else:
 
-                            print("Sto eseguendo una query online su una regione lontana dalla Crab")
+                            tqdm.write("Sto eseguendo una query online su una regione lontana dalla Crab")
                             # eseguo la solita query standard se sono lontano dalla nebulosa e non ho il file
                             for tentativo in range(tentativi_massimi):
                                 try:

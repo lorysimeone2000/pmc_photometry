@@ -471,7 +471,7 @@ if __name__ == "__main__":
                     else:
                         # controllo se il centro dell'immagine si trova entro 15 gradi dalla nebulosa del granchio
                         if distanza_crab.deg < 15.0:
-                            print("Sto eseguendo la query colossale...")
+                            tqdm.write("Sto eseguendo la query colossale...")
                             # preparo i centri per le mie mini query tangenti
                             centri_query = [coords_crab]
                             # aggiungo i 6 centri attorno alla Crab a 10 gradi di distanza
@@ -754,7 +754,7 @@ if __name__ == "__main__":
             if global_tracker_coords is None:
                 # se sono alla prima run, prima immagine: creo il mio nuovo tracker
                 # uso 2 cifre decimali per stabilità tra le mie run
-                global_tracker_labels = [f"RA_{ra:.2f}DEC{dec:.2f}" for ra, dec in
+                global_tracker_labels = [f"RA_{ra:.2f}_DEC_{dec:.2f}" for ra, dec in
                                          zip(coords_obj_all.ra.deg, coords_obj_all.dec.deg)]
                 global_tracker_coords = coords_obj_all
                 final_labels[:] = global_tracker_labels

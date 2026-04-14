@@ -4,3 +4,6 @@ scp "astro@10.99.56.220:~/ASTRI/Lorenzo/pmc_photometry/prove_2/scan/tutta\ la\ r
 
 scarico l'intera cartella e ne creo una uguale
 scp -r astro@10.99.56.220:~/ASTRI/Lorenzo/tabelle_COLOSSALE_alleggerito /home/lorysimeone/tesi_magistrale/Lorenzo/
+
+scarico l'intera cartella riquadri e ne creo una uguale
+scp -r astro@10.99.56.220:~/ASTRI/Lorenzo/pmc_photometry/script_colossale/studio_colossale/presenza_consecutiva_multirun/riquadri /home/lorysimeone/tesi_magistrale/Lorenzo/pmc_photometry/script_colossale/studio_colossale/presenza_consecutiva_multirun 

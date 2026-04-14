@@ -39,5 +39,5 @@ if PERCORSO_FUNZIONI not in sys.path:
 from funzioni.utilita_parquet import *
 from funzioni.astrometria_parquet import *
 
-cartella_oggetti = trova_cartella_base('ASTRI1')
+cartella_oggetti = cerca_cartella_intero_pc('ASTRI1')
 print(cartella_oggetti)

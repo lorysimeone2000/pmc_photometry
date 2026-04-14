@@ -40,4 +40,5 @@ from funzioni.utilita_parquet import *
 from funzioni.astrometria_parquet import *
 
 cartella_oggetti = cerca_cartella_intero_pc('ASTRI1')
-print(cartella_oggetti)
+
+percorso_candidati_csv = cerca_file_nel_progetto(BASE_DIR, "candidati_frame.csv")

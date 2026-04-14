@@ -438,7 +438,7 @@ if __name__ == "__main__":
                     # verifico se il file parquet esiste già
                     if file_parquet_panstarr.exists():
                         # controllo se il centro dell'immagine si trova entro 25 gradi dalla nebulosa del granchio
-                        if distanza_crab.deg < 25.0:
+                        if distanza_crab.deg < 15.0:
                             # stampo a schermo l'azione usando tqdm.write per non rompere la barra
                             tqdm.write("File parquet trovato: estraggo i dati della Crab in locale...")
                             # leggo il catalogo dal file parquet locale e lo converto in tabella
@@ -469,36 +469,64 @@ if __name__ == "__main__":
                                     else:
                                         raise
                     else:
-                        # controllo se il centro dell'immagine si trova entro 25 gradi dalla nebulosa del granchio
-                        if distanza_crab.deg < 25.0:
-                            for tentativo in range(tentativi_massimi):
-                                try:
+                        # controllo se il centro dell'immagine si trova entro 15 gradi dalla nebulosa del granchio
+                        if distanza_crab.deg < 15.0:
+                            print("Sto eseguendo la query colossale...")
+                            # preparo i centri per le mie mini query tangenti
+                            centri_query = [coords_crab]
+                            # aggiungo i 6 centri attorno alla Crab a 10 gradi di distanza
+                            for angolo in range(0, 360, 60):
+                                nuovo_centro = coords_crab.directional_offset_by(angolo * u.deg, 10 * u.deg)
+                                centri_query.append(nuovo_centro)
 
-                                    tqdm.write("Sto eseguendo la query COLOSSALE sulla Crab...")
-                                    # eseguo la query centrata sulla nebulosa con raggio di 25 gradi
-                                    riquadro_esterno_vizier = vizier.query_region(
-                                        coords_crab,
-                                        radius=Angle(25.0, "deg")
-                                    )
-                                    tabella_crab = riquadro_esterno_vizier[0]
+                            writer = None
+                            for i, centro_mini in enumerate(centri_query):
+                                tqdm.write(
+                                    f"Sto eseguendo la mini query {i + 1}/{len(centri_query)} sulla Crab (raggio 5 gradi)...")
+                                for tentativo in range(tentativi_massimi):
+                                    try:
+                                        riquadro_esterno_vizier = vizier.query_region(
+                                            centro_mini,
+                                            radius=Angle(5.0, "deg")
+                                        )
+                                        # estraggo i dati se la query ha prodotto risultati
+                                        if riquadro_esterno_vizier and len(riquadro_esterno_vizier) > 0:
+                                            tabella_mini = riquadro_esterno_vizier[0]
+                                            df_mini = tabella_mini.to_pandas()
+                                            tabella_pa = pa.Table.from_pandas(df_mini)
 
-                                    # salvo l'enorme risultato in un file parquet per riutilizzarlo in futuro
-                                    df_crab = tabella_crab.to_pandas()
-                                    df_crab.to_parquet(file_parquet_panstarr, index=False)
+                                            # inizializzo il mio writer solo alla prima query valida per definire lo schema
+                                            if writer is None:
+                                                writer = pq.ParquetWriter(file_parquet_panstarr, tabella_pa.schema)
 
-                                    # calcolo le distanze per filtrare subito i dati per la mia immagine corrente
-                                    coords_panstarr = SkyCoord(ra=tabella_crab['RAJ2000'], dec=tabella_crab['DEJ2000'],
-                                                               unit=u.deg)
-                                    maschera_raggio = centro.separation(coords_panstarr) <= raggio_ricerca
+                                            # accodo la mia tabella al file parquet su disco
+                                            writer.write_table(tabella_pa)
+                                        break
+                                    except Exception as e:
+                                        if tentativo < tentativi_massimi - 1:
+                                            time.sleep(attesa)
+                                        else:
+                                            raise
 
-                                    # definisco la mia tabella finale ritagliata sul campo visivo
-                                    tbl_riquadro_esterno_vizier = tabella_crab[maschera_raggio]
-                                    break
-                                except Exception as e:
-                                    if tentativo < tentativi_massimi - 1:
-                                        time.sleep(attesa)
-                                    else:
-                                        raise
+                                # aggiungo una pausa di 5 secondi per non sovraccaricare il server di VizieR (tranne all'ultimo giro)
+                                if i < len(centri_query) - 1:
+                                    time.sleep(5)
+
+                            # chiudo il mio writer per salvare definitivamente il file
+                            if writer is not None:
+                                writer.close()
+
+                            # leggo il mio catalogo globale appena scaricato
+                            df_crab = pd.read_parquet(file_parquet_panstarr)
+                            tabella_crab = Table.from_pandas(df_crab)
+
+                            # calcolo le distanze per filtrare subito i dati per la mia immagine corrente
+                            coords_panstarr = SkyCoord(ra=tabella_crab['RAJ2000'], dec=tabella_crab['DEJ2000'],
+                                                       unit=u.deg)
+                            maschera_raggio = centro.separation(coords_panstarr) <= raggio_ricerca
+
+                            # definisco la mia tabella finale ritagliata sul campo visivo
+                            tbl_riquadro_esterno_vizier = tabella_crab[maschera_raggio]
                         else:
 
                             tqdm.write("Sto eseguendo una query online su una regione lontana dalla Crab")

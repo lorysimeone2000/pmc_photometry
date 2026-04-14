@@ -114,10 +114,10 @@ plt.xlabel("Number of run", fontsize=12)
 plt.ylabel("Number of objects", fontsize=12)
 plt.grid(axis='y', linestyle='--', alpha=0.7)
 
-nome_istogramma = cartella_output / "label_appearances_histogram.png"
+nome_istogramma = cartella_output / "label_run_histogram.png"
 plt.savefig(nome_istogramma, dpi=300)
 print(f"\nHistogram saved at: {nome_istogramma}")
-plt.show()
+#plt.show()
 
 # 4.2 SCATTER PLOT SPAZIALE (colori = numero_di_run)
 plt.figure(figsize=(14, 10))
@@ -147,10 +147,10 @@ plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
          fontsize=10, verticalalignment='top',
          bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
 
-nome_scatter = cartella_output / "label_spatial_distribution.png"
+nome_scatter = cartella_output / "run_spatial_distribution.png"
 plt.savefig(nome_scatter, dpi=300, bbox_inches='tight')
 print(f"Spatial distribution plot saved at: {nome_scatter}")
-plt.show()
+#plt.show()
 
 # 4.3 GRAFICO COMBINATO (opzionale)
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
@@ -177,10 +177,10 @@ cbar2 = plt.colorbar(scatter2, ax=ax2)
 cbar2.set_label('run', fontsize=10)
 
 plt.tight_layout()
-nome_combinato = cartella_output / "combined_analysis.png"
+nome_combinato = cartella_output / "combined_analysis_run.png"
 plt.savefig(nome_combinato, dpi=300, bbox_inches='tight')
 print(f"Combined plot saved at: {nome_combinato}")
-plt.show()
+#plt.show()
 
 # =============================================================================
 # 5. STATISTICHE SPAZIALI

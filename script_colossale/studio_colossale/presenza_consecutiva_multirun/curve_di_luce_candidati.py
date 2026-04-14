@@ -72,7 +72,7 @@ else:
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # avvio il ciclo su ogni singolo label per generare il grafico
-for label in labels_presenti:
+for label in tqdm(labels_presenti):
 
     # filtro il dataframe per il label corrente, lo ordino e resetto l'indice
     df_label = df[df['label'] == label].sort_values(by='DATE-OBS').reset_index(drop=True)
@@ -117,19 +117,28 @@ for label in labels_presenti:
     # creo la figura per il grafico
     plt.figure(figsize=(12, 6))
 
-    # traccio i punti con errore, togliendo la linea continua (linestyle='none') e rimettendo i marker
-    plt.errorbar(df_label['x_plot'], df_label['Mag_estratta'], yerr=df_label['err_Mag_estratta'],
-                 linestyle='-', color='black', capsize=3, linewidth=0.5)
+    plt.plot(df_label['x_plot'], df_label['Mag_estratta'], linestyle='-', color='black', linewidth=0.5)
+
+    # Disegno un'unica banda continua che rappresenta i limiti inferiore e superiore dell'errore
+    plt.fill_between(df_label['x_plot'],
+                     df_label['Mag_estratta'] - df_label['err_Mag_estratta'],
+                     df_label['Mag_estratta'] + df_label['err_Mag_estratta'],
+                     color='black', alpha=0.15, edgecolor='none')
 
     # ricavo i limiti attuali dell'asse Y per centrare verticalmente il testo
     ymin, ymax = plt.ylim()
 
+    contatore = 0
+
     # disegno le linee rosse tratteggiate nei punti centrali dei gap compressi, con testo in inglese
     for pos in posizioni_linee_rosse:
-        plt.axvline(x=pos, color='red', linestyle='--', alpha=0.6)
-        plt.text(pos, ymin + (ymax - ymin) / 2, 'Run change', color='red',
-                 rotation=90, va='center', ha='right',
-                 bbox=dict(facecolor='white', alpha=0.7, edgecolor='none'))
+
+        contatore+=1
+
+        if contatore==1:
+            plt.axvline(x=pos, color='red', linestyle='--', alpha=0.6, label = 'Run change')
+            plt.legend()
+        else: plt.axvline(x=pos, color='red', linestyle='--', alpha=0.6)
 
     # applico le mie etichette di testo personalizzate, riducendo il font e usando il nuovo formato
     plt.xticks(posizioni_etichette, testi_etichette, rotation=45, fontsize=10)
@@ -141,6 +150,7 @@ for label in labels_presenti:
 
     # ottimizzo la disposizione degli elementi nel grafico PRIMA di salvare l'immagine
     plt.tight_layout()
+
 
     # salvo il grafico nella mia cartella definita prima del ciclo
     plt.savefig(output_dir / f'curva_{label}.png')

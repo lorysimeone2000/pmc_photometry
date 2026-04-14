@@ -39,31 +39,5 @@ if PERCORSO_FUNZIONI not in sys.path:
 from funzioni.utilita_parquet import *
 from funzioni.astrometria_parquet import *
 
-# =============================================================================
-# 1. LETTURA DEL FILE ORIGINALE E PREPARAZIONE TARGET
-# =============================================================================
-
-# individuo il file CSV originale
-percorso_csv = cerca_file_nel_progetto(BASE_DIR, "oggetti_presenza_multirun.csv")
-
-# estraggo la tabella pandas dal file
-df = pd.read_csv(percorso_csv)
-
-# filtro il dataframe estraendo unicamente gli oggetti con Mag_estratta_max minore di 8
-df_filtrato = df[df['Mag_estratta_max'] < 8].copy()
-
-# =============================================================================
-# 2. SALVATAGGIO DEI RISULTATI
-# =============================================================================
-
-# cerco la cartella di output
-cartella_output = cerca_cartella_nel_progetto(BASE_DIR, "presenza_consecutiva_multirun")
-
-# definisco il percorso completo per il nuovo file
-percorso_candidati = cartella_output / "candidati.csv"
-
-# salvo il dataframe in formato csv escludendo la colonna degli indici
-df_filtrato.to_csv(percorso_candidati, index=False)
-
-print(f"\nSalvataggio completato! Trovati {len(df_filtrato)} candidati.")
-print(f"File salvato in: {percorso_candidati}")
+cartella_oggetti = trova_cartella_base('ASTRI1')
+print(cartella_oggetti)

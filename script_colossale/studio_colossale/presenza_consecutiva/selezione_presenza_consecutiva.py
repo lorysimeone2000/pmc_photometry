@@ -164,19 +164,31 @@ df_non_cat = df_falsi.groupby('label').agg(
     media_flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE=('media_flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura_DECORRELAZIONE_STELLE_GLOBALE', 'mean')
 ).reset_index()
 
-# calcolo quanti indici consecutivi mi aspetto ci siano tra la prima e l'ultima apparizione
-df_non_cat['consecutivi_attesi'] = df_non_cat['max_indice'] - df_non_cat['min_indice'] + 1
+# ordino i miei dati per etichetta e indice cronologico per poter analizzare le sequenze
+df_ordinato = df_falsi.sort_values(['label', 'indice_cronologico'])
 
-# filtro il dataframe secondo le condizioni richieste: occorrenze > 10 E occorrenze uguali ai consecutivi attesi (nessun buco cronologico)
-maschera_consecutivi = (df_non_cat['occorrenze'] > 10) & (df_non_cat['occorrenze'] == df_non_cat['consecutivi_attesi'])
-df_non_cat_aggiornato = df_non_cat[maschera_consecutivi].copy()
+# rimuovo eventuali duplicati dello stesso oggetto nella stessa immagine per non sfalsare il conteggio
+df_ordinato = df_ordinato.drop_duplicates(subset=['label', 'indice_cronologico'])
 
-# rimuovo le colonne di calcolo temporanee per ripulire il dataframe in output
-df_non_cat_aggiornato = df_non_cat_aggiornato.drop(columns=['min_indice', 'max_indice', 'consecutivi_attesi'])
+# calcolo i blocchi consecutivi: sottraendo una sequenza incrementale (cumcount)
+# al mio indice cronologico, ottengo un identificativo univoco per ogni blocco temporale ininterrotto
+df_ordinato['id_blocco'] = df_ordinato['indice_cronologico'] - df_ordinato.groupby('label').cumcount()
+
+# conto la lunghezza di ciascun blocco consecutivo che ho isolato
+lunghezza_blocchi = df_ordinato.groupby(['label', 'id_blocco']).size().reset_index(name='n_consecutivi')
+
+# estraggo unicamente le label che possiedono almeno un blocco con 10 o più occorrenze consecutive
+label_valide = lunghezza_blocchi[lunghezza_blocchi['n_consecutivi'] >= 10]['label'].unique()
+
+# filtro il mio dataframe riassuntivo mantenendo solo gli oggetti che soddisfano la mia nuova condizione
+df_non_cat_aggiornato = df_non_cat[df_non_cat['label'].isin(label_valide)].copy()
+
+# rimuovo le colonne di calcolo temporanee per ripulire il mio dataframe in output
+df_non_cat_aggiornato = df_non_cat_aggiornato.drop(columns=['min_indice', 'max_indice'])
 
 percorso_salvataggio = BASE_DIR / "pmc_photometry" / "script_colossale" / "studio_colossale/presenza_consecutiva" / "oggetti_con_presenza_consecutiva.csv"
 
-# salvo il dataframe aggiornato
+# salvo il mio dataframe aggiornato
 df_non_cat_aggiornato.to_csv(percorso_salvataggio, index=False)
 
 print(f"Salvataggio completato! Trovati {len(df_non_cat_aggiornato)} oggetti. File salvato in: {percorso_salvataggio}")

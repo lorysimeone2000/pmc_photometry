@@ -7,7 +7,6 @@ import pyarrow.parquet as pq
 import shutil
 import concurrent.futures
 from astropy.config import paths
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from photutils.background import Background2D, MedianBackground
 from astropy.convolution import convolve
@@ -118,7 +117,7 @@ def leggi_header_da_csv(filename):
                 break
     return header_dict
 
-image_file = cerca_file_nel_progetto(BASE_DIR, '20250120_232230.fits')
+image_file = cerca_file_nel_progetto(BASE_DIR, '20250106_231255.fits')
 
 hdu_list = fits.open(image_file)
 hdu_list.info() # dà le informazioni del file

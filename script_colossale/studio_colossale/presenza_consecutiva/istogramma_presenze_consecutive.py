@@ -97,7 +97,7 @@ print(f"Standard deviation: {np.std(occorrenze):.2f}")
 
 # individuo la cartella di output
 cartella_output = None
-for cartella in BASE_DIR.rglob("studio_colossale"):
+for cartella in BASE_DIR.rglob("studio_colossale/presenza_consecutiva"):
     cartella_output = cartella
     break
 
@@ -117,7 +117,7 @@ plt.grid(axis='y', linestyle='--', alpha=0.7)
 nome_istogramma = cartella_output / "label_appearances_histogram.png"
 plt.savefig(nome_istogramma, dpi=300)
 print(f"\nHistogram saved at: {nome_istogramma}")
-plt.show()
+#plt.show()
 
 # 4.2 SCATTER PLOT SPAZIALE (colori = occorrenze)
 plt.figure(figsize=(14, 10))
@@ -150,7 +150,7 @@ plt.text(0.02, 0.98, stats_text, transform=plt.gca().transAxes,
 nome_scatter = cartella_output / "label_spatial_distribution.png"
 plt.savefig(nome_scatter, dpi=300, bbox_inches='tight')
 print(f"Spatial distribution plot saved at: {nome_scatter}")
-plt.show()
+#plt.show()
 
 # 4.3 GRAFICO COMBINATO (opzionale)
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
@@ -180,7 +180,7 @@ plt.tight_layout()
 nome_combinato = cartella_output / "combined_analysis.png"
 plt.savefig(nome_combinato, dpi=300, bbox_inches='tight')
 print(f"Combined plot saved at: {nome_combinato}")
-plt.show()
+#plt.show()
 
 # =============================================================================
 # 5. STATISTICHE SPAZIALI

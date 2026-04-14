@@ -188,4 +188,3 @@ plt.colorbar()
 
 # Salvo il secondo grafico in un altro file
 plt.savefig('immagine_porzione_stella.png', dpi=300)
-plt.show()

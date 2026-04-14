@@ -107,8 +107,8 @@ tbl['ycentroid'].info.format = '.2f'
 tbl['kron_flux'].info.format = '.2f'
 print(tbl)
 
-stelle_40 = tbl[(tbl['max_value'] >= 35)
-              & (tbl['max_value'] <= 45)]
+stelle_40 = tbl[(tbl['max_value'] >= 10)
+              & (tbl['max_value'] <= 10)]
 
 print(f"Stelle con valore intorno a 40: \n {stelle_40}")
 print(tbl.info)
@@ -133,8 +133,12 @@ for i, sorgente in enumerate(stelle_40):
     plt.bar(range(len(profilo)), profilo, color='skyblue', edgecolor='navy', alpha=0.7, width=0.8,
             label='Profilo stellare')
 
-    if i >= 5: continue
-    else: plt.show()
+    if i >= 150: continue
+    else:
+
+        plt.savefig(f'ricerca_{i}.png', dpi=300)
+        #plt.show()
+        plt.close()
 
 print(f"Rapporti: {rapporti}")
 print(f"Mediana: {np.median(rapporti)}")

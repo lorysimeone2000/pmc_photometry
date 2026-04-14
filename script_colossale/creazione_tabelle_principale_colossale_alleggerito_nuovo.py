@@ -498,6 +498,8 @@ if __name__ == "__main__":
                                     else:
                                         raise
                         else:
+
+                            print("Sto eseguendo una query online su una regione lontana dalla Crab")
                             # eseguo la solita query standard se sono lontano dalla nebulosa e non ho il file
                             for tentativo in range(tentativi_massimi):
                                 try:

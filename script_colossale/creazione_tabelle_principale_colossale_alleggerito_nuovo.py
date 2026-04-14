@@ -451,6 +451,7 @@ if __name__ == "__main__":
                             # creo la mia tabella finale ritagliata sul campo visivo dell'immagine
                             tbl_riquadro_esterno_vizier = tabella_panstarr_completa[maschera_raggio]
                         else:
+                            print("Sto eseguendo una query online su una regione lontana dalla Crab")
                             # eseguo la solita query standard se sono lontano dalla nebulosa
                             for tentativo in range(tentativi_massimi):
                                 try:

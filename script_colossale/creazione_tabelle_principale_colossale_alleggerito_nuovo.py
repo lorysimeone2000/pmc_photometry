@@ -190,6 +190,7 @@ if __name__ == "__main__":
 
     cartella_dati = cerca_cartella_intero_pc("ASTRI1")
     cartella_tabelle = BASE_DIR / "tabelle_COLOSSALE_alleggerito" / "tabelle_unite"
+    cartella_dati_1 = cartella_dati
 
     if cartella_dati is None or not Path(cartella_dati).exists():
         print(f"ERRORE: Cartella dati ASTRI1 non trovata.")
@@ -428,19 +429,93 @@ if __name__ == "__main__":
 
                     tentativi_massimi = 5
                     attesa = 10
-                    for tentativo in range(tentativi_massimi):
-                        try:
-                            riquadro_esterno_vizier = vizier.query_region(
-                                coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
-                                radius=raggio_ricerca
-                            )
-                            tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
-                            break
-                        except Exception as e:
-                            if tentativo < tentativi_massimi - 1:
-                                time.sleep(attesa)
-                            else:
-                                raise
+
+                    # imposto le coordinate della nebulosa del granchio
+                    coords_crab = SkyCoord(ra=83.633083, dec=22.0145, unit=(u.deg, u.deg), frame='icrs')
+                    distanza_crab = centro.separation(coords_crab)
+                    file_parquet_panstarr = BASE_DIR / "query_panstarr.parquet"
+
+                    # verifico se il file parquet esiste già
+                    if file_parquet_panstarr.exists():
+                        # controllo se il centro dell'immagine si trova entro 25 gradi dalla nebulosa del granchio
+                        if distanza_crab.deg < 25.0:
+                            # stampo a schermo l'azione usando tqdm.write per non rompere la barra
+                            tqdm.write("File parquet trovato: estraggo i dati della Crab in locale...")
+                            # leggo il catalogo dal file parquet locale e lo converto in tabella
+                            df_panstarr = pd.read_parquet(file_parquet_panstarr)
+                            tabella_panstarr_completa = Table.from_pandas(df_panstarr)
+
+                            # calcolo le distanze per estrarre solo la porzione che mi interessa
+                            coords_panstarr = SkyCoord(ra=tabella_panstarr_completa['RAJ2000'],
+                                                       dec=tabella_panstarr_completa['DEJ2000'], unit=u.deg)
+                            maschera_raggio = centro.separation(coords_panstarr) <= raggio_ricerca
+
+                            # creo la mia tabella finale ritagliata sul campo visivo dell'immagine
+                            tbl_riquadro_esterno_vizier = tabella_panstarr_completa[maschera_raggio]
+                        else:
+                            tqdm.write("Sto eseguendo una query online su una regione lontana dalla Crab")
+                            # eseguo la solita query standard se sono lontano dalla nebulosa
+                            for tentativo in range(tentativi_massimi):
+                                try:
+                                    riquadro_esterno_vizier = vizier.query_region(
+                                        coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
+                                        radius=raggio_ricerca
+                                    )
+                                    tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+                                    break
+                                except Exception as e:
+                                    if tentativo < tentativi_massimi - 1:
+                                        time.sleep(attesa)
+                                    else:
+                                        raise
+                    else:
+                        # controllo se il centro dell'immagine si trova entro 25 gradi dalla nebulosa del granchio
+                        if distanza_crab.deg < 25.0:
+                            for tentativo in range(tentativi_massimi):
+                                try:
+
+                                    tqdm.write("Sto eseguendo la query COLOSSALE sulla Crab...")
+                                    # eseguo la query centrata sulla nebulosa con raggio di 25 gradi
+                                    riquadro_esterno_vizier = vizier.query_region(
+                                        coords_crab,
+                                        radius=Angle(25.0, "deg")
+                                    )
+                                    tabella_crab = riquadro_esterno_vizier[0]
+
+                                    # salvo l'enorme risultato in un file parquet per riutilizzarlo in futuro
+                                    df_crab = tabella_crab.to_pandas()
+                                    df_crab.to_parquet(file_parquet_panstarr, index=False)
+
+                                    # calcolo le distanze per filtrare subito i dati per la mia immagine corrente
+                                    coords_panstarr = SkyCoord(ra=tabella_crab['RAJ2000'], dec=tabella_crab['DEJ2000'],
+                                                               unit=u.deg)
+                                    maschera_raggio = centro.separation(coords_panstarr) <= raggio_ricerca
+
+                                    # definisco la mia tabella finale ritagliata sul campo visivo
+                                    tbl_riquadro_esterno_vizier = tabella_crab[maschera_raggio]
+                                    break
+                                except Exception as e:
+                                    if tentativo < tentativi_massimi - 1:
+                                        time.sleep(attesa)
+                                    else:
+                                        raise
+                        else:
+
+                            tqdm.write("Sto eseguendo una query online su una regione lontana dalla Crab")
+                            # eseguo la solita query standard se sono lontano dalla nebulosa e non ho il file
+                            for tentativo in range(tentativi_massimi):
+                                try:
+                                    riquadro_esterno_vizier = vizier.query_region(
+                                        coord.SkyCoord(ra=ra_c, dec=dec_c, unit=(u.deg, u.deg), frame='icrs'),
+                                        radius=raggio_ricerca
+                                    )
+                                    tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+                                    break
+                                except Exception as e:
+                                    if tentativo < tentativi_massimi - 1:
+                                        time.sleep(attesa)
+                                    else:
+                                        raise
 
                     # calcolo la magnitudine sintetica FLIR
                     bande = ['gmag', 'rmag', 'imag', 'zmag', 'ymag']
@@ -779,7 +854,7 @@ if __name__ == "__main__":
                 nome_fits = os.path.basename(str(percorso_raw))
 
             nome_fits = str(nome_fits).strip()
-            file_trovato = cerca_file_nel_progetto(BASE_DIR, nome_fits)
+            file_trovato = cerca_file_nel_progetto(cartella_dati_1, nome_fits)
 
             if file_trovato is None:
                 continue

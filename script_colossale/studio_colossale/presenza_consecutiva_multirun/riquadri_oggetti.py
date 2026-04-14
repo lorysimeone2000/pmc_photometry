@@ -1,5 +1,7 @@
 import pandas as pd
 import matplotlib
+# Imposto il backend in modalità 'Agg' per accelerare il salvataggio delle immagini disattivando l'interfaccia grafica
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -11,6 +13,11 @@ from tqdm import tqdm
 from astropy.io.fits.verify import VerifyWarning
 from astropy.utils.exceptions import AstropyUserWarning
 from astropy.wcs import FITSFixedWarning
+import re
+import glob
+from astropy.io import fits
+from astropy.wcs import WCS
+from matplotlib.colors import LogNorm
 
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
@@ -43,12 +50,6 @@ cartella_oggetti = cerca_cartella_intero_pc('ASTRI1')
 
 percorso_candidati_csv = cerca_file_nel_progetto(BASE_DIR, "candidati_frame.csv")
 
-import re
-import glob
-from astropy.io import fits
-from astropy.wcs import WCS
-from matplotlib.colors import LogNorm
-
 # Leggo il file CSV di partenza inserendolo in un dataframe
 df_candidati = pd.read_csv(percorso_candidati_csv)
 
@@ -59,11 +60,11 @@ tutti_fits = glob.glob(os.path.join(cartella_oggetti, '**', '*.fits'), recursive
 catalogo_fits = []
 for file_fits in tqdm(tutti_fits, desc="Scansione header FITS"):
     try:
-        with fits.open(file_fits) as hdu_list:
-            header = hdu_list[0].header
-            if 'DATE-OBS' in header:
-                # Aggiungo la data e il percorso del file corrispondente alla mia lista
-                catalogo_fits.append((header['DATE-OBS'], file_fits))
+        # Uso getheader per estrarre solo l'intestazione senza caricare i dati in memoria, riducendo i tempi di lettura
+        header = fits.getheader(file_fits)
+        if 'DATE-OBS' in header:
+            # Aggiungo la data e il percorso del file corrispondente alla mia lista
+            catalogo_fits.append((header['DATE-OBS'], file_fits))
     except Exception:
         continue
 
@@ -72,27 +73,33 @@ catalogo_fits.sort(key=lambda x: x[0])
 date_ordinate = [elemento[0] for elemento in catalogo_fits]
 file_ordinati = [elemento[1] for elemento in catalogo_fits]
 
+# Memorizzo gli indici delle date in un dizionario per un accesso istantaneo ed evitare la ricerca lineare lenta
+mappa_date = {data: idx for idx, data in enumerate(date_ordinate)}
+
 # Creo la cartella principale dove andrò a salvare tutte le immagini dei riquadri
 cartella_riquadri = BASE_DIR / "riquadri"
 cartella_riquadri.mkdir(parents=True, exist_ok=True)
+
+# Compilo la mia espressione regolare fuori dal ciclo per non doverla ricalcolare per ogni riga del dataframe
+mio_pattern_regex = re.compile(r'RA_([+-]?[\d\.]+)DEC([+-]?[\d\.]+)')
 
 # Itero su ogni singola riga del mio dataframe dei candidati
 for index, row in tqdm(df_candidati.iterrows(), total=len(df_candidati), desc="Elaborazione target"):
     label = str(row['label'])
     data_candidato = str(row['DATE-OBS'])
 
-    # Estraggo i valori numerici di RA e DEC dalla stringa del label usando le espressioni regolari
-    match = re.search(r'RA_([+-]?[\d\.]+)DEC([+-]?[\d\.]+)', label)
+    # Estraggo i valori numerici di RA e DEC dalla stringa del label usando l'espressione regolare
+    match = mio_pattern_regex.search(label)
     if not match:
         continue
 
     ra = float(match.group(1))
     dec = float(match.group(2))
 
-    # Cerco la riga corrente all'interno della mia lista ordinata per ricavare l'indice temporale esatto
+    # Cerco la riga corrente all'interno del mio dizionario per ricavare l'indice temporale esatto
     try:
-        indice_centrale = date_ordinate.index(data_candidato)
-    except ValueError:
+        indice_centrale = mappa_date[data_candidato]
+    except KeyError:
         # Se non trovo una corrispondenza esatta di data, salto al candidato successivo
         continue
 

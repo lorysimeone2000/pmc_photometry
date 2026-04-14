@@ -6,7 +6,7 @@ import os
 data_inizio = datetime.date(2024, 9, 24)
 data_fine = datetime.date(2026, 4, 15)
 
-riscrittura = "n" # s per riprocessare dati già processati, n per non riprocessare dati già processati
+riscrittura = "s" # s per riprocessare dati già processati, n per non riprocessare dati già processati
 
 # imposto la durata del mio intervallo aggiungendo 4 giorni alla data di inizio per avere blocchi di 5 giorni esatti
 giorni_da_aggiungere = 5

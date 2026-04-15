@@ -1,6 +1,7 @@
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import numpy as np
 import os
 import sys
@@ -50,7 +51,7 @@ percorso_csv = cerca_file_nel_progetto(BASE_DIR, "candidati_frame.csv")
 df = pd.read_csv(percorso_csv)
 
 # =============================================================================
-# 2. ORDINAMENTO TEMPORALE, COMPRESSIONE GAP E PLOT
+# 2. ORDINAMENTO TEMPORALE E PLOT
 # =============================================================================
 
 # converto la colonna delle date nel formato datetime di pandas
@@ -77,80 +78,58 @@ for label in tqdm(labels_presenti):
     # filtro il dataframe per il label corrente, lo ordino e resetto l'indice
     df_label = df[df['label'] == label].sort_values(by='DATE-OBS').reset_index(drop=True)
 
-    # inizializzo le liste per costruire il mio asse X fittizio
-    asse_x_compresso = [0.0]
-    posizioni_etichette = [0.0]
-    # inserisco solo la data di inizio della prima run nel formato giorno/mese/anno
-    testi_etichette = [df_label.loc[0, 'DATE-OBS'].strftime('%d/%m/%Y\n%H:%M:%S')]
-    posizioni_linee_rosse = []
+    # calcolo la differenza temporale tra i punti in secondi
+    df_label['dt'] = df_label['DATE-OBS'].diff().dt.total_seconds()
 
-    # decido quanto deve essere largo visivamente il gap sul grafico (120 unità fittizie)
-    spazio_fisso_gap = 120.0
-
-    # ciclo tra i punti per calcolare le distanze
-    for i in range(1, len(df_label)):
-        t_prec = df_label.loc[i - 1, 'DATE-OBS']
-        t_corr = df_label.loc[i, 'DATE-OBS']
-
-        # calcolo i secondi reali trascorsi
-        dt = (t_corr - t_prec).total_seconds()
-
-        # se il gap supera i 300 secondi, applico la compressione
-        if dt > 300:
-            # salvo la posizione centrale per la linea rossa
-            posizioni_linee_rosse.append(asse_x_compresso[-1] + spazio_fisso_gap / 2)
-
-            # avanzo nel mio grafico solo dello spazio fisso, ignorando il vuoto temporale reale
-            nuovo_x = asse_x_compresso[-1] + spazio_fisso_gap
-            asse_x_compresso.append(nuovo_x)
-
-            # registro esclusivamente l'INIZIO della nuova run, usando il formato richiesto
-            posizioni_etichette.append(nuovo_x)
-            testi_etichette.append(t_corr.strftime('%d/%m/%Y\n%H:%M:%S'))
-        else:
-            # se fa parte della stessa run, mantengo la distanza temporale proporzionale reale
-            asse_x_compresso.append(asse_x_compresso[-1] + dt)
-
-    # assegno il nuovo asse X al dataframe
-    df_label['x_plot'] = asse_x_compresso
+    # identifico un cambio di run quando il divario temporale supera i 300 secondi (5 minuti)
+    df_label['is_new_run'] = df_label['dt'] > 300
+    df_label['run_id'] = df_label['is_new_run'].cumsum()
 
     # creo la figura per il grafico
     plt.figure(figsize=(12, 6))
 
-    plt.plot(df_label['x_plot'], df_label['Mag_estratta'], linestyle='-', color='black', linewidth=0.5)
+    # ciclo sulle singole run identificate per lasciare lo spazio vuoto tra di esse
+    for run_id, run_df in df_label.groupby('run_id'):
+        run_df = run_df.reset_index(drop=True)
 
-    # Disegno un'unica banda continua che rappresenta i limiti inferiore e superiore dell'errore
-    plt.fill_between(df_label['x_plot'],
-                     df_label['Mag_estratta'] - df_label['err_Mag_estratta'],
-                     df_label['Mag_estratta'] + df_label['err_Mag_estratta'],
-                     color='black', alpha=0.15, edgecolor='none')
+        # disegno la banda dell'errore isolata per questa run
+        plt.fill_between(run_df['DATE-OBS'],
+                         run_df['Mag_estratta'] - run_df['err_Mag_estratta'],
+                         run_df['Mag_estratta'] + run_df['err_Mag_estratta'],
+                         color='black', alpha=0.15, edgecolor='none')
 
-    # ricavo i limiti attuali dell'asse Y per centrare verticalmente il testo
-    ymin, ymax = plt.ylim()
+        # se la run ha un solo punto, lo stampo direttamente per non perderlo visivamente
+        if len(run_df) == 1:
+            colore_punto = 'darkgray' if not run_df.loc[0, 'segmentazione_trovata'] else 'black'
+            plt.plot(run_df['DATE-OBS'], run_df['Mag_estratta'], marker='o', color=colore_punto, markersize=3)
+            continue
 
-    contatore = 0
+        # ciclo sui singoli segmenti per applicare lo stile appropriato
+        for i in range(len(run_df) - 1):
+            t1, t2 = run_df.loc[i, 'DATE-OBS'], run_df.loc[i + 1, 'DATE-OBS']
+            y1, y2 = run_df.loc[i, 'Mag_estratta'], run_df.loc[i + 1, 'Mag_estratta']
 
-    # disegno le linee rosse tratteggiate nei punti centrali dei gap compressi, con testo in inglese
-    for pos in posizioni_linee_rosse:
+            f1 = run_df.loc[i, 'segmentazione_trovata']
+            f2 = run_df.loc[i + 1, 'segmentazione_trovata']
 
-        contatore+=1
+            # se il segmento coinvolge un punto con segmentazione_trovata == False, lo disegno tratteggiato e grigio
+            if not f1 or not f2:
+                plt.plot([t1, t2], [y1, y2], color='darkgray', linestyle='--', linewidth=1)
+            else:
+                plt.plot([t1, t2], [y1, y2], color='black', linestyle='-', linewidth=1)
 
-        if contatore==1:
-            plt.axvline(x=pos, color='red', linestyle='--', alpha=0.6, label = 'Run change')
-            plt.legend()
-        else: plt.axvline(x=pos, color='red', linestyle='--', alpha=0.6)
+    # formato le date in asse x nel formato richiesto
+    ax = plt.gca()
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y\n%H:%M:%S'))
+    plt.xticks(rotation=45, fontsize=10)
 
-    # applico le mie etichette di testo personalizzate, riducendo il font e usando il nuovo formato
-    plt.xticks(posizioni_etichette, testi_etichette, rotation=45, fontsize=10)
-
-    # aggiungo i titoli e le etichette agli assi, tradotti e formattati per visibilità su A4
+    # aggiungo i titoli e le etichette agli assi
     plt.title(f'Magnitude trend over time for object {label}', fontsize=16, pad=15)
-    plt.xlabel('Observation date (Run Start)', fontsize=14)
+    plt.xlabel('Observation date', fontsize=14)
     plt.ylabel('Extracted magnitude', fontsize=14)
 
     # ottimizzo la disposizione degli elementi nel grafico PRIMA di salvare l'immagine
     plt.tight_layout()
-
 
     # salvo il grafico nella mia cartella definita prima del ciclo
     plt.savefig(output_dir / f'curva_{label}.png')

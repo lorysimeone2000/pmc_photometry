@@ -82,7 +82,8 @@ for file_p in tqdm(file_parquet, desc="Analisi file"):
         # Utilizzo i filtri nativi di PyArrow (pushdown predicates)
         tabella_p = pq.read_table(
             file_p,
-            columns=['label', 'Mag_estratta', 'err_Mag_estratta'],
+            columns=['label', 'Mag_estratta', 'err_Mag_estratta', 'xcentroid', 'ycentroid', 'RA_centroid',
+                     'DEC_centroid'],
             filters=[('label', 'in', lista_candidati)]
         )
 
@@ -96,8 +97,16 @@ for file_p in tqdm(file_parquet, desc="Analisi file"):
             # Estraggo la data di osservazione dal dizionario
             date_obs = header.get('DATE-OBS')
 
-            # Aggiungo la colonna della data al dataframe temporaneo
+            # Estraggo il nome del file FITS dal dizionario
+            nome_file_fits = header.get('NOME_FILE_FITS')
+
+            # Ricavo il nome della cartella dalle prime 8 cifre del nome del file FITS
+            nome_cartella = str(nome_file_fits)[:8] if nome_file_fits is not None else None
+
+            # Aggiungo le colonne al dataframe temporaneo
             df_trovati['DATE-OBS'] = date_obs
+            df_trovati['nome_file_fits'] = nome_file_fits
+            df_trovati['nome_cartella'] = nome_cartella
 
             dati_estratti.append(df_trovati)
 

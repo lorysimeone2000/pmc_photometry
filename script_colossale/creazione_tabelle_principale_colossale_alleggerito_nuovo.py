@@ -693,7 +693,7 @@ if __name__ == "__main__":
                 else:
                     # recupero la mia tabella precedentemente calcolata
                     print(
-                        "Distanza dal centro della run_name precedente <= 1.1 gradi: riutilizzo il catalogo Vizier e Hipparcos.")
+                        "\nDistanza dal centro della run_name precedente <= 1.1 gradi: riutilizzo il catalogo Vizier e Hipparcos.")
                     tbl_vizier_cut = tbl_vizier_cut_precedente.copy()
                     tbl_hipparco_run_clean = tbl_hipparco_run_clean_precedente.copy()
 

@@ -82,6 +82,8 @@ warnings.filterwarnings('ignore', message='.*failed to converge.*', category=Use
 warnings.simplefilter('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', category=VerifyWarning)
 
+magnitudine_massima = 15
+
 vizier_hip = Vizier(
         catalog="I/239/hip_main",
         columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],

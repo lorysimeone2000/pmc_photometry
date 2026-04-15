@@ -217,7 +217,7 @@ if percorso_astri1:
                                         continue
 
                             # calcolo il flusso con apertura di raggio 5
-                            apertura = CircularAperture((x_pix, y_pix), r=5.)
+                            apertura = CircularAperture((x_pix, y_pix), r=3.6)
                             phot_table = aperture_photometry(data_fits, apertura)
                             flusso = phot_table['aperture_sum'][0]
 

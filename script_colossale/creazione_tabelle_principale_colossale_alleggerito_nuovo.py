@@ -437,8 +437,8 @@ if __name__ == "__main__":
 
                     # verifico se il file parquet esiste già
                     if file_parquet_panstarr.exists():
-                        # controllo se il centro dell'immagine si trova entro 25 gradi dalla nebulosa del granchio
-                        if distanza_crab.deg < 15.0:
+                        # controllo se il centro dell'immagine si trova entro 20 gradi dalla nebulosa del granchio
+                        if distanza_crab.deg < 20.0:
                             # stampo a schermo l'azione usando tqdm.write per non rompere la barra
                             tqdm.write("File parquet trovato: estraggo i dati della Crab in locale...")
                             # leggo il catalogo dal file parquet locale e lo converto in tabella
@@ -469,38 +469,70 @@ if __name__ == "__main__":
                                     else:
                                         raise
                     else:
-                        # controllo se il centro dell'immagine si trova entro 15 gradi dalla nebulosa del granchio
-                        if distanza_crab.deg < 15.0:
+                        # controllo se il centro dell'immagine si trova entro 20 gradi dalla nebulosa del granchio
+                        if distanza_crab.deg < 20.0:
                             tqdm.write("Sto eseguendo la query colossale...")
-                            # preparo i centri per le mie mini query tangenti
+
+                            # calcolo la distanza ideale per sovrapporre i cerchi senza lasciare buchi
+                            raggio_query = 5.0
+                            distanza_centri = raggio_query * np.sqrt(3)  # circa 8.66 gradi
+
+                            # preparo i centri per le mie mini query a nido d'ape espanso
                             centri_query = [coords_crab]
-                            # aggiungo i 6 centri attorno alla Crab a 10 gradi di distanza
+
+                            # aggiungo il primo anello di 6 centri
                             for angolo in range(0, 360, 60):
-                                nuovo_centro = coords_crab.directional_offset_by(angolo * u.deg, 10 * u.deg)
+                                nuovo_centro = coords_crab.directional_offset_by(angolo * u.deg,
+                                                                                 distanza_centri * u.deg)
                                 centri_query.append(nuovo_centro)
 
+                            # aggiungo il secondo anello di 12 centri per coprire l'area totale fino a oltre 20 gradi
+                            for angolo in range(0, 360, 60):
+                                # posiziono i centri sui vertici dell'esagono
+                                centro_vertice = coords_crab.directional_offset_by(angolo * u.deg,
+                                                                                   2 * distanza_centri * u.deg)
+                                centri_query.append(centro_vertice)
+
+                                # posiziono i centri sui punti medi dei bordi dell'esagono
+                                centro_bordo = coords_crab.directional_offset_by((angolo + 30) * u.deg,
+                                                                                 distanza_centri * np.sqrt(3) * u.deg)
+                                centri_query.append(centro_bordo)
+
                             writer = None
+
+                            # inizializzo il mio set per tracciare gli identificativi unici delle stelle già salvate
+                            ids_salvati = set()
+
                             for i, centro_mini in enumerate(centri_query):
                                 tqdm.write(
-                                    f"Sto eseguendo la mini query {i + 1}/{len(centri_query)} sulla Crab (raggio 5 gradi)...")
+                                    f"Sto eseguendo la mini query {i + 1}/{len(centri_query)} sulla Crab (raggio {raggio_query} gradi)...")
                                 for tentativo in range(tentativi_massimi):
                                     try:
                                         riquadro_esterno_vizier = vizier.query_region(
                                             centro_mini,
-                                            radius=Angle(5.0, "deg")
+                                            radius=Angle(raggio_query, "deg")
                                         )
                                         # estraggo i dati se la query ha prodotto risultati
                                         if riquadro_esterno_vizier and len(riquadro_esterno_vizier) > 0:
                                             tabella_mini = riquadro_esterno_vizier[0]
                                             df_mini = tabella_mini.to_pandas()
-                                            tabella_pa = pa.Table.from_pandas(df_mini)
 
-                                            # inizializzo il mio writer solo alla prima query valida per definire lo schema
-                                            if writer is None:
-                                                writer = pq.ParquetWriter(file_parquet_panstarr, tabella_pa.schema)
+                                            # filtro il mio dataframe per isolare esclusivamente le stelle mai viste
+                                            df_filtrato = df_mini[~df_mini['objID'].isin(ids_salvati)]
 
-                                            # accodo la mia tabella al file parquet su disco
-                                            writer.write_table(tabella_pa)
+                                            if not df_filtrato.empty:
+                                                tabella_pa = pa.Table.from_pandas(df_filtrato)
+
+                                                # inizializzo il mio writer solo alla prima query valida per definire lo schema
+                                                if writer is None:
+                                                    writer = pq.ParquetWriter(file_parquet_panstarr, tabella_pa.schema)
+
+                                                # accodo i miei dati puliti al file parquet su disco
+                                                writer.write_table(tabella_pa)
+
+                                                # aggiungo i nuovi identificativi al mio set per le iterazioni successive
+                                                ids_salvati.update(df_filtrato['objID'].tolist())
+
                                         break
                                     except Exception as e:
                                         if tentativo < tentativi_massimi - 1:

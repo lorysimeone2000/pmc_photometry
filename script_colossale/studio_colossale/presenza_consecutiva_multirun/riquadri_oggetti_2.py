@@ -66,8 +66,8 @@ centro_run_precedente = None
 tbl_vizier_cut_precedente = None
 tbl_hipparco_run_clean_precedente = None
 
-# raggruppo per label in modo da eseguire la query Vizier una sola volta per etichetta
-for label, gruppo_label in df_candidati.groupby('label'):
+# raggruppo per label in modo da eseguire la query Vizier una sola volta per etichetta e avvolgo il ciclo con tqdm
+for label, gruppo_label in tqdm(df_candidati.groupby('label'), desc="Elaborazione labels"):
     # creo la cartella del label specifico
     cartella_salvataggio_label = os.path.join(cartella_riquadri, str(label))
     os.makedirs(cartella_salvataggio_label, exist_ok=True)
@@ -246,8 +246,8 @@ for label, gruppo_label in df_candidati.groupby('label'):
     col_dec = 'DEJ2000' if ha_raj2000 else 'DEC'
     coord_catalogo_cielo = SkyCoord(ra=tbl_catalogate[col_ra], dec=tbl_catalogate[col_dec], unit=u.deg)
 
-    # itero sulle singole occorrenze per creare i riquadri
-    for indice, riga in gruppo_label.iterrows():
+    # itero sulle singole occorrenze per creare i riquadri monitorando il progresso con tqdm
+    for indice, riga in tqdm(gruppo_label.iterrows(), total=len(gruppo_label), desc="Elaborazione frames", leave=False):
         nome_cartella = riga['nome_cartella']
         nome_file_fits = riga['nome_file_fits']
 

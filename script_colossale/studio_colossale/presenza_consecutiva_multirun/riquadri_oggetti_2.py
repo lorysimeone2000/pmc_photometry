@@ -83,14 +83,14 @@ for label, gruppo_label in df_candidati.groupby('label'):
     import os
 
     # converto il nome della cartella in un formato data per poter fare calcoli temporali
-    data_centrale = datetime.strptime(str(nome_cartella), "%Y%m%d")
+    data_centrale = datetime.strptime(str(nome_cartella_query), "%Y%m%d")
 
     # calcolo il nome delle cartelle adiacenti sottraendo e aggiungendo un giorno
     cartella_precedente = (data_centrale - timedelta(days=1)).strftime("%Y%m%d")
     cartella_successiva = (data_centrale + timedelta(days=1)).strftime("%Y%m%d")
 
     # preparo la mia lista di cartelle in cui effettuare la ricerca
-    cartelle_da_esplorare = [str(nome_cartella), cartella_precedente, cartella_successiva]
+    cartelle_da_esplorare = [str(nome_cartella_query), cartella_precedente, cartella_successiva]
 
     percorso_file_query = None
 

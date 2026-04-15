@@ -82,11 +82,31 @@ warnings.filterwarnings('ignore', message='.*failed to converge.*', category=Use
 warnings.simplefilter('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', category=VerifyWarning)
 
+vizier_hip = Vizier(
+        catalog="I/239/hip_main",
+        columns=['HIP', '_RA.icrs', '_DE.icrs', 'Vmag', 'B-V'],
+        row_limit=-1
+    )
+risultato_hip = vizier_hip.query_constraints(Vmag="<16")
+tbl_catalogo_hipparco = risultato_hip[0]
+
+if '_RA.icrs' in tbl_catalogo_hipparco.colnames:
+    tbl_catalogo_hipparco.rename_column('_RA.icrs', '_RAJ2000')
+    tbl_catalogo_hipparco.rename_column('_DE.icrs', '_DEJ2000')
+print(f"Scaricati {len(tbl_catalogo_hipparco)} oggetti da Hipparcos.")
+
+exclusion_radii_deg = np.full(len(tbl_catalogo_hipparco), 2.5 / 3600.0)
+
+coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],
+                                  dec=tbl_catalogo_hipparco['_DEJ2000'],
+                                  unit=u.deg)
+
 vizier = Vizier(
     catalog="II/389/ps1_dr2",
     columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag', 'imag', 'zmag', 'ymag'],
     row_limit=-1,
 )
+
 
 
 def trova_cartella_base(nome_target="pmc_photometry"):

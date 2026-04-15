@@ -89,6 +89,11 @@ for label in tqdm(labels_presenti, desc="Generazione Curve di Luce"):
     df_label['is_new_run'] = df_label['dt'] > 300
     df_label['run_id'] = df_label['is_new_run'].cumsum()
 
+    # creo il mio asse x finto per comprimere gli intervalli tra le run
+    dt_finto = df_label['dt'].fillna(0).copy()
+    dt_finto[df_label['is_new_run']] = 60  # assegno uno spazio bianco convenzionale di 60 unità
+    df_label['x_finto'] = dt_finto.cumsum()
+
     # creo la figura per il grafico
     plt.figure(figsize=(12, 6))
 
@@ -96,8 +101,8 @@ for label in tqdm(labels_presenti, desc="Generazione Curve di Luce"):
     for run_id, run_df in df_label.groupby('run_id'):
         run_df = run_df.reset_index(drop=True)
 
-        # disegno la banda dell'errore isolata per questa run
-        plt.fill_between(run_df['DATE-OBS'],
+        # disegno la banda dell'errore isolata per questa run usando il mio asse x finto
+        plt.fill_between(run_df['x_finto'],
                          run_df['Mag_estratta'] - run_df['err_Mag_estratta'],
                          run_df['Mag_estratta'] + run_df['err_Mag_estratta'],
                          color='black', alpha=0.15, edgecolor='none')
@@ -105,7 +110,7 @@ for label in tqdm(labels_presenti, desc="Generazione Curve di Luce"):
         # se la run ha un solo punto, lo stampo direttamente per non perderlo visivamente
         if len(run_df) == 1:
             colore_punto = 'darkgray' if not run_df.loc[0, 'segmentazione_trovata'] else 'black'
-            plt.plot(run_df['DATE-OBS'], run_df['Mag_estratta'], marker='o', color=colore_punto, markersize=3)
+            plt.plot(run_df['x_finto'], run_df['Mag_estratta'], marker='o', color=colore_punto, markersize=3)
             continue
 
         # --- Calcolo soglia per buchi infra-run ---
@@ -121,7 +126,7 @@ for label in tqdm(labels_presenti, desc="Generazione Curve di Luce"):
 
         # ciclo sui singoli segmenti per applicare lo stile appropriato
         for i in range(len(run_df) - 1):
-            t1, t2 = run_df.loc[i, 'DATE-OBS'], run_df.loc[i + 1, 'DATE-OBS']
+            t1, t2 = run_df.loc[i, 'x_finto'], run_df.loc[i + 1, 'x_finto']
             y1, y2 = run_df.loc[i, 'Mag_estratta'], run_df.loc[i + 1, 'Mag_estratta']
 
             f1 = run_df.loc[i, 'segmentazione_trovata']
@@ -144,10 +149,34 @@ for label in tqdm(labels_presenti, desc="Generazione Curve di Luce"):
             else:
                 plt.plot([t1, t2], [y1, y2], color='black', linestyle='-', linewidth=1)
 
-    # formato le date in asse x nel formato richiesto
     ax = plt.gca()
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y\n%H:%M:%S'))
-    plt.xticks(rotation=45, fontsize=10)
+
+    # scelgo circa 7 posizioni ideali sul mio asse x finto per le etichette principali
+    max_x = df_label['x_finto'].max()
+    ideal_ticks = np.linspace(0, max_x, 7)
+    tick_locs = []
+    tick_labels = []
+
+    # per ogni posizione ideale, cerco il punto reale più vicino per ricavare la mia etichetta temporale
+    for xt in ideal_ticks:
+        idx_nearest = (np.abs(df_label['x_finto'] - xt)).argmin()
+        tick_locs.append(df_label.loc[idx_nearest, 'x_finto'])
+        tick_labels.append(df_label.loc[idx_nearest, 'DATE-OBS'].strftime('%d/%m/%Y\n%H:%M:%S'))
+
+    # rimuovo i miei eventuali duplicati mantenendo l'ordine cronologico
+    tick_locs_unique = []
+    tick_labels_unique = []
+    for loc, lab in zip(tick_locs, tick_labels):
+        if loc not in tick_locs_unique:
+            tick_locs_unique.append(loc)
+            tick_labels_unique.append(lab)
+
+    # aggiungo i miei tick principali posizionandoli sulle coordinate ricavate
+    ax.set_xticks(tick_locs_unique)
+    ax.set_xticklabels(tick_labels_unique, rotation=45, fontsize=10)
+
+    # aggiungo un mio minitick sull'asse x per ogni singolo frame
+    ax.set_xticks(df_label['x_finto'], minor=True)
 
     # aggiungo i titoli e le etichette agli assi
     plt.title(f'Magnitude trend over time for object {label}', fontsize=16, pad=15)

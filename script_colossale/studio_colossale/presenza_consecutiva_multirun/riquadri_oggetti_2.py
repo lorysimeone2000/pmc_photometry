@@ -92,7 +92,9 @@ for label, gruppo_label in df_candidati.groupby('label'):
     # cerco il mio file scorrendo le tre cartelle possibili e salvando le scoperte in cache
     for cartella_target in cartelle_da_esplorare:
         if cartella_target not in cache_cartelle:
-            cache_cartelle[cartella_target] = cerca_cartella_intero_pc(cartella_target)
+            # cerco la mia cartella specificatamente all'interno di ASTRI1
+            risultato = cerca_cartella_nel_progetto(cartella_oggetti, cartella_target)
+            cache_cartelle[cartella_target] = str(risultato) if risultato else None
 
         percorso_cartella_cache = cache_cartelle[cartella_target]
         # mi assicuro che la cartella esista fisicamente prima di unire il percorso
@@ -259,7 +261,9 @@ for label, gruppo_label in df_candidati.groupby('label'):
 
         for cartella_target in cartelle_possibili:
             if cartella_target not in cache_cartelle:
-                cache_cartelle[cartella_target] = cerca_cartella_intero_pc(cartella_target)
+                # cerco la mia cartella specificatamente all'interno di ASTRI1
+                risultato = cerca_cartella_nel_progetto(cartella_oggetti, cartella_target)
+                cache_cartelle[cartella_target] = str(risultato) if risultato else None
 
             percorso_cartella_cache = cache_cartelle[cartella_target]
             if percorso_cartella_cache is not None:

@@ -79,8 +79,31 @@ for label, gruppo_label in df_candidati.groupby('label'):
     if nome_cartella_query not in cache_cartelle:
         cache_cartelle[nome_cartella_query] = cerca_cartella_intero_pc(nome_cartella_query)
 
-    percorso_cartella_query = cache_cartelle[nome_cartella_query]
-    percorso_file_query = os.path.join(percorso_cartella_query, nome_file_query)
+    from datetime import datetime, timedelta
+    import os
+
+    # converto il nome della cartella in un formato data per poter fare calcoli temporali
+    data_centrale = datetime.strptime(str(nome_cartella), "%Y%m%d")
+
+    # calcolo il nome delle cartelle adiacenti sottraendo e aggiungendo un giorno
+    cartella_precedente = (data_centrale - timedelta(days=1)).strftime("%Y%m%d")
+    cartella_successiva = (data_centrale + timedelta(days=1)).strftime("%Y%m%d")
+
+    # preparo la mia lista di cartelle in cui effettuare la ricerca
+    cartelle_da_esplorare = [str(nome_cartella), cartella_precedente, cartella_successiva]
+
+    percorso_file_query = None
+
+    # cerco il mio file scorrendo le tre cartelle possibili
+    for cartella_target in cartelle_da_esplorare:
+        if cartella_target in cache_cartelle:
+            percorso_temporaneo = os.path.join(cache_cartelle[cartella_target], nome_file_query)
+
+            # verifico che il file esista effettivamente in questo percorso
+            if os.path.exists(percorso_temporaneo):
+                percorso_file_query = percorso_temporaneo
+                # interrompo la ricerca non appena ho trovato il mio file
+                break
 
     hdu_list = fits.open(percorso_file_query)
     w = WCS(hdu_list[0].header)

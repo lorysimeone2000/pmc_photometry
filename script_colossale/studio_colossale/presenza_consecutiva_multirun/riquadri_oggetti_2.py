@@ -20,6 +20,7 @@ import time
 from matplotlib.patches import Circle
 from matplotlib.colors import LogNorm
 import astropy.coordinates as coord
+from datetime import datetime, timedelta
 
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
@@ -76,12 +77,6 @@ for label, gruppo_label in df_candidati.groupby('label'):
     nome_cartella_query = prima_riga['nome_cartella']
     nome_file_query = prima_riga['nome_file_fits']
 
-    if nome_cartella_query not in cache_cartelle:
-        cache_cartelle[nome_cartella_query] = cerca_cartella_intero_pc(nome_cartella_query)
-
-    from datetime import datetime, timedelta
-    import os
-
     # converto il nome della cartella in un formato data per poter fare calcoli temporali
     data_centrale = datetime.strptime(str(nome_cartella_query), "%Y%m%d")
 
@@ -94,16 +89,22 @@ for label, gruppo_label in df_candidati.groupby('label'):
 
     percorso_file_query = None
 
-    # cerco il mio file scorrendo le tre cartelle possibili
+    # cerco il mio file scorrendo le tre cartelle possibili e salvando le scoperte in cache
     for cartella_target in cartelle_da_esplorare:
-        if cartella_target in cache_cartelle:
-            percorso_temporaneo = os.path.join(cache_cartelle[cartella_target], nome_file_query)
+        if cartella_target not in cache_cartelle:
+            cache_cartelle[cartella_target] = cerca_cartella_intero_pc(cartella_target)
 
-            # verifico che il file esista effettivamente in questo percorso
+        percorso_cartella_cache = cache_cartelle[cartella_target]
+        # mi assicuro che la cartella esista fisicamente prima di unire il percorso
+        if percorso_cartella_cache is not None:
+            percorso_temporaneo = os.path.join(percorso_cartella_cache, nome_file_query)
             if os.path.exists(percorso_temporaneo):
                 percorso_file_query = percorso_temporaneo
-                # interrompo la ricerca non appena ho trovato il mio file
-                break
+                break  # interrompo la ricerca non appena trovo il mio file
+
+    if percorso_file_query is None:
+        print(f"ATTENZIONE: Impossibile trovare il file query {nome_file_query}. Salto il label {label}.")
+        continue
 
     hdu_list = fits.open(percorso_file_query)
     w = WCS(hdu_list[0].header)
@@ -248,11 +249,29 @@ for label, gruppo_label in df_candidati.groupby('label'):
         nome_cartella = riga['nome_cartella']
         nome_file_fits = riga['nome_file_fits']
 
-        if nome_cartella not in cache_cartelle:
-            cache_cartelle[nome_cartella] = cerca_cartella_intero_pc(nome_cartella)
+        # applico la mia logica del giorno prima/dopo anche per tutti i file di ritaglio
+        data_corrente = datetime.strptime(str(nome_cartella), "%Y%m%d")
+        cart_prec = (data_corrente - timedelta(days=1)).strftime("%Y%m%d")
+        cart_succ = (data_corrente + timedelta(days=1)).strftime("%Y%m%d")
 
-        percorso_cartella = cache_cartelle[nome_cartella]
-        percorso_file_fits = os.path.join(percorso_cartella, nome_file_fits)
+        cartelle_possibili = [str(nome_cartella), cart_prec, cart_succ]
+        percorso_file_fits = None
+
+        for cartella_target in cartelle_possibili:
+            if cartella_target not in cache_cartelle:
+                cache_cartelle[cartella_target] = cerca_cartella_intero_pc(cartella_target)
+
+            percorso_cartella_cache = cache_cartelle[cartella_target]
+            if percorso_cartella_cache is not None:
+                percorso_temporaneo = os.path.join(percorso_cartella_cache, nome_file_fits)
+                if os.path.exists(percorso_temporaneo):
+                    percorso_file_fits = percorso_temporaneo
+                    break
+
+        # salto l'elaborazione del singolo frame se il file FITS risulta introvabile ovunque
+        if percorso_file_fits is None:
+            print(f"ATTENZIONE: File FITS {nome_file_fits} non trovato nelle cartelle adiacenti. Salto il riquadro.")
+            continue
 
         # apro il mio file corrente
         with fits.open(percorso_file_fits) as hdul:

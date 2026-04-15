@@ -176,9 +176,11 @@ for label in tqdm(labels_presenti):
 
         if contatore == 1:
             plt.axvline(x=pos, color='darkgray', linestyle='--', alpha=0.6, linewidth=0.5, label='Run change')
+            plt.gca().invert_yaxis()
             plt.legend()
         else:
             plt.axvline(x=pos, color='red', linestyle='--', alpha=0.6, linewidth=0.5)
+            plt.gca().invert_yaxis()
 
     # applico le mie etichette di testo personalizzate, riducendo il font e usando il nuovo formato
     plt.xticks(posizioni_etichette, testi_etichette, rotation=45, fontsize=10)

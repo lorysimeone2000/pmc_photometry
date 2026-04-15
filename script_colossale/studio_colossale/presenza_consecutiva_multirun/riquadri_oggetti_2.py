@@ -82,6 +82,12 @@ warnings.filterwarnings('ignore', message='.*failed to converge.*', category=Use
 warnings.simplefilter('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', category=VerifyWarning)
 
+vizier = Vizier(
+    catalog="II/389/ps1_dr2",
+    columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag', 'imag', 'zmag', 'ymag'],
+    row_limit=-1,
+)
+
 
 def trova_cartella_base(nome_target="pmc_photometry"):
     # cerco la mia cartella base risalendo l'albero delle directory

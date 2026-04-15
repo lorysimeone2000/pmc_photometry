@@ -20,7 +20,7 @@ warnings.simplefilter('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', category=VerifyWarning)
 
 
-def trova_cartella_base(nome_target="pmc_photometry"):
+def trova_cartella_base(nome_target="Lorenzo"):
     # cerco la mia cartella base risalendo l'albero delle directory
     path_corrente = Path(__file__).resolve()
     for parent in [path_corrente] + list(path_corrente.parents):
@@ -46,6 +46,10 @@ from funzioni.astrometria_parquet import *
 
 # individuo il file CSV originale
 percorso_csv = cerca_file_nel_progetto(BASE_DIR, "candidati_frame.csv")
+
+if percorso_csv is None:
+    print("Errore: file 'candidati_frame.csv' non trovato.")
+    sys.exit()
 
 # estraggo la tabella pandas dal file
 df = pd.read_csv(percorso_csv)
@@ -73,7 +77,7 @@ else:
 output_dir.mkdir(parents=True, exist_ok=True)
 
 # avvio il ciclo su ogni singolo label per generare il grafico
-for label in tqdm(labels_presenti):
+for label in tqdm(labels_presenti, desc="Generazione Curve di Luce"):
 
     # filtro il dataframe per il label corrente, lo ordino e resetto l'indice
     df_label = df[df['label'] == label].sort_values(by='DATE-OBS').reset_index(drop=True)
@@ -104,6 +108,17 @@ for label in tqdm(labels_presenti):
             plt.plot(run_df['DATE-OBS'], run_df['Mag_estratta'], marker='o', color=colore_punto, markersize=3)
             continue
 
+        # --- Calcolo soglia per buchi infra-run ---
+        # Calcoliamo il tempo di esposizione tipico della run (mediana dei dt validi)
+        # Escludiamo il primo punto che ha dt NaN
+        dt_validi = run_df['dt'].dropna()
+        if not dt_validi.empty:
+            esposizione_tipica = dt_validi.median()
+            # Definiamo un buco se il salto è > 1.5 volte l'esposizione tipica
+            soglia_buco = esposizione_tipica * 1.5
+        else:
+            soglia_buco = np.inf  # Nessun buco rilevabile se c'è un solo dt
+
         # ciclo sui singoli segmenti per applicare lo stile appropriato
         for i in range(len(run_df) - 1):
             t1, t2 = run_df.loc[i, 'DATE-OBS'], run_df.loc[i + 1, 'DATE-OBS']
@@ -112,6 +127,17 @@ for label in tqdm(labels_presenti):
             f1 = run_df.loc[i, 'segmentazione_trovata']
             f2 = run_df.loc[i + 1, 'segmentazione_trovata']
 
+            # Recuperiamo il dt del punto successivo (corrisponde all'intervallo t1-t2)
+            dt_segmento = run_df.loc[i + 1, 'dt']
+
+            # --- Identificazione e Plot dei buchi Infrarun ---
+            # Se l'intervallo temporale supera la soglia definita per la run
+            if dt_segmento > soglia_buco:
+                # Disegniamo una riga verticale ciano, sottile, a metà dell'intervallo
+                t_buco = t1 + (t2 - t1) / 2
+                plt.axvline(x=t_buco, color='cyan', linestyle='-', linewidth=0.5, alpha=0.8)
+
+            # --- Plot dei segmenti di magnitudine ---
             # se il segmento coinvolge un punto con segmentazione_trovata == False, lo disegno tratteggiato e grigio
             if not f1 or not f2:
                 plt.plot([t1, t2], [y1, y2], color='darkgray', linestyle='--', linewidth=1)
@@ -136,3 +162,5 @@ for label in tqdm(labels_presenti):
 
     # chiudo la figura per mantenere pulita la memoria durante le iterazioni
     plt.close()
+
+print(f"Elaborazione completata. Grafici salvati in: {output_dir}")

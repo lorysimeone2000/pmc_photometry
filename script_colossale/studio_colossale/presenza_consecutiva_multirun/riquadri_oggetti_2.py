@@ -21,72 +21,12 @@ from matplotlib.patches import Circle
 from matplotlib.colors import LogNorm
 import astropy.coordinates as coord
 from datetime import datetime, timedelta
-import pandas as pd
-from photutils.background import Background2D, MedianBackground
-from astropy.convolution import convolve
-from photutils.segmentation import make_2dgaussian_kernel
-import matplotlib
 
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
-from photutils.segmentation import SourceCatalog
-from photutils.aperture import aperture_photometry, CircularAperture
-import numpy as np
-import time
-import os
-import sys
-import gc
-from tqdm import tqdm
-from astropy.wcs import WCS
-from astropy.wcs.utils import proj_plane_pixel_scales
-from astropy.io import fits
-from astropy.stats import sigma_clipped_stats
-from photutils.segmentation import SourceFinder
-import warnings
-from astropy.wcs import FITSFixedWarning
-from photutils.datasets import make_100gaussians_image
-from scipy.optimize import curve_fit
-from photutils.segmentation import detect_sources
-from astropy.visualization import SqrtStretch
-from astropy.visualization.mpl_normalize import ImageNormalize
-from photutils.segmentation import deblend_sources
-from astropy.visualization import simple_norm
-from astropy.convolution import Gaussian2DKernel
-from astropy.utils.data import download_file
-from astropy.table import Table, vstack
-from photutils.detection import find_peaks
-from astropy.coordinates import SkyCoord
-import astropy.coordinates as coord
-from astropy.coordinates import search_around_sky
-import astropy.units as u
-from astropy.utils.data import get_pkg_data_filename
-from astropy.wcs.wcsapi import SlicedLowLevelWCS
-from astroquery.vizier import Vizier
-from astropy.coordinates import Angle
-from shapely.geometry import Point, Polygon
-from astropy.io.fits.verify import VerifyWarning
-from astropy.utils.exceptions import AstropyUserWarning
-from scipy.ndimage import label
-from pathlib import Path
-
-# gestisco i warning ignorandoli
-warnings.filterwarnings('ignore', category=FITSFixedWarning)
-warnings.filterwarnings('ignore', message='.*failed to converge.*', category=UserWarning)
-warnings.simplefilter('ignore', category=FITSFixedWarning)
-warnings.filterwarnings('ignore', category=VerifyWarning)
-warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
 warnings.filterwarnings('ignore', category=RuntimeWarning)
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', message='.*failed to converge.*', category=UserWarning)
 warnings.simplefilter('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', category=VerifyWarning)
-
-vizier = Vizier(
-    catalog="II/389/ps1_dr2",
-    columns=['objID', 'RAJ2000', 'DEJ2000', 'gmag', 'rmag', 'imag', 'zmag', 'ymag'],
-    row_limit=-1,
-)
 
 
 def trova_cartella_base(nome_target="pmc_photometry"):
@@ -125,6 +65,39 @@ cache_cartelle = {}
 centro_run_precedente = None
 tbl_vizier_cut_precedente = None
 tbl_hipparco_run_clean_precedente = None
+
+# cerco il file contenente la curva di efficienza quantica per calcolare i pesi esatti
+file_curva_pmc = cerca_file_nel_progetto(BASE_DIR, "curva_PMC.csv")
+if file_curva_pmc is not None:
+    # leggo il dataframe della curva
+    df_curva = pd.read_csv(file_curva_pmc)
+
+    limiti_bande = scarica_intervalli_bande_ps1_da_descrizioni()
+
+    pesi_estratti = []
+
+    # itero sulle bande per calcolare l'area sottesa alla curva per ciascun range
+    for nome_banda, (w_min, w_max) in limiti_bande.items():
+        # applico la mia maschera di taglio per l'intervallo corrente
+        maschera_w = (df_curva['Wavelength'] >= w_min) & (df_curva['Wavelength'] <= w_max)
+        # calcolo il mio integrale tramite il metodo dei trapezi per estrarre la porzione di efficienza
+        area = np.trapezoid(df_curva['QE'][maschera_w], x=df_curva['Wavelength'][maschera_w])
+        pesi_estratti.append(area)
+
+    # converto in array e normalizzo in modo che la somma finale sia pari a 1
+    pesi_estratti = np.array(pesi_estratti)
+    somma_pesi = np.sum(pesi_estratti)
+    pesi_ideali_globali = pesi_estratti / somma_pesi
+
+    # calcolo il mio peso per la banda Vmag di Hipparco nell'intervallo 500-600 nm
+    maschera_vmag = (df_curva['Wavelength'] >= 500) & (df_curva['Wavelength'] <= 600)
+    area_vmag = np.trapezoid(df_curva['QE'][maschera_vmag], x=df_curva['Wavelength'][maschera_vmag])
+    peso_hipparco = area_vmag / somma_pesi
+else:
+    # imposto i pesi standard in caso di mancato ritrovamento del csv
+    pesi_ideali_globali = np.array([0.458, 0.326, 0.133, 0.055, 0.028])
+    # imposto il mio peso di fallback per hipparco
+    peso_hipparco = 0.35
 
 # raggruppo per label in modo da eseguire la query Vizier una sola volta per etichetta e avvolgo il ciclo con tqdm
 for label, gruppo_label in tqdm(df_candidati.groupby('label'), desc="Elaborazione labels"):

@@ -571,6 +571,7 @@ if __name__ == "__main__":
                                         radius=raggio_ricerca
                                     )
                                     tbl_riquadro_esterno_vizier = riquadro_esterno_vizier[0]
+                                    print(f"Scaricate {len(tbl_riquadro_esterno_vizier)} stelle da PanStarr")
                                     break
                                 except Exception as e:
                                     if tentativo < tentativi_massimi - 1:

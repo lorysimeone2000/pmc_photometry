@@ -77,6 +77,10 @@ for label in tqdm(labels_presenti):
     # filtro il dataframe per il label corrente, lo ordino e resetto l'indice
     df_label = df[df['label'] == label].sort_values(by='DATE-OBS').reset_index(drop=True)
 
+    # individuo i punti con magnitudine maggiore o uguale a 10 e li fisso a 10
+    maschera_upper = df_label['Mag_estratta'] >= 10
+    df_label.loc[maschera_upper, 'Mag_estratta'] = 10
+
     # inizializzo le liste per costruire il mio asse X fittizio
     asse_x_compresso = [0.0]
     posizioni_etichette = [0.0]
@@ -163,6 +167,11 @@ for label in tqdm(labels_presenti):
             plt.plot([p1['x_plot'], p2['x_plot']],
                      [p1['Mag_estratta'], p2['Mag_estratta']],
                      linestyle=stile, color=colore, linewidth=0.5)
+
+    # inserisco le freccine arancioni per i punti upper limit
+    if maschera_upper.any():
+        df_upper = df_label[maschera_upper]
+        plt.plot(df_upper['x_plot'], df_upper['Mag_estratta'], marker='v', color='orange', linestyle='None', label='upper limit')
 
     # ricavo i limiti attuali dell'asse Y per centrare verticalmente il testo
     ymin, ymax = plt.ylim()

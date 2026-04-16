@@ -418,7 +418,7 @@ for label, gruppo_label in tqdm(df_candidati.groupby('label'), desc="Elaborazion
                        origin='lower', extent=[x_min, x_max, y_min, y_max])
 
         # sovrappongo i punti convertiti colorandoli secondo la magnitudine
-        sc = ax.scatter(x_cat, y_cat, c=tbl_catalogate['Mag'], cmap='viridis', s=4, zorder=5)
+        sc = ax.scatter(x_cat, y_cat, c=tbl_catalogate['Mag'], cmap='viridis_r', s=4, zorder=5)
         cbar = plt.colorbar(sc, ax=ax)
         cbar.set_label('Magnitudine')
 

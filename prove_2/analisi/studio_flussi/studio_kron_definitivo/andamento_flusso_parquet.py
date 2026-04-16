@@ -378,8 +378,6 @@ else:
         plt.text(t_end, 0.95, f'end of run {run_num}', color='gray', ha='right', va='top', rotation=90,
                  transform=plt.gca().get_xaxis_transform())
 
-    plt.title(f'Trend of Star ID {id_stella_target}\nTarget Kron ~ {KRON_TARGET} | {colonna_target}',
-              fontsize=12, fontweight='bold')
     plt.xlabel("Time from the beginning of Run 1 (minutes)")
     plt.ylabel("Flux (ADU)")
     plt.grid(True, linestyle='--', alpha=0.5)
@@ -387,7 +385,7 @@ else:
 
     plt.tight_layout()
 
-    file_grafico = f'analisi_singola_media_flusso_{KRON_TARGET}_parquet_priprovo_4_di_notte.jpg'
+    file_grafico = f'andamento_flusso.jpg'
     plt.savefig(file_grafico, dpi=300)
     plt.show()
     plt.close()

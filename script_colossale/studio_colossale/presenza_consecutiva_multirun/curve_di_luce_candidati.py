@@ -171,10 +171,8 @@ for label in tqdm(labels_presenti):
     # inserisco le freccine arancioni per i punti upper limit
     if maschera_upper.any():
         df_upper = df_label[maschera_upper]
-        plt.plot(df_upper['x_plot'], df_upper['Mag_estratta'], marker='v', color='orange', linestyle='None', label='upper limit')
-
-    # ricavo i limiti attuali dell'asse Y per centrare verticalmente il testo
-    ymin, ymax = plt.ylim()
+        plt.plot(df_upper['x_plot'], df_upper['Mag_estratta'], marker='v', color='orange', linestyle='None',
+                 label='upper limit')
 
     contatore = 0
 
@@ -185,11 +183,12 @@ for label in tqdm(labels_presenti):
 
         if contatore == 1:
             plt.axvline(x=pos, color='darkgray', linestyle='--', alpha=0.6, linewidth=0.5, label='Run change')
-            plt.gca().invert_yaxis()
             plt.legend()
         else:
             plt.axvline(x=pos, color='red', linestyle='--', alpha=0.6, linewidth=0.5)
-            plt.gca().invert_yaxis()
+
+    # inverto l'asse y una sola volta per tutto il grafico fuori dal ciclo
+    plt.gca().invert_yaxis()
 
     # applico le mie etichette di testo personalizzate, riducendo il font e usando il nuovo formato
     plt.xticks(posizioni_etichette, testi_etichette, rotation=45, fontsize=10)

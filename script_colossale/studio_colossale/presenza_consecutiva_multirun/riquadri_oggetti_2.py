@@ -420,7 +420,7 @@ for label, gruppo_label in tqdm(df_candidati.groupby('label'), desc="Elaborazion
         # sovrappongo i punti convertiti colorandoli secondo la magnitudine
         sc = ax.scatter(x_cat, y_cat, c=tbl_catalogate['Mag'], cmap='viridis_r', s=4, zorder=5)
         cbar = plt.colorbar(sc, ax=ax)
-        cbar.set_label('Magnitudine')
+        cbar.set_label('Magnitude')
 
         # converto i 35 arcosecondi della circonferenza in scala di pixel
         scala_pixel_arcsec = proj_plane_pixel_scales(wcs_img)[0] * 3600

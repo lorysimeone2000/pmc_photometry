@@ -60,7 +60,7 @@ df['DATE-OBS'] = pd.to_datetime(df['DATE-OBS'])
 labels_presenti = df['label'].unique()
 
 # cerco la mia cartella di destinazione una sola volta prima del ciclo
-cartella = cerca_cartella_nel_progetto(BASE_DIR, 'presenza_consecutiva_multirun')
+cartella = cerca_cartella_nel_progetto(BASE_DIR, 'sorgenti catalogate')
 
 # verifico di aver trovato la cartella per evitare errori, altrimenti uso la cartella base come ripiego
 if cartella is not None:
@@ -77,10 +77,6 @@ for label in tqdm(labels_presenti):
     # filtro il dataframe per il label corrente, lo ordino e resetto l'indice
     df_label = df[df['label'] == label].sort_values(by='DATE-OBS').reset_index(drop=True)
 
-    # individuo i punti con magnitudine maggiore o uguale a 10 e li fisso a 10
-    maschera_upper = df_label['Mag_estratta'] >= 10
-    df_label.loc[maschera_upper, 'Mag_estratta'] = 10
-
     # inizializzo le liste per costruire il mio asse X fittizio
     asse_x_compresso = [0.0]
     posizioni_etichette = [0.0]
@@ -95,16 +91,20 @@ for label in tqdm(labels_presenti):
     # decido quanto deve essere largo visivamente il gap sul grafico (120 unità fittizie)
     spazio_fisso_gap = 120.0
 
-    # ciclo tra i punti per calcolare le distanze
+    # ciclo tra i punti per calcolare le distanze e verificare i cambi di run
     for i in range(1, len(df_label)):
         t_prec = df_label.loc[i - 1, 'DATE-OBS']
         t_corr = df_label.loc[i, 'DATE-OBS']
 
+        # estraggo il RUN_ID per il punto precedente e quello corrente
+        run_prec = df_label.loc[i - 1, 'RUN_ID']
+        run_corr = df_label.loc[i, 'RUN_ID']
+
         # calcolo i secondi reali trascorsi
         dt = (t_corr - t_prec).total_seconds()
 
-        # se il gap supera i 300 secondi, applico la compressione e cambio run
-        if dt > 300:
+        # se il RUN_ID cambia, applico la compressione e cambio run
+        if run_prec != run_corr:
             run_corrente += 1
             # salvo la posizione centrale per la linea rossa
             posizioni_linee_rosse.append(asse_x_compresso[-1] + spazio_fisso_gap / 2)
@@ -134,45 +134,20 @@ for label in tqdm(labels_presenti):
     for run_id, df_run in df_label.groupby('run_id'):
         df_run = df_run.reset_index(drop=True)
 
-        # Disegno la banda continua dell'errore unicamente per i punti di questa specifica run
+        # disegno la banda continua dell'errore unicamente per i punti di questa specifica run
         plt.fill_between(df_run['x_plot'],
                          df_run['Mag_estratta'] - df_run['err_Mag_estratta'],
                          df_run['Mag_estratta'] + df_run['err_Mag_estratta'],
                          color='black', alpha=0.15, edgecolor='none')
 
-        # Se c'è solo un punto nella run, lo plotto come marcatore singolo
+        # se c'è solo un punto nella run, lo plotto come marcatore singolo
         if len(df_run) == 1:
             p = df_run.iloc[0]
-            is_falso = p['segmentazione_trovata'] in [False, 'False', 'false']
-            col_singolo = 'darkgray' if is_falso else 'black'
-            plt.plot(p['x_plot'], p['Mag_estratta'], marker='o', color=col_singolo, markersize=3)
+            plt.plot(p['x_plot'], p['Mag_estratta'], marker='o', color='black', markersize=3)
             continue
 
-        # Disegno la linea segmento per segmento valutando lo stato di 'segmentazione_trovata'
-        for i in range(len(df_run) - 1):
-            p1 = df_run.iloc[i]
-            p2 = df_run.iloc[i + 1]
-
-            # Se almeno uno dei due punti non è stato trovato nei parquet, uso la formattazione speciale
-            p1_falso = p1['segmentazione_trovata'] in [False, 'False', 'false']
-            p2_falso = p2['segmentazione_trovata'] in [False, 'False', 'false']
-
-            if p1_falso or p2_falso:
-                colore = 'darkgray'
-                stile = '--'
-            else:
-                colore = 'black'
-                stile = '-'
-
-            plt.plot([p1['x_plot'], p2['x_plot']],
-                     [p1['Mag_estratta'], p2['Mag_estratta']],
-                     linestyle=stile, color=colore, linewidth=0.5)
-
-    # inserisco le freccine arancioni per i punti upper limit
-    if maschera_upper.any():
-        df_upper = df_label[maschera_upper]
-        plt.plot(df_upper['x_plot'], df_upper['Mag_estratta'], marker='v', color='orange', linestyle='None',
-                 label='upper limit')
+        # disegno la linea continua per la run corrente senza valutare la segmentazione
+        plt.plot(df_run['x_plot'], df_run['Mag_estratta'], linestyle='-', color='black', linewidth=0.5)
 
     contatore = 0
 

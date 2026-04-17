@@ -99,6 +99,7 @@ for file_p in tqdm(file_parquet, desc="Analisi file"):
 
             # Estraggo il nome del file FITS dal dizionario
             nome_file_fits = header.get('NOME_FILE_FITS')
+            nome_run = header.get('RUN_ID')
 
             # Ricavo il nome della cartella dalle prime 8 cifre del nome del file FITS
             nome_cartella = str(nome_file_fits)[:8] if nome_file_fits is not None else None
@@ -107,6 +108,7 @@ for file_p in tqdm(file_parquet, desc="Analisi file"):
             df_trovati['DATE-OBS'] = date_obs
             df_trovati['nome_file_fits'] = nome_file_fits
             df_trovati['nome_cartella'] = nome_cartella
+            df_trovati['RUN_ID'] = nome_run
 
             dati_estratti.append(df_trovati)
 
@@ -123,7 +125,7 @@ if dati_estratti:
     df_risultati = pd.concat(dati_estratti, ignore_index=True)
 
     # Cerco la cartella dove salvare i risultati
-    cartella_output = cerca_cartella_nel_progetto(BASE_DIR, "presenza_consecutiva_multirun")
+    cartella_output = cerca_cartella_nel_progetto(BASE_DIR, "sorgenti catalogate")
 
     # Definisco il percorso per il nuovo file
     percorso_finale = cartella_output / "candidati_frame.csv"

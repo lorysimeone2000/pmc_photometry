@@ -133,7 +133,7 @@ df_multirun = df_originale[df_originale['numero_di_run'] > 1].copy()
 # 4. SALVATAGGIO DEI RISULTATI
 # =============================================================================
 
-cartella_output = cerca_cartella_nel_progetto(BASE_DIR, "sorgenti_catalogate")
+cartella_output = cerca_cartella_nel_progetto(BASE_DIR, "sorgenti catalogate")
 percorso = cartella_output / "oggetti_presenza_CATALOGATI_multirun.csv"
 
 df_multirun.to_csv(percorso, index=False)

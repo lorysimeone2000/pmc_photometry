@@ -32,12 +32,12 @@ BASE_DIR = trova_cartella_base("Lorenzo")
 
 # individuo il file CSV con gli oggetti consecutivi
 percorso_csv = None
-for file in BASE_DIR.rglob("presenza_consecutiva_CATALOGATI_multirun.csv"):
+for file in BASE_DIR.rglob("oggetti_presenza_CATALOGATI_multirun.csv"):
     percorso_csv = file
     break
 
 if percorso_csv is None:
-    print("ERROR: Could not find 'oggetti_presenza_multirun.csv'.")
+    print("ERROR: Could not find 'oggetti_presenza_CATALOGATI_multirun.csv'.")
     sys.exit()
 
 # carico i dati
@@ -98,7 +98,7 @@ print(f"Standard deviation: {np.std(mag_max):.2f}")
 
 # individuo la mia cartella di output di base
 cartella_output_base = None
-for cartella in BASE_DIR.rglob("presenza_consecutiva_multirun"):
+for cartella in BASE_DIR.rglob("sorgenti catalogate"):
     cartella_output_base = cartella
     break
 

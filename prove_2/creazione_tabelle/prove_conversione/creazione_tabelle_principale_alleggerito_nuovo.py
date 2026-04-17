@@ -954,10 +954,10 @@ if __name__ == "__main__":
                            'stat_group_id']:
                 if temp_c in cols: cols.remove(temp_c)
 
-            # elimino la colonna base per lasciare solamente quella richiesta
+            '''# elimino la colonna base per lasciare solamente quella richiesta
             colonna_base = 'flusso_fisso_max_run_CORRETTO_Correzione_Additiva_dell_Apertura'
             if colonna_base in cols:
-                cols.remove(colonna_base)
+                cols.remove(colonna_base)'''
 
             df_file = df_file.copy()
 

@@ -8,22 +8,22 @@ df = pd.read_csv('curva_PMC.csv')
 fig, ax = plt.subplots(figsize=(10, 5))
 
 # Definizione degli intervalli delle bande con i relativi colori
-'''intervalli = { # versione panstarr
+intervalli = { # versione panstarr
     'm_g [414;551]': (414, 551),    # banda g: da 400 a 550 nm
     'm_r [551;689]': (551, 689),    # banda r: da 555 a 705 nm
     'm_i [690;819]': (690, 819),    # banda i: da 688 a 850 nm
     'm_z [819;922]': (819, 922),    # banda z: da 812 a 920 nm
     'm_y [922;1001]': (922, 1001)    # banda y: da 922 a 1005 nm
-}'''
+}
 
 
-intervalli = { # versione classica
+'''intervalli = { # versione classica
     'm_g [400;550]': (400, 550),    # banda g: da 400 a 550 nm
     'm_r [555;705]': (555, 705),    # banda r: da 555 a 705 nm
     'm_i [688;850]': (688, 850),    # banda i: da 688 a 850 nm
     'm_z [812;920]': (812, 920),    # banda z: da 812 a 920 nm
     'm_y [922;1005]': (922, 1005)    # banda y: da 922 a 1005 nm
-}
+}'''
 
 # Mappa dei colori per le bande (sfumature tenui e riconoscibili)
 colori_bande = {
@@ -81,7 +81,7 @@ ax.text(550, 1.03, 'm_V [500;600]', transform=ax.get_xaxis_transform(), ha='cent
 plt.subplots_adjust(top=0.85)
 
 # Salvo l'immagine
-plt.savefig('curva_PMC_intervalli_ufficiali.png', dpi=300, bbox_inches='tight')
+plt.savefig('curva_PMC_intervalli_calcolati.png', dpi=300, bbox_inches='tight')
 
 # Avvio il render a schermo del grafico finale
 #plt.show()

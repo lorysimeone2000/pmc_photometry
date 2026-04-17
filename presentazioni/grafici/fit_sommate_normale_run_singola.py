@@ -113,11 +113,24 @@ mask_match_globale = df_total['Corrispondenza'] == True
 df_match_all = df_total[mask_match_globale].copy()
 df_no_match_all = df_total[~mask_match_globale].copy()
 
-# deduplico i miei dati catalogati ordinandoli per label e poi per magnitudine (crescente)
+
+# definisco la mia funzione per calcolare la somma logaritmica delle magnitudini
+def somma_magnitudini(mags):
+    # applico la mia formula convertendo in flussi proporzionali, sommandoli e riconvertendo in magnitudine
+    return -2.5 * np.log10(np.sum(10 ** (-0.4 * mags)))
+
+
+# calcolo le mie magnitudini totali raggruppandole per label
+mag_sommate = df_match_all.groupby('label')['Mag'].apply(somma_magnitudini)
+
+# deduplico i miei dati catalogati ordinandoli per label e poi per magnitudine (crescente) originale
 df_match_sorted = df_match_all.sort_values(by=['label', 'Mag'], ascending=[True, True])
 
-# tengo esclusivamente la prima occorrenza per ogni label (quella con Mag minore)
+# tengo esclusivamente la prima occorrenza per ogni label in modo da conservare le mie restanti colonne intatte
 df_match = df_match_sorted.drop_duplicates(subset=['label'], keep='first').copy()
+
+# aggiorno la mia colonna della magnitudine associando ad ogni label il mio calcolo sommato
+df_match['Mag'] = df_match['label'].map(mag_sommate)
 
 # rimuovo i duplicati dai miei dati non catalogati basandomi unicamente sulla label
 df_no_match = df_no_match_all.drop_duplicates(subset=['label'], keep='first').copy()
@@ -226,7 +239,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             plt.errorbar(
                 X, Y_flux, yerr=sigma_flux,
                 fmt='o', markersize=1, color='blue', ecolor='lightblue', alpha=0.7,
-                label=f'Catalogati Validi ({len(X)})'
+                label=f'Valid catalogued objects ({len(X)})'
             )
 
             # disegno le mie stelle sature (X Rosse)
@@ -236,7 +249,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
                     df_sature_plot['Mag'],
                     df_sature_plot[col_media],
                     s=40, c='red', marker='x', linewidth=1,
-                    label=f'Sature (Escluse) ({len(df_sature_plot)})', zorder=20
+                    label=f'Saturated objects (excluded) ({len(df_sature_plot)})', zorder=20
                 )
 
             # disegno i miei oggetti senza corrispondenza (Rombi Arancioni)
@@ -248,15 +261,15 @@ for flusso in FLUSSI_DA_ANALIZZARE:
                     np.full(len(df_no_match_plot), mag_fittizia),
                     df_no_match_plot[col_media],
                     s=40, c='orange', marker='D', edgecolors='black', alpha=0.8,
-                    label=f'NON Catalogati ({len(df_no_match_plot)})', zorder=10
+                    label=f'Uncatalogued objects ({len(df_no_match_plot)})', zorder=10
                 )
 
-                # aggiungo la mia annotazione
-                plt.annotate("Mag Fittizia",
-                             xy=(mag_fittizia, np.mean(df_no_match_plot[col_media])),
-                             xytext=(mag_fittizia, np.max(df_no_match_plot[col_media]) * 1.5),
+                # aggiungo la mia annotazione formattata
+                plt.annotate("Dummy magnitude",
+                             xy=(mag_fittizia, np.max(df_no_match_plot[col_media]) * 1.1),
+                             xytext=(mag_fittizia, np.max(df_no_match_plot[col_media]) * 2.0),
                              arrowprops=dict(facecolor='black', arrowstyle='->'),
-                             ha='center')
+                             ha='center', fontsize=18)
 
                 # aggiorno i miei limiti del plot se necessario
                 x_min_plot = min(np.min(X), mag_fittizia - 0.5)
@@ -268,25 +281,28 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             x_plot = np.linspace(x_min_plot, x_max_plot, 100)
             y_plot_log = modello_lineare(x_plot, m_fit, q_fit)
 
-            # aggiungo il mio errore sui parametri nella label
-            # uso rf anche sulla seconda stringa per correggere il SyntaxWarning
-            label_fit = (rf'Fit: log(F)=({m_fit:.2f}$\pm${err_m:.2f})M + ({q_fit:.2f}$\pm${err_q:.2f})'
-                         rf'$\chi^2_R$={chi2_red:.2f}')
+            # formatto le mie stringhe di errore di supporto per omettere il valore 0.00
+            str_err_m = f"$\\pm${err_m:.2f}" if f"{err_m:.2f}" != "0.00" else ""
+            str_err_q = f"$\\pm${err_q:.2f}" if f"{err_q:.2f}" != "0.00" else ""
+
+            # creo la mia etichetta rimuovendo il chi quadro ridotto e inserendo le stringhe preformattate
+            label_fit = rf'Fit: log(F)=({m_fit:.2f}{str_err_m})M + ({q_fit:.2f}{str_err_q})'
 
             plt.plot(x_plot, 10 ** y_plot_log, 'k--', linewidth=2, label=label_fit)
 
-            # configuro il mio grafico
+            # configuro il mio grafico scalandolo per l'inserimento in LaTeX
             plt.yscale('log')
             plt.gca().invert_xaxis()
-            plt.xlabel("Magnitudine Catalogo (Mag)", fontsize=12)
-            plt.ylabel(f"Media {flusso} (ADU)", fontsize=12)
-            plt.title(f"Calibrazione Fotometrica Globale (Run {RUN_TO_ANALYZE}) - {flusso}", fontsize=14)
+            plt.xticks(fontsize=18)
+            plt.yticks(fontsize=18)
+            plt.xlabel("Catalogue magnitude (Mag)", fontsize=24)
+            plt.ylabel("Instrumental flux (ADU)", fontsize=24)
             plt.grid(True, which="both", ls="-", alpha=0.2)
-            plt.legend(fontsize=11, loc='best')
+            plt.legend(fontsize=20, loc='best')
             plt.tight_layout()
 
             # salvo il mio grafico
-            out_file = f"fit_normale_run_1.png"
+            out_file = f"fit_normale_sommate_run_1.png"
             plt.savefig(out_file, dpi=300)
             print(f"Grafico salvato: {out_file}")
 

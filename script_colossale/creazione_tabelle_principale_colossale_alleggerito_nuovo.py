@@ -189,7 +189,7 @@ if __name__ == "__main__":
     next_internal_id = 1
 
     cartella_dati = cerca_cartella_intero_pc("ASTRI1")
-    cartella_tabelle = BASE_DIR / "tabelle_COLOSSALE_alleggerito" / "tabelle_unite"
+    cartella_tabelle = BASE_DIR / "tabelle_COLOSSALE_alleggerito_nuovo_label" / "tabelle_unite"
     cartella_dati_1 = cartella_dati
 
     if cartella_dati is None or not Path(cartella_dati).exists():

@@ -303,7 +303,7 @@ for centro_corrente in tqdm(centri_finali, desc="Scaricamento miniquery"):
         if len(risultato_mini) > 0:
             tabelle_parziali.append(risultato_mini[0])
     except Exception:
-        # ignoro silenziosamente i fallimenti isolati per proseguire l'estrazione
+        print("ignoro i fallimenti isolati per proseguire l'estrazione")
         pass
 
     # metto la pausa richiesta tra una query e l'altra

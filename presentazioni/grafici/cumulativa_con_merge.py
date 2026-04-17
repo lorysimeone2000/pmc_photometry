@@ -300,12 +300,12 @@ plt.yscale('log')
 plt.xlabel('Magnitude (Bin Centres)')
 plt.ylabel('Mean Frequency (Counts / Image)')
 
-# Costruisco il titolo
+'''# Costruisco il titolo
 titolo = f'Mean Magnitude Distribution: Catalogued vs Correlated (Runs {RUNS})\n'
 titolo += f'Mean of {totale_correlate / immagini_totali:.1f} matches out of {totale_catalogate / immagini_totali:.1f} catalogued per image'
 if fwhm_usato and size_usato:
     titolo += f' (FWHM = {fwhm_usato}, size = {size_usato})'
-plt.title(titolo, pad=12) # Aggiungo padding per staccare il titolo dal riquadro
+plt.title(titolo, pad=12) # Aggiungo padding per staccare il titolo dal riquadro'''
 
 # Inverto l'asse X (magnitudini astronomiche)
 plt.gca().invert_xaxis()
@@ -318,8 +318,6 @@ plt.tight_layout()
 print(f"Tempo preparazione grafico Matplotlib: {time.perf_counter() - t0_plot:.3f} s")
 print("--- Fine monitoraggio, avvio render grafico ---")
 
-# Suggerimento: salvalo come PDF vettoriale per la tesi in LaTeX
-plt.savefig('magnitude_distribution.pdf', format='pdf', bbox_inches='tight')
 plt.savefig('magnitude_distribution.png', format='png', bbox_inches='tight')
 
 #plt.show()

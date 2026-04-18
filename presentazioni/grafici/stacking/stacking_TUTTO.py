@@ -206,7 +206,7 @@ for run in [1, 2, 3]:
 
     # --- PASSO 3: SALVATAGGIO ---
 
-    output_dir = f'/home/lorysimeone/tesi_magistrale/prove_2/stacking/'
+    output_dir = cerca_cartella_nel_progetto(BASE_DIR, "grafici/stacking")
 
     # 1. Salvataggio Immagine Sommata
     output_filename = os.path.join(output_dir, f'run_{run}_stacked_sum.fits')

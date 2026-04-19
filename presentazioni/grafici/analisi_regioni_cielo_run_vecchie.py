@@ -96,7 +96,7 @@ if PMC_DATA_BLAZAR:
     plt.figure(figsize=(12, 6))
 
     # elimino il titolo e configuro i testi degli assi con dimensioni per foglio A4 su LaTeX
-    plt.xlabel("Time elapsed since the first image (minutes)", fontsize=18)
+    plt.xlabel("Time (minutes)", fontsize=20)
     plt.ylabel("RAJ2000 coordinate (degrees)", fontsize=18)
 
     # imposto la grandezza dei numeri di riferimento sugli assi

@@ -77,11 +77,17 @@ for label in tqdm(labels_presenti):
     # filtro il dataframe per il label corrente, lo ordino e resetto l'indice
     df_label = df[df['label'] == label].sort_values(by='DATE-OBS').reset_index(drop=True)
 
+    # estraggo il momento esatto della prima osservazione assoluta per questa curva
+    t_inizio_assoluto = df_label.loc[0, 'DATE-OBS']
+
     # inizializzo le liste per costruire il mio asse X fittizio
     asse_x_compresso = [0.0]
     posizioni_etichette = [0.0]
-    # inserisco solo la data di inizio della prima run nel formato giorno/mese/anno
-    testi_etichette = [df_label.loc[0, 'DATE-OBS'].strftime('%d/%m/%Y\n%H:%M:%S')]
+
+    # la prima etichetta è sempre 0 (giorno iniziale)
+    testi_etichette = ['0']
+    ultimo_valore_scritto = 0
+
     posizioni_linee_rosse = []
 
     # inizializzo il tracciamento della run per separare i plot
@@ -100,7 +106,7 @@ for label in tqdm(labels_presenti):
         run_prec = df_label.loc[i - 1, 'RUN_ID']
         run_corr = df_label.loc[i, 'RUN_ID']
 
-        # calcolo i secondi reali trascorsi
+        # calcolo i secondi reali trascorsi dal punto precedente
         dt = (t_corr - t_prec).total_seconds()
 
         # se il RUN_ID cambia, applico la compressione e cambio run
@@ -109,13 +115,23 @@ for label in tqdm(labels_presenti):
             # salvo la posizione centrale per la linea rossa
             posizioni_linee_rosse.append(asse_x_compresso[-1] + spazio_fisso_gap / 2)
 
-            # avanzo nel mio grafico solo dello spazio fisso, ignorando il vuoto temporale reale
+            # avanzo nel mio grafico solo dello spazio fisso
             nuovo_x = asse_x_compresso[-1] + spazio_fisso_gap
             asse_x_compresso.append(nuovo_x)
 
-            # registro esclusivamente l'INIZIO della nuova run, usando il formato richiesto
+            # registro la posizione del cambio run per il tick
             posizioni_etichette.append(nuovo_x)
-            testi_etichette.append(t_corr.strftime('%d/%m/%Y\n%H:%M:%S'))
+
+            # calcolo i giorni interi trascorsi
+            giorni_trascorsi = (t_corr - t_inizio_assoluto).days
+
+            # aggiungo il testo solo se il valore è cambiato rispetto all'ultima etichetta mostrata
+            if giorni_trascorsi != ultimo_valore_scritto:
+                testi_etichette.append(str(giorni_trascorsi))
+                ultimo_valore_scritto = giorni_trascorsi
+            else:
+                # inserisco una stringa vuota per mantenere il tick senza testo ripetuto
+                testi_etichette.append("")
         else:
             # se fa parte della stessa run, mantengo la distanza temporale proporzionale reale
             asse_x_compresso.append(asse_x_compresso[-1] + dt)
@@ -134,7 +150,7 @@ for label in tqdm(labels_presenti):
     for run_id, df_run in df_label.groupby('run_id'):
         df_run = df_run.reset_index(drop=True)
 
-        # disegno la banda continua dell'errore unicamente per i punti di questa specifica run
+        # disegno la banda continua dell'errore
         plt.fill_between(df_run['x_plot'],
                          df_run['Mag_estratta'] - df_run['err_Mag_estratta'],
                          df_run['Mag_estratta'] + df_run['err_Mag_estratta'],
@@ -146,38 +162,40 @@ for label in tqdm(labels_presenti):
             plt.plot(p['x_plot'], p['Mag_estratta'], marker='o', color='black', markersize=3)
             continue
 
-        # disegno la linea continua per la run corrente senza valutare la segmentazione
+        # disegno la linea continua per la run corrente
         plt.plot(df_run['x_plot'], df_run['Mag_estratta'], linestyle='-', color='black', linewidth=0.5)
 
-    contatore = 0
+    contatore_linee = 0
 
-    # disegno le linee rosse tratteggiate nei punti centrali dei gap compressi, con testo in inglese
+    # disegno le linee rosse tratteggiate
     for pos in posizioni_linee_rosse:
-
-        contatore += 1
-
-        if contatore == 1:
-            plt.axvline(x=pos, color='darkgray', linestyle='--', alpha=0.6, linewidth=0.5, label='Run change')
-            plt.legend()
+        contatore_linee += 1
+        if contatore_linee == 1:
+            # uso il rosso per la prima riga per far coincidere il colore con la legenda
+            plt.axvline(x=pos, color='red', linestyle='--', alpha=0.6, linewidth=0.5, label='Run change')
         else:
             plt.axvline(x=pos, color='red', linestyle='--', alpha=0.6, linewidth=0.5)
 
-    # inverto l'asse y una sola volta per tutto il grafico fuori dal ciclo
+    # aggiungo la legenda se presente modificando il font per adattarlo a LaTeX
+    if contatore_linee > 0:
+        plt.legend(fontsize=16)
+
+    # inverto l'asse y
     plt.gca().invert_yaxis()
 
-    # applico le mie etichette di testo personalizzate, riducendo il font e usando il nuovo formato
-    plt.xticks(posizioni_etichette, testi_etichette, rotation=45, fontsize=10)
+    # applico le etichette dei giorni solo se univoche, rimpicciolendo il font per compensare il resize in LaTeX
+    plt.xticks(posizioni_etichette, testi_etichette, rotation=0, fontsize=12)
+    plt.yticks(fontsize=14)
 
-    # aggiungo i titoli e le etichette agli assi, tradotti e formattati per visibilità su A4
-    plt.title(f'Magnitude trend over time for object {label}', fontsize=16, pad=15)
-    plt.xlabel('Observation date (Run Start)', fontsize=14)
-    plt.ylabel('Extracted magnitude', fontsize=14)
+    # aggiungo le etichette agli assi in inglese britannico con font leggibili
+    plt.xlabel('Days from first observation', fontsize=18)
+    plt.ylabel('Extracted magnitude', fontsize=18)
 
-    # ottimizzo la disposizione degli elementi nel grafico PRIMA di salvare l'immagine
+    # ottimizzo la disposizione
     plt.tight_layout()
 
-    # salvo il grafico nella mia cartella definita prima del ciclo
-    plt.savefig(output_dir / f'curva_{label}.png')
+    # salvo il grafico
+    plt.savefig(output_dir / f'curva_con_tagli_{label}.png')
 
-    # chiudo la figura per mantenere pulita la memoria durante le iterazioni
+    # chiudo la figura
     plt.close()

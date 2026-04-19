@@ -196,7 +196,8 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             # 4. PLOTTING E CALCOLO FIT BINNATO PER SINGOLA RUN
             # =============================================================================
             # creo il mio grafico impostando dimensioni ottimali per mezza colonna (A4)
-            plt.figure(figsize=(12, 9))
+            #figsize=(4.66, 3.5)
+            plt.figure(figsize=(4.66, 3.5))
 
             # disegno le mie stelle sature (X Rosse) omettendo la label
             # mi assicuro di avere i miei dati validi per il plot
@@ -225,7 +226,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
                              xy=(mag_fittizia, np.max(df_no_match_plot[col_media]) * 1.1),
                              xytext=(mag_fittizia, np.max(df_no_match_plot[col_media]) * 2.0),
                              arrowprops=dict(facecolor='black', arrowstyle='->'),
-                             ha='center', fontsize=18)
+                             ha='center', fontsize=8)
 
                 # aggiorno i miei limiti del plot se necessario
                 x_min_plot = min(np.min(X_globale), mag_fittizia - 0.5)
@@ -276,7 +277,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
                     # disegno i miei punti della singola run omettendo la label per ripulire la legenda
                     plt.errorbar(
                         X_run, Y_flux_run, yerr=sigma_flux_run,
-                        fmt='o', markersize=1, color=colore_linea, ecolor=colore_linea, alpha=0.7,
+                        fmt='o', markersize=.3, color=colore_linea, ecolor=colore_linea, alpha=0.7,
                         zorder=15
                     )
 
@@ -352,7 +353,7 @@ for flusso in FLUSSI_DA_ANALIZZARE:
                     label_fit = rf'Binned Fit Run {run_id}: log(F)=({m_fit:.2f}$\pm${err_m:.2f})M + ({q_fit:.2f}$\pm${err_q:.2f})'
 
                     # disegno la mia retta di fit (non tratteggiata, spessore 1, colore dedicato)
-                    plt.plot(x_plot, 10 ** y_plot_log, color=colore_linea, linestyle='-', linewidth=1, label=label_fit,
+                    plt.plot(x_plot, 10 ** y_plot_log, color=colore_linea, linestyle='-', linewidth=.3, label=label_fit,
                              zorder=16)
                     # disegno i miei bin usati per il fit (Verdi)
                     plt.errorbar(
@@ -370,15 +371,15 @@ for flusso in FLUSSI_DA_ANALIZZARE:
             plt.gca().invert_xaxis()
 
             # dimensiono i tick degli assi scalandoli per LaTeX
-            plt.tick_params(axis='both', which='major', labelsize=20)
+            plt.tick_params(axis='both', which='major', labelsize=8)
 
             # dimensiono le label degli assi scalandole per LaTeX
-            plt.xlabel("Catalogue magnitude (mag)", fontsize=22)
-            plt.ylabel("Instrumental flux (ADU)", fontsize=22)
+            plt.xlabel("Catalogue magnitude (mag)", fontsize=10)
+            plt.ylabel("Instrumental flux (ADU)", fontsize=10)
             plt.grid(True, which="both", ls="-", alpha=0.2)
 
             # dimensiono la grandezza della legenda scalandola per LaTeX
-            plt.legend(fontsize=18, loc='best')
+            plt.legend(fontsize=6, loc='best')
             plt.tight_layout()
 
             # salvo il mio grafico

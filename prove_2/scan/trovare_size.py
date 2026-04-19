@@ -20,6 +20,52 @@ start_time = time.time()
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 warnings.filterwarnings('ignore', category=UserWarning)
 
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import sys
+import json
+import pyarrow.parquet as pq
+from tqdm import tqdm
+from pathlib import Path
+from astropy.table import Table
+import warnings
+from astropy.wcs import FITSFixedWarning
+from astropy.io.fits.verify import VerifyWarning
+from astropy.utils.exceptions import AstropyUserWarning
+from collections import Counter
+
+# gestisco i warning ignorandoli
+warnings.filterwarnings('ignore', category=FITSFixedWarning)
+warnings.filterwarnings('ignore', message='.*failed to converge.*', category=UserWarning)
+warnings.simplefilter('ignore', category=FITSFixedWarning)
+warnings.filterwarnings('ignore', category=VerifyWarning)
+
+
+# =============================================================================
+# 0. CONFIGURAZIONE PERCORSI E IMPORTAZIONE MODULI ESTERNI
+# =============================================================================
+
+def trova_cartella_base(nome_target="pmc_photometry"):
+    path_corrente = Path(__file__).resolve()
+    for parent in [path_corrente] + list(path_corrente.parents):
+        if parent.name == nome_target:
+            return parent
+    print(f"ATTENZIONE: Cartella '{nome_target}' non trovata nell'albero. Uso la directory dello script.")
+    return path_corrente.parent
+
+
+BASE_DIR = trova_cartella_base("Lorenzo")
+
+PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
+
+if PERCORSO_FUNZIONI not in sys.path:
+    sys.path.append(PERCORSO_FUNZIONI)
+
+from funzioni.utilita_parquet import *
+from funzioni.astrometria_parquet import *
+
 # --- PARAMETRI ---
 RUN = 1
 IMG_RIFERIMENTO_IDX = 35
@@ -37,7 +83,7 @@ FIXED_THRESHOLD = 3.61
 # Definiamo il range di SIZE da testare
 # Il valore di base era 5. Testiamo valori interi dispari attorno a 5.
 # Genera: [3, 5, 7, 9, 11, 13, 15]
-SIZE_RANGE = np.arange(3, 16, 2)
+SIZE_RANGE = np.arange(3, 21, 2)
 
 # Parametri fissi di segmentazione (il valore 'size' verrà sovrascritto nel loop)
 PARAMETRI_BASE = {
@@ -224,6 +270,7 @@ for x, y in zip(SIZE_RANGE, risultati_conteggi):
     plt.annotate(f'{y}', (x, y), textcoords="offset points", xytext=(0, 10), ha='center')
 
 plt.tight_layout()
+plt.savefig('size_1')
 plt.show()
 
 # --- CALCOLO TEMPO TRASCORSO ---

@@ -48,8 +48,8 @@ warnings.filterwarnings('ignore', category=FITSFixedWarning) # Sopprime il warni
 from pathlib import Path
 
 # --- DEFINIZIONE FILE ---
-image_file_c = "/home/lorysimeone/tesi_magistrale/prove_2/stacking/run_1_coverage_map.fits"
-image_file   = "/home/lorysimeone/tesi_magistrale/prove_2/stacking/run_1_stacked_sum.fits"
+image_file_c = "master_coverage_map.fits"
+image_file   = "master_stacked_sum.fits"
 
 
 # --- CARICAMENTO E CREAZIONE MASCHERA ---
@@ -86,9 +86,9 @@ plt.figure(figsize=(10, 8))
 plt.imshow(data, cmap="grey_r", norm=LogNorm(), interpolation='nearest') #genero l'immagine con scala di colori bianco e nero
 plt.gca().invert_yaxis() # inverto asse y
 plt.colorbar()
-plt.title(f'Immagine Sommata (Copertura={int(full_coverage_value)})')
+plt.title(f'Immagine Sommata (Copertura={int(full_coverage_value)}) run')
 plt.xlabel('X (pixel)')
 plt.ylabel('Y (pixel)')
 
-plt.savefigure("SOMMA_TUTTO.png")
+plt.savefig("SOMMA_TUTTO.png")
 #plt.show()

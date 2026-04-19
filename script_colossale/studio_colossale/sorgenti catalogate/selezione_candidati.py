@@ -59,16 +59,19 @@ stella_bright = df[df['Mag_estratta_max'] == df['Mag_estratta_max'].min()].sampl
 df_rimanente = df.drop(stella_bright.index)
 
 # estraggo casualmente una stella con magnitudine attorno a 6 (intervallo tra 5.5 e 6.5)
-stella_mag6 = df_rimanente[(df_rimanente['Mag_estratta_max'] >= 5.5) & (df_rimanente['Mag_estratta_max'] <= 6.5)].sample(n=1)
+#stella_mag6 = df_rimanente[(df_rimanente['Mag_estratta_max'] >= 5.5) & (df_rimanente['Mag_estratta_max'] <= 6.5)].sample(n=1)
 
 # estraggo casualmente una stella con magnitudine attorno a 8 (intervallo tra 7.5 e 8.5)
-stella_mag8 = df_rimanente[(df_rimanente['Mag_estratta_max'] >= 7.5) & (df_rimanente['Mag_estratta_max'] <= 8.5)].sample(n=1)
+#stella_mag8 = df_rimanente[(df_rimanente['Mag_estratta_max'] >= 7.5) & (df_rimanente['Mag_estratta_max'] <= 8.5)].sample(n=2)
 
 # estraggo casualmente una stella con magnitudine attorno a 10 (intervallo tra 9.5 e 10.5)
-stella_mag10 = df_rimanente[(df_rimanente['Mag_estratta_max'] >= 9.5) & (df_rimanente['Mag_estratta_max'] <= 10.5)].sample(n=1)
+#stella_mag10 = df_rimanente[(df_rimanente['Mag_estratta_max'] >= 9.5) & (df_rimanente['Mag_estratta_max'] <= 10.5)].sample(n=2)
+
+stella_senza_tagli = df_rimanente[(df_rimanente['label'] == 'RA_79.81DEC20.13')]
+stella_senza_tagli_2 = df_rimanente[(df_rimanente['label'] == 'RA_84.63DEC18.35')]
 
 # concateno le mie 4 selezioni in un unico dataframe
-df_filtrato = pd.concat([stella_bright, stella_mag6, stella_mag8, stella_mag10])
+df_filtrato = pd.concat([stella_senza_tagli,stella_senza_tagli_2])
 
 # =============================================================================
 # 2. SALVATAGGIO DEI RISULTATI

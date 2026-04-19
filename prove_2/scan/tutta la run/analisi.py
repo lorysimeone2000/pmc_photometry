@@ -63,16 +63,15 @@ df_totale = pd.concat(lista_dataframes_interpolati)
 df_medio = df_totale.groupby('FWHM').mean().reset_index()
 
 # --- 4. TRACCIO IL GRAFICO ---
-# Impostazione dimensioni testo per subfigure in LaTeX (Titolo e Etichette raddoppiati)
-plt.rc('font', size=24)          # Dimensione base raddoppiata
-plt.rc('axes', titlesize=15)     # Titolo raddoppiato (da 13 a 26)
-plt.rc('axes', labelsize=24)     # Etichette assi X e Y raddoppiate (da 12 a 24)
-plt.rc('xtick', labelsize=10)    # Numeri asse X invariati
-plt.rc('ytick', labelsize=10)    # Numeri asse Y invariati
-plt.rc('legend', fontsize=10)    # Testo della legenda invariato
+# imposto le dimensioni del testo per subfigure in LaTeX (senza titolo, adattate per A4)
+plt.rc('font', size=11)          # dimensione base adatta a documenti LaTeX
+plt.rc('axes', labelsize=11)     # etichette assi X e Y proporzionate al testo
+plt.rc('xtick', labelsize=10)    # numeri asse X
+plt.rc('ytick', labelsize=10)    # numeri asse Y
+plt.rc('legend', fontsize=10)    # testo della legenda
 
-# Dimensioni compatte adatte alla larghezza di un foglio A4
-plt.figure(figsize=(8, 6))
+# imposto dimensioni compatte equivalenti a circa 0.85\textwidth per un foglio A4 (circa 13.7 cm)
+plt.figure(figsize=(5.4, 4))
 x_axis = df_medio['FWHM']
 
 for size_val in SIZES_TO_TEST:
@@ -83,30 +82,26 @@ for size_val in SIZES_TO_TEST:
 
         # traccio la linea continua per la media delle stelle perse
         plt.plot(x_axis, df_medio[col_perse_mean],
-                 color=colors_perse[size_val], linestyle='-', linewidth=2,
-                 label=f'Lost Stars (Mag < 10) - Size {size_val}')
+                 color=colors_perse[size_val], linestyle='-', linewidth=1.5,
+                 label=f'Lost stars (mag < 10) (size {size_val})')
 
         # traccio la linea tratteggiata per la media dei falsi positivi
         plt.plot(x_axis, df_medio[col_fp_mean],
-                 color=colors_fp[size_val], linestyle='--', linewidth=2,
-                 label=f'Unmatched Segmentations - Size {size_val}')
+                 color=colors_fp[size_val], linestyle='--', linewidth=1.5,
+                 label=f'Mean no matched clusters (size {size_val})')
     else:
         print(f"Warning: Columns for Size {size_val} not found in the merged dataset.")
 
 # --- 5. FORMATTO IL GRAFICO ---
 plt.grid(True, which="both", linestyle='--', alpha=0.6)
 plt.xlabel('FWHM')
-plt.ylabel('Mean Number per Image')
+plt.ylabel('Mean number per image')
 plt.yscale('symlog', linthresh=5.0)
-
-# Inserisco il titolo formale in inglese britannico.
-# Ho aumentato il 'pad' a 20 per dare respiro al titolo diventato molto grande.
-plt.title(f'Parameter Scan: Unmatched Segmentations vs Lost Stars < Mag 10\n(Averaged over Runs {RUNS_TO_PROCESS})', pad=20)
 
 ax = plt.gca()
 
 # definisco e applico le tacchette (ticks) personalizzate per l'asse y
-y_ticks = list(range(0, 6)) + list(range(10, 85, 5))
+y_ticks = list(range(0, 6)) + list(range(10, 25, 5)) + list(range(50, 85, 25))
 ax.set_yticks(y_ticks)
 
 # formatto gli assi mantenendo i numeri in formato normale senza notazione scientifica
@@ -122,4 +117,4 @@ plt.tight_layout()
 plt.savefig('scan_parametri_UNIFICATO.png', dpi=300, bbox_inches='tight')
 print("Plot saved as 'scan_parametri_UNIFICATO.png'")
 
-plt.show()
+#plt.show()

@@ -83,11 +83,19 @@ for label in tqdm(labels_presenti):
     # calcolo i giorni trascorsi dal tempo zero per ogni frame
     df_label['giorni_da_t0'] = (df_label['DATE-OBS'] - t_zero).dt.total_seconds() / 86400.0
 
-    # creo la figura per il grafico
-    plt.figure(figsize=(12, 6))
+    # creo la figura per il grafico ottimizzando le dimensioni per 0.90\textwidth in LaTeX
+    plt.figure(figsize=(16, 6))
+
+    i = 0
+
+    # introduco una variabile per memorizzare il tempo medio della run precedente
+    x_medio_precedente = None
 
     # itero sulle singole run sfruttando il RUN_ID originale
     for run_id, df_run in df_label.groupby('RUN_ID'):
+
+        i += 1
+
         # calcolo il centro temporale della run in giorni
         x_medio = df_run['giorni_da_t0'].mean()
 
@@ -97,23 +105,36 @@ for label in tqdm(labels_presenti):
         # calcolo l'errore medio per questa run
         err_medio = df_run['err_Mag_estratta'].mean()
 
+        # controllo se sono passati più di 10 giorni rispetto alla run precedente
+        if x_medio_precedente is not None and (x_medio - x_medio_precedente) > 10:
+            # evidenzio l'area vuota del grafico con uno sfondo giallo trasparente
+            plt.axvspan(x_medio_precedente, x_medio, color='yellow', alpha=0.1)
+
         # traccio il singolo punto medio con la sua barra di errore
         plt.errorbar(x_medio, mag_media, yerr=err_medio, fmt='o', color='black',
-                     markersize=4, capsize=3, ecolor='darkgray', linewidth=1.5)
+                     markersize=2, capsize=1, ecolor='darkgray', linewidth=1.5, label='Run average magnitude')
+
+        # ridimensiono la legenda per renderla proporzionata e visibile su LaTeX
+        if i == 1: plt.legend(fontsize=24)
+
+        # aggiorno il tempo medio precedente per l'iterazione successiva
+        x_medio_precedente = x_medio
 
     # inverto l'asse y una sola volta per tutto il grafico fuori dal ciclo
     plt.gca().invert_yaxis()
 
-    # aggiungo i titoli e le etichette agli assi, formattati per visibilità su A4
-    plt.title(f'Mean magnitude per run for object {label}', fontsize=16, pad=15)
-    plt.xlabel('Days from first observation', fontsize=14)
-    plt.ylabel('Extracted magnitude', fontsize=14)
+    # ridimensiono i tick degli assi per renderli leggibili
+    plt.tick_params(axis='both', which='major', labelsize=24)
+
+    # aggiungo le etichette agli assi, formattate per visibilità su A4 a 0.90\textwidth
+    plt.xlabel('Days from first observation', fontsize=28)
+    plt.ylabel('Extracted magnitude', fontsize=28)
 
     # ottimizzo la disposizione degli elementi nel grafico PRIMA di salvare l'immagine
     plt.tight_layout()
 
-    # salvo il grafico nella mia cartella definita prima del ciclo
-    plt.savefig(output_dir / f'curva_{label}.png')
+    # salvo il grafico nella mia cartella definita prima del ciclo con parametri per l'alta risoluzione
+    plt.savefig(output_dir / f'curva_{label}.png', dpi=300, bbox_inches='tight')
 
     # chiudo la figura per mantenere pulita la memoria durante le iterazioni
     plt.close()

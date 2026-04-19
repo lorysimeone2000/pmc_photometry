@@ -77,6 +77,11 @@ if __name__ == "__main__":
     if file_hipparco:
         hdu_list_hipparco = fits.open(file_hipparco)
         tbl_catalogo_hipparco = Table(hdu_list_hipparco[1].data)
+
+        # rinomino la colonna della magnitudine in Mag se presente come Vmag
+        if 'Vmag' in tbl_catalogo_hipparco.colnames:
+            tbl_catalogo_hipparco.rename_column('Vmag', 'Mag')
+
         hdu_list_hipparco.close()
 
         coords_hipparco_global = SkyCoord(ra=tbl_catalogo_hipparco['_RAJ2000'],
@@ -131,11 +136,14 @@ if __name__ == "__main__":
 
                     # interrogo Vizier e filtro Hipparcos per l'area di interesse
                     riquadro_esterno_vizier = \
-                    vizier.query_region(centro, radius=raggio_ricerca, column_filters={'gmag': f'<{15}'})[0]
+                        vizier.query_region(centro, radius=raggio_ricerca, column_filters={'gmag': f'<{15}'})[0]
                     distanze_hip = centro.separation(coords_hipparco_global)
                     mask_hip_fov = distanze_hip < raggio_ricerca
                     tbl_hipparco_run_clean = tbl_catalogo_hipparco[mask_hip_fov]
                     tbl_vizier_cut = riquadro_esterno_vizier[riquadro_esterno_vizier['gmag'] < magnitudine_massima]
+
+                    # rinomino la colonna da gmag a Mag per allinearla a quanto richiesto dalla funzione tabella_catalogo
+                    tbl_vizier_cut.rename_column('gmag', 'Mag')
 
                 # creo la tabella catalogata per il file corrente
                 tbl_catalogate = tabella_catalogo(percorso_file, tbl_vizier_cut, tbl_hipparco_run_clean)
@@ -174,28 +182,45 @@ if __name__ == "__main__":
                     img_dir = BASE_DIR / "blazar" / "analisi" / "studio_blazar" / "immagini_campo_blazar"
                     img_dir.mkdir(parents=True, exist_ok=True)
 
-                    fig, ax = plt.subplots(figsize=(7, 7))
+                    # imposto una dimensione della figura ridotta per mantenere leggibili i font grandi
+                    fig, ax = plt.subplots(figsize=(4, 4))
                     cutout_plot = np.clip(cutout_data, a_min=1e-3, a_max=None)
-                    img_plot = ax.imshow(cutout_plot, cmap="grey_r", norm=LogNorm(), interpolation='nearest')
+
+                    # imposto l'extent per rappresentare gli assi con le coordinate assolute del riquadro
+                    img_plot = ax.imshow(cutout_plot, cmap="grey_r", norm=LogNorm(), interpolation='nearest',
+                                         extent=[x_min_s, x_max_s, y_max_s, y_min_s])
                     ax.invert_yaxis()
-                    plt.colorbar(img_plot, ax=ax, label='Intensità pixel', fraction=0.046, pad=0.04)
+
+                    # aggiungo i titoli agli assi X e Y con dimensioni font maggiorate
+                    ax.set_xlabel("X", fontsize=10)
+                    ax.set_ylabel("Y", fontsize=10)
+
+                    # ingrandisco i numeri sui tick degli assi
+                    ax.tick_params(axis='both', which='major', labelsize=14)
+
+                    # configuro la colorbar con testi e tick adatti al restringimento
+                    cbar = plt.colorbar(img_plot, ax=ax, fraction=0.046, pad=0.04)
+                    cbar.set_label('Pixel value (ADU)', size=16)
+                    cbar.ax.tick_params(labelsize=14)
 
                     try:
                         titolo_data_ora = Time(header_date_obs).to_datetime().strftime('%Y/%m/%d %H:%M:%S')
                     except:
                         titolo_data_ora = str(header_date_obs)
-                    ax.set_title(f"Markarian 421 - {titolo_data_ora}")
+
+                    # imposto il titolo ingrandito
+                    ax.set_title(f"{titolo_data_ora}", fontsize=16)
 
                     # calcolo raggio in pixel per il cerchio di riferimento (35 arcsec)
                     pixel_scale = proj_plane_pixel_scales(w)[0] * 3600.0
                     raggio_pixel = 35.0 / pixel_scale
 
-                    # segno la posizione teorica del Blazar
-                    x_c_cut, y_c_cut = x_mrk - x_min_s, y_mrk - y_min_s
+                    # segno la posizione teorica del Blazar utilizzando le coordinate assolute
+                    x_c_cut, y_c_cut = x_mrk, y_mrk
                     circle = plt.Circle((x_c_cut, y_c_cut), raggio_pixel, color='green', fill=False, linewidth=1.5)
                     ax.add_patch(circle)
 
-                    # sovrappongo le stelle di catalogo identificate nel riquadro
+                    # sovrappongo le stelle di catalogo identificate nel riquadro usando le coordinate assolute
                     if not df_catalogate.empty:
                         c_cat = SkyCoord(ra=df_catalogate['RAJ2000'].values * u.deg,
                                          dec=df_catalogate['DEJ2000'].values * u.deg)
@@ -203,11 +228,10 @@ if __name__ == "__main__":
 
                         mask = (x_cat >= x_min_s) & (x_cat < x_max_s) & (y_cat >= y_min_s) & (y_cat < y_max_s)
                         if np.any(mask):
-                            scatter_cat = ax.scatter(x_cat[mask] - x_min_s, y_cat[mask] - y_min_s,
+                            scatter_cat = ax.scatter(x_cat[mask], y_cat[mask],
                                                      c=df_catalogate['Mag'].values[mask], cmap='viridis_r',
                                                      s=25, zorder=5, vmin=df_catalogate['Mag'].min(),
                                                      vmax=df_catalogate['Mag'].max())
-                            plt.colorbar(scatter_cat, ax=ax, label='Magnitudine catalogo', fraction=0.046, pad=0.04)
 
                     plt.savefig(img_dir / f"markarian_{cartella_giorno.name}_{run_name}_{contatore_globale:05d}.png",
                                 bbox_inches='tight')

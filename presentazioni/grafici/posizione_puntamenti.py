@@ -54,6 +54,10 @@ for file_p in tqdm(file_fits, desc="Analisi file"):
 
     ra = header["RA"]
     dec = header["DEC"]
+    if not ra:
+        continue
+    if not dec:
+        continue
 
     # aggiungo i valori appena estratti alle mie liste
     lista_ra.append(ra)

@@ -38,7 +38,8 @@ if PERCORSO_FUNZIONI not in sys.path:
 from funzioni.utilita_parquet import *
 from funzioni.astrometria_parquet import *
 
-cartella_tabelle = cerca_cartella_intero_pc('ASTRI1')
+# converto la stringa in un oggetto Path per poter utilizzare il metodo rglob
+cartella_tabelle = Path(cerca_cartella_intero_pc('ASTRI1'))
 
 file_fits = list(cartella_tabelle.rglob("*.fits"))
 
@@ -47,9 +48,8 @@ lista_ra = []
 lista_dec = []
 
 for file_p in tqdm(file_fits, desc="Analisi file"):
-    # passo il singolo file alla funzione invece della lista intera
-
-    hdu_list = fits.open(file_fits)
+    # passo il mio singolo file alla funzione invece della lista intera
+    hdu_list = fits.open(file_p)
     header = hdu_list[0].header
 
     ra = header["RA"]

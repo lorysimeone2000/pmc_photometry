@@ -40,7 +40,7 @@ from funzioni.astrometria_parquet import *
 
 cartella_tabelle = cerca_cartella_intero_pc('ASTRI1')
 
-file_fits = list(cartella_tabelle.rglob(".fits"))
+file_fits = list(cartella_tabelle.rglob("*.fits"))
 
 # inizializzo le mie liste per conservare tutte le coordinate lette
 lista_ra = []

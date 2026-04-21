@@ -48,27 +48,30 @@ lista_ra = []
 lista_dec = []
 
 for file_p in tqdm(file_fits, desc="Analisi file"):
-    # passo il mio singolo file alla funzione invece della lista intera
-    hdu_list = fits.open(file_p)
-    header = hdu_list[0].header
+    try:
+        # apro il mio file FITS in modo sicuro per garantirne la chiusura automatica
+        with fits.open(file_p) as hdu_list:
+            header = hdu_list[0].header
 
-    ra = header["RA"]
-    dec = header["DEC"]
-    if not ra:
-        continue
-    if not dec:
-        continue
+            # cerco le mie chiavi in modo sicuro usando get per evitare il KeyError
+            ra = header.get("RA")
+            dec = header.get("DEC")
 
-    # aggiungo i valori appena estratti alle mie liste
-    lista_ra.append(ra)
-    lista_dec.append(dec)
+            # verifico di aver effettivamente trovato i miei dati prima di aggiungerli
+            if ra is not None and dec is not None:
+                # aggiungo i valori appena estratti alle mie liste
+                lista_ra.append(ra)
+                lista_dec.append(dec)
+    except Exception:
+        # ignoro il mio file e passo al successivo in caso di errore di lettura
+        continue
 
 # creo la figura e salvo il mio plot con tutti i punti
 plt.figure(figsize=(10, 8))
 plt.scatter(lista_ra, lista_dec, s=1, color='blue', alpha=0.6)
 plt.xlabel('RA (Gradi)')
 plt.ylabel('DEC (Gradi)')
-#plt.title('Mappa degli oggetti non catalogati in coordinate RA/DEC')
+# plt.title('Mappa degli oggetti non catalogati in coordinate RA/DEC')
 plt.grid(True, linestyle='--', alpha=0.7)
 
 plt.savefig("mappa_puntamenti_ra_dec.png", dpi=300, bbox_inches='tight')

@@ -162,7 +162,7 @@ for percorso_file_fits in tqdm(tutti_file_fits, desc="Stacking", unit="img"):
             wcs_input = WCS(header, relax=True)
 
             mean, median, std = sigma_clipped_stats(data, sigma=3.0)
-            print("Mediana: ", median)
+            # print("Mediana: ", median)
 
             # Sottraggo il fondo
             data_sub = data - median

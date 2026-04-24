@@ -108,11 +108,15 @@ for anno in [2025, 2026]:
     mean, median, std = sigma_clipped_stats(total_data, sigma=3.0)
     print(f"Mediana totale per il {anno}: ", median)
 
+    data_finale = total_data
+
+    '''
     # sottraggo il fondo mediano
     data_finale = total_data - median
 
     # shifto tutti i valori ADU in modo che il valore minimo sia 0
     data_finale = data_finale - np.min(data_finale)
+    '''
 
     # visualizzazione ottimizzata per 0.45\textwidth
     norm = simple_norm(data_finale, 'sqrt')

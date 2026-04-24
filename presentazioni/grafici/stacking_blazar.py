@@ -10,12 +10,15 @@ from astropy.wcs import FITSFixedWarning
 from tqdm import tqdm
 import pandas as pd
 
-# Importo i moduli necessari per il ritaglio spaziale
-from astropy.nddata import Cutout2D
+# importo i moduli necessari per la statistica e la visualizzazione
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 import matplotlib.pyplot as plt
 from astropy.visualization import simple_norm
+from astropy.stats import sigma_clipped_stats
+
+# Importo i moduli necessari per il ritaglio spaziale
+from astropy.nddata import Cutout2D
 
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
 
@@ -128,11 +131,16 @@ print(f"Dimensioni target (ritagliate): {target_shape} pixel")
 for percorso_file_fits in tqdm(tutti_file_fits, desc="Stacking", unit="img"):
     try:
         with fits.open(percorso_file_fits) as hdu_list:
-            data_sub = hdu_list[0].data
+            data = hdu_list[0].data
             header = hdu_list[0].header
 
             # aggiungo relax=True anche qui per gestire le distorsioni dell'immagine corrente
             wcs_input = WCS(header, relax=True)
+
+            mean, median, std = sigma_clipped_stats(data, sigma=3.0)
+
+            # Sottraggo il fondo
+            data_sub = data - median
 
             # riproietto direttamente sul target_wcs ristretto
             array_reprojected, footprint = reproject_interp(
@@ -154,9 +162,9 @@ for percorso_file_fits in tqdm(tutti_file_fits, desc="Stacking", unit="img"):
 # =============================================================================
 max_coverage = np.max(coverage_map)
 
-# calcolo e applico il fattore di scala per uniformare l'immagine sui bordi di copertura
+# calcolo e applico il mio fattore di scala per ottenere il flusso medio (come una singola immagine)
 scale_factor_map = np.zeros_like(coverage_map, dtype=float)
-np.divide(max_coverage, coverage_map,
+np.divide(1.0, coverage_map,
           out=scale_factor_map,
           where=coverage_map > 0)
 
@@ -214,16 +222,6 @@ if dir_tabelle.exists():
                        s=4, color='red', label='Catalogo', zorder=10)
             plt.legend()
 
-            '''# mi baso sul massimo e sul minimo dell'intero catalogo per uniformare la colorbar
-            vmin_cat = df_cat['Mag'].min()
-            vmax_cat = df_cat['Mag'].max()'''
-            '''scatter_cat = ax.scatter(x_cat_cutout, y_cat_cutout, c=mag_cat_cutout, cmap='viridis_r', s=15,
-                                     vmin=vmin_cat, vmax=vmax_cat, zorder=5)''''''
-
-            # aggiungo la seconda colorbar dedicata alle magnitudini del catalogo
-            plt.colorbar(scatter_cat, ax=ax, label='Magnitudine catalogo', fraction=0.046, pad=0.04)'''
-
-# plt.colorbar(label='Counts (Sum)')
 plt.xlabel('RA')
 plt.ylabel('Dec')
 plt.title(f'Stacking Globale Mrk 421 (1.6x1.6 arcmin)\nCopertura max: {int(max_coverage)} immagini')
@@ -260,11 +258,16 @@ for anno, lista_file_anno in dizionari_anni.items():
     for percorso_file_fits in tqdm(lista_file_anno, desc=f"Stacking {anno}", unit="img"):
         try:
             with fits.open(percorso_file_fits) as hdu_list:
-                data_sub = hdu_list[0].data
+                data = hdu_list[0].data
                 header = hdu_list[0].header
 
                 # leggo il wcs con relax=True
                 wcs_input = WCS(header, relax=True)
+
+                mean, median, std = sigma_clipped_stats(data, sigma=3.0)
+
+                # Sottraggo il fondo
+                data_sub = data - median
 
                 # riproietto
                 array_reprojected, footprint = reproject_interp(
@@ -281,10 +284,10 @@ for anno, lista_file_anno in dizionari_anni.items():
         except Exception as e:
             tqdm.write(f"Errore nel file {Path(percorso_file_fits).name}: {e}")
 
-    # scalo l'immagine basandomi sulla copertura
+    # scalo la mia immagine basandomi sulla copertura per ottenere il flusso medio
     max_coverage_anno = np.max(coverage_map_anno)
     scale_factor_map_anno = np.zeros_like(coverage_map_anno, dtype=float)
-    np.divide(max_coverage_anno, coverage_map_anno,
+    np.divide(1.0, coverage_map_anno,
               out=scale_factor_map_anno,
               where=coverage_map_anno > 0)
 
@@ -321,7 +324,6 @@ for anno, lista_file_anno in dizionari_anni.items():
                        s=4, color='red', label='Catalogo', zorder=10)
             plt.legend()
 
-    # plt.colorbar(label=f'Counts (Sum {anno})')
     plt.xlabel('RA')
     plt.ylabel('Dec')
     plt.title(f'Stacking Mrk 421 - Anno {anno} (1.6x1.6 arcmin)\nCopertura max: {int(max_coverage_anno)} immagini')

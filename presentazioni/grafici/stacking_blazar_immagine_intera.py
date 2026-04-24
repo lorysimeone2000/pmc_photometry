@@ -65,7 +65,7 @@ from funzioni.astrometria_parquet import *
 # =============================================================================
 
 def trova_cartella_base(nome_target="Lorenzo"):
-    # cerco la cartella base risalendo l'albero delle directory
+    # cerco la mia cartella base risalendo l'albero delle directory
     path_corrente = Path(__file__).resolve()
     for parent in [path_corrente] + list(path_corrente.parents):
         if parent.name == nome_target:
@@ -74,7 +74,7 @@ def trova_cartella_base(nome_target="Lorenzo"):
     return path_corrente.parent
 
 
-# trovo la cartella base del mio progetto
+# trovo la mia cartella base del progetto
 BASE_DIR = trova_cartella_base("Lorenzo")
 
 PERCORSO_FUNZIONI = os.path.join(str(BASE_DIR), "pmc_photometry")
@@ -86,38 +86,37 @@ if PERCORSO_FUNZIONI not in sys.path:
 # =============================================================================
 print("--- INIZIO RICERCA IMMAGINI BLAZAR ---")
 
-# definisco l'elenco delle cartelle da cercare in tutto il PC
+astri1 = cerca_cartella_intero_pc('ASTRI1')
+
+# definisco l'elenco delle cartelle da cercare all'interno di astri1
 cartelle_target = ["20251220", "20251221", "20251223", "20260114", "20260115", "20260116"]
 
 tutti_file_fits = []
 nomi_run_processate = []
 
-# identifico le radici del sistema operativo per la ricerca globale
-if sys.platform == 'win32':
-    radici = [f"{d}:\\" for d in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if os.path.exists(f"{d}:\\")]
-else:
-    radici = ['/']
+if astri1 is None:
+    print("ERRORE: Cartella ASTRI1 non trovata nel PC!")
+    exit()
 
-print("Cerco le cartelle specificate in tutto il PC, potrebbe volerci del tempo...")
+print(f"Cerco le cartelle specificate all'interno di {astri1}, potrebbe volerci del tempo...")
 
-# esploro l'intero sistema a partire dalle radici trovate
-for radice in radici:
-    for root, dirs, files in os.walk(radice):
-        # estraggo il nome della cartella corrente
-        nome_cartella = os.path.basename(root)
+# esploro esclusivamente la mia directory astri1
+for root, dirs, files in os.walk(astri1):
+    # estraggo il nome della cartella corrente
+    nome_cartella = os.path.basename(root)
 
-        # verifico se la cartella corrente è una di quelle target
-        if nome_cartella in cartelle_target:
-            # cerco tutti i file FITS all'interno della cartella e li ordino alfabeticamente
-            estensioni_valide = ['.fit', '.fits']
-            file_run = sorted(
-                [os.path.join(root, f) for f in files if os.path.splitext(f)[1].lower() in estensioni_valide])
+    # verifico se la cartella corrente è una di quelle target
+    if nome_cartella in cartelle_target:
+        # cerco tutti i file FITS all'interno della cartella e li ordino alfabeticamente
+        estensioni_valide = ['.fit', '.fits']
+        file_run = sorted(
+            [os.path.join(root, f) for f in files if os.path.splitext(f)[1].lower() in estensioni_valide])
 
-            # salto la prima e le ultime due immagini della singola cartella per evitare scarti
-            if len(file_run) > 3:
-                file_run_validi = file_run[1:-2]
-                tutti_file_fits.extend(file_run_validi)
-                nomi_run_processate.append(nome_cartella)
+        # salto la prima e le ultime due immagini della singola cartella per evitare scarti
+        if len(file_run) > 3:
+            file_run_validi = file_run[1:-2]
+            tutti_file_fits.extend(file_run_validi)
+            nomi_run_processate.append(nome_cartella)
 
 if not tutti_file_fits:
     print("ERRORE: Nessun file FITS valido trovato nelle cartelle specificate!")
@@ -143,7 +142,7 @@ target_shape = hdu_ref.data.shape
 target_header = target_wcs.to_header()
 target_header['DATE-OBS'] = target_header_full.get('DATE-OBS', 'UNKNOWN')
 
-# creo la matrice finale (accumulatore) piena di zeri
+# creo la mia matrice finale (accumulatore) piena di zeri
 final_image_sum = np.zeros(target_shape)
 coverage_map = np.zeros(target_shape)
 
@@ -190,7 +189,7 @@ np.divide(max_coverage, coverage_map,
 
 final_image_sum = final_image_sum * scale_factor_map
 
-# imposto la cartella di output
+# imposto la mia cartella di output
 output_dir = cerca_cartella_nel_progetto(BASE_DIR, "grafici")
 output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -223,7 +222,7 @@ norm = simple_norm(data_finale, 'sqrt')
 plt.figure(figsize=(10, 8))
 ax = plt.subplot(projection=target_wcs)
 
-# genero l'immagine
+# genero la mia immagine
 im = ax.imshow(data_finale, origin='lower', norm=norm, cmap='viridis', interpolation='nearest')
 
 # cerco la prima tabella catalogata
@@ -250,10 +249,10 @@ if dir_tabelle_cat.exists():
             # converto le coordinate in pixel relativi alla mia immagine
             x_pix, y_pix = target_wcs.world_to_pixel(cat_coords)
 
-            # estraggo le dimensioni dell'immagine
+            # estraggo le dimensioni della mia immagine
             ny, nx = data_finale.shape
 
-            # creo una maschera logica per tenere solo le stelle che cadono dentro il riquadro dell'immagine
+            # creo la mia maschera logica per tenere solo le stelle che cadono dentro il riquadro dell'immagine
             mask_inside = (x_pix >= 0) & (x_pix <= nx) & (y_pix >= 0) & (y_pix <= ny)
 
             # filtro il dataframe usando la mia maschera

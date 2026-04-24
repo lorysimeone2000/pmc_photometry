@@ -187,9 +187,9 @@ for percorso_file_fits in tqdm(tutti_file_fits, desc="Stacking", unit="img"):
 # =============================================================================
 max_coverage = np.max(coverage_map)
 
-# calcolo e applico il fattore di scala per uniformare l'immagine sui bordi di copertura
+# calcolo e applico il mio fattore di scala per ottenere il flusso medio (come una singola immagine)
 scale_factor_map = np.zeros_like(coverage_map, dtype=float)
-np.divide(max_coverage, coverage_map,
+np.divide(1.0, coverage_map,
           out=scale_factor_map,
           where=coverage_map > 0)
 

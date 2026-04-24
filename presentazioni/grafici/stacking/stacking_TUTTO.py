@@ -79,6 +79,7 @@ from scipy.ndimage import label
 import re
 from pathlib import Path
 from astropy.time import Time
+from astropy.visualization.wcsaxes import SphericalCircle
 
 # Gestisco i warning ignorandoli per mantenere pulito il mio output
 warnings.filterwarnings('ignore', category=FITSFixedWarning)
@@ -212,10 +213,21 @@ print(f"Fatto! Coverage map complessiva salvata come: {coverage_filename}")
 # --- PASSO 4: VISUALIZZAZIONE VELOCE ---
 norm = simple_norm(final_image_sum, 'sqrt')
 plt.figure(figsize=(10, 10))
-plt.subplot(projection=target_wcs)
-plt.imshow(final_image_sum, origin='lower', norm=norm, cmap='viridis')
+ax = plt.subplot(projection=target_wcs)
+ax.imshow(final_image_sum, origin='lower', norm=norm, cmap='viridis')
+
+# Ricavo le coordinate della Nebulosa del Granchio
+crab_coord = SkyCoord.from_name("Crab Nebula")
+
+# Creo un cerchio con raggio di 2.5 arcmin (per ottenere un'ampiezza totale di 5 arcmin)
+cerchio = SphericalCircle((crab_coord.ra, crab_coord.dec), 2.5 * u.arcmin,
+                          edgecolor='red', facecolor='none', transform=ax.get_transform('icrs'))
+
+# Aggiungo il cerchio al grafico
+ax.add_patch(cerchio)
+
 plt.colorbar(label='Counts (Sum)')
 plt.xlabel('RA')
 plt.ylabel('Dec')
 plt.title('Stacking Complessivo Run 1, 2 e 3')
-plt.show()
+#plt.show()

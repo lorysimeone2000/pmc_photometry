@@ -1,4 +1,4 @@
-import numpy.ma as ma # aggiungo per i Masked Arrays
+import numpy.ma as ma
 import matplotlib.pyplot as plt
 import pandas as pd
 #pd.set_option('display.show_dimensions', False)
@@ -6,7 +6,7 @@ from photutils.datasets import make_100gaussians_image
 from photutils.background import Background2D, MedianBackground
 from astropy.convolution import convolve
 from photutils.segmentation import make_2dgaussian_kernel
-from matplotlib.colors import LogNorm # mi permette di avere la scala logaritmica
+from matplotlib.colors import LogNorm
 from scipy.optimize import curve_fit
 from photutils.segmentation import detect_sources
 from photutils.segmentation import SourceCatalog
@@ -24,14 +24,11 @@ from astropy.table import Table, vstack
 from photutils.segmentation import SourceFinder
 from photutils.detection import find_peaks
 from photutils.aperture import CircularAperture
-from astropy.nddata import Cutout2D
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-
-# importo i moduli necessari per disegnare e calcolare il raggio del cerchio
+# Importo i moduli necessari per disegnare e calcolare il raggio del cerchio
 from matplotlib.patches import Circle
 from astropy.wcs.utils import proj_plane_pixel_scales
 
-# set up wcs
+# Set up wcs
 from astropy.wcs import WCS
 from astropy.coordinates import SkyCoord
 import astropy.coordinates as coord
@@ -52,22 +49,23 @@ warnings.filterwarnings('ignore', category=FITSFixedWarning) # sopprimo il warni
 from pathlib import Path
 
 # --- DEFINIZIONE FILE ---
-'''image_file_c = "master_coverage_map.fits"'''
-image_file   = "stacked_sum_mrk421_globale.fits"
+image_file_c = "run_1_coverage_map_fondo_sottratto_nelle_singole_immagini.fits"
+image_file   = "run_1_stacked_sum_fondo_sottratto_nelle_singole_immagini.fits"
+
 
 # --- CARICAMENTO E CREAZIONE MASCHERA ---
 
-'''# carico la Coverage Map
+# 1. Caricamento Coverage Map
 hdu_list_c = fits.open(image_file_c)
 print("Informazioni Coverage Map:")
 hdu_list_c.info()
 image_data_c = hdu_list_c[0].data
-# imposto la maschera a True dove la copertura è massima (112)
+# imposto la maschera a True dove la copertura è massima
 full_coverage_value = np.max(image_data_c) # il valore che voglio mascherare
 mask_max_coverage = image_data_c == full_coverage_value
-hdu_list_c.close()'''
+hdu_list_c.close()
 
-# carico l'immagine sommata e il WCS
+# 2. Caricamento Immagine Sommata e WCS
 hdu_list = fits.open(image_file)
 print("\nInformazioni Immagine Sommata:")
 hdu_list.info()
@@ -81,16 +79,14 @@ hdu_list.close()
 
 # --- ESTRAZIONE E VISUALIZZAZIONE ---
 
-# applico la maschera
-
-# uso ~mask_max_coverage per nascondere tutti i pixel NON UGUALI a 115.
+# applico la maschera (commentata come nell'originale)
 # data = ma.masked_array(image_data, mask=~mask_max_coverage)
 mean, median, std = sigma_clipped_stats(image_data, sigma=3.0)
 print("Mediana: " , median)
 data = data - median
 
-# VISUALIZZAZIONE
-# creo la figura con le dimensioni ottimizzate
+# Visualizzazione
+# creo la figura con le dimensioni ottimizzate per LaTeX
 fig = plt.figure(figsize=(8.5, 5))
 
 # aggiungo il subplot passando il mio oggetto WCS come proiezione
@@ -109,32 +105,34 @@ ax.set_aspect('equal')
 # dimensiono i tick degli assi (RA e DEC)
 ax.tick_params(axis='both', which='major', labelsize=12)
 
-# ottengo le coordinate di Markarian 421
-mrk_coord = SkyCoord.from_name("Mrk 421")
+# Ottengo le coordinate della Nebulosa del Granchio
+crab_coord = SkyCoord.from_name("Crab Nebula")
 
-# converto le coordinate celesti in coordinate pixel
-x_mrk, y_mrk = wcs.world_to_pixel(mrk_coord)
+# Converto le coordinate celesti in coordinate pixel
+x_crab, y_crab = wcs.world_to_pixel(crab_coord)
 
-# calcolo la dimensione del raggio in pixel impostandolo a 7.5 arcmin
+# Calcolo la dimensione del raggio in pixel impostandolo a 2.5 arcmin per un'ampiezza totale di 5
 pixel_scales = proj_plane_pixel_scales(wcs) * u.deg
 pixel_scale_arcmin = pixel_scales[0].to(u.arcmin)
 raggio_arcmin = 7.5 * u.arcmin
 raggio_pixel = (raggio_arcmin / pixel_scale_arcmin).value
 
-# imposto le nuove etichette
+# imposto le nuove etichette in inglese britannico
 ax.set_xlabel('RA (deg)', fontsize=14)
 ax.set_ylabel('DEC (deg)', fontsize=14)
 
-# aggiungo il cerchio rosso vuoto al centro della sorgente
-cerchio = Circle((x_mrk, y_mrk), raggio_pixel, edgecolor='red', facecolor='none')
+# Richiamo la figura e gli assi correnti
+fig = plt.gcf()
+ax = plt.gca()
+
+# Aggiungo il cerchio rosso vuoto al centro della nebulosa
+cerchio = Circle((x_crab, y_crab), raggio_pixel, edgecolor='red', facecolor='none')
 ax.add_patch(cerchio)
 
 # aggiungo la colorbar utilizzando fraction e pad per mantenerla in proporzione con l'asse
 cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 # imposto l'etichetta direttamente sulla colorbar
 cbar.set_label('ADU sum', fontsize=14)
-# configuro la colorbar affinché abbia i font proporzionati
-cbar.ax.tick_params(labelsize=12)
 
-plt.savefig("markarian_SOMMA_TUTTO.png", dpi=300, bbox_inches='tight')
-#plt.show()
+plt.savefig("somma_una_run_RA_DEC.png", dpi=300, bbox_inches='tight')
+# plt.show()

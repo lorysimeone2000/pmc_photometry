@@ -1,3 +1,4 @@
+import numpy as np
 import numpy.ma as ma # Aggiunto per i Masked Arrays
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -6,12 +7,10 @@ from photutils.datasets import make_100gaussians_image
 from photutils.background import Background2D, MedianBackground
 from astropy.convolution import convolve
 from photutils.segmentation import make_2dgaussian_kernel
-import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm # permette di avere la scala logaritmica
 from scipy.optimize import curve_fit
 from photutils.segmentation import detect_sources
 from photutils.segmentation import SourceCatalog
-import numpy as np
 import os
 from astropy.visualization import SqrtStretch
 from astropy.visualization.mpl_normalize import ImageNormalize
@@ -36,16 +35,21 @@ from astropy.wcs.wcsapi import SlicedLowLevelWCS
 
 from astroquery.vizier import Vizier
 from astropy.coordinates import Angle
+from astropy.nddata import Cutout2D
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from shapely.geometry import Point, Polygon
 # warning
 import warnings
 from astropy.io.fits.verify import VerifyWarning
-import warnings
 from astropy.wcs import FITSFixedWarning
 warnings.filterwarnings('ignore', category=FITSFixedWarning) # Sopprime il warning FITSFixedWarning
 
 from pathlib import Path
+
+# Importo i moduli necessari per disegnare e calcolare il raggio del cerchio
+from matplotlib.patches import Circle
+from astropy.wcs.utils import proj_plane_pixel_scales
 
 # --- DEFINIZIONE FILE ---
 image_file_c = "master_coverage_map.fits"
@@ -69,6 +73,11 @@ hdu_list = fits.open(image_file)
 print("\nInformazioni Immagine Sommata:")
 hdu_list.info()
 image_data = hdu_list[0].data
+
+# Estraggo l'header e il sistema di coordinate (WCS)
+image_header = hdu_list[0].header
+wcs = WCS(image_header)
+
 data = image_data
 hdu_list.close()
 
@@ -81,14 +90,40 @@ mean, median, std = sigma_clipped_stats(image_data, sigma=3.0)
 print("Mediana: " , median)
 data = data - median
 
+# Ottengo le coordinate della Nebulosa del Granchio
+crab_coord = SkyCoord.from_name("Crab Nebula")
+
+# Converto le coordinate celesti in coordinate pixel
+x_crab, y_crab = wcs.world_to_pixel(crab_coord)
+
+# Calcolo la dimensione del raggio in pixel impostandolo a 2.5 arcmin per un'ampiezza totale di 5
+pixel_scales = proj_plane_pixel_scales(wcs) * u.deg
+pixel_scale_arcmin = pixel_scales[0].to(u.arcmin)
+raggio_arcmin = 5 * u.arcmin
+raggio_pixel = (raggio_arcmin / pixel_scale_arcmin).value
+
 # Visualizzazione
 plt.figure(figsize=(10, 8))
-plt.imshow(data, cmap="grey_r", norm=LogNorm(), interpolation='nearest') #genero l'immagine con scala di colori bianco e nero
+im = plt.imshow(data, cmap="grey_r", norm=LogNorm(), interpolation='nearest') #genero l'immagine con scala di colori bianco e nero
 plt.gca().invert_yaxis() # inverto asse y
-plt.colorbar()
-plt.title(f'Immagine Sommata (Copertura={int(full_coverage_value)}) run')
+
+# Rimuovo plt.colorbar() isolato per evitare conflitti con la barra successiva
+plt.title(f'Image Sum (coverage={int(full_coverage_value)}) runs')
 plt.xlabel('X (pixel)')
 plt.ylabel('Y (pixel)')
+
+# Richiamo la figura e gli assi correnti
+fig = plt.gcf()
+ax = plt.gca()
+
+# Aggiungo il cerchio rosso vuoto al centro della nebulosa
+cerchio = Circle((x_crab, y_crab), raggio_pixel, edgecolor='red', facecolor='none')
+ax.add_patch(cerchio)
+
+# configuro la colorbar affinché abbia la stessa altezza della figura
+divider = make_axes_locatable(ax)
+cax = divider.append_axes("right", size="5%", pad=0.05)
+fig.colorbar(im, cax=cax)
 
 plt.savefig("SOMMA_TUTTO.png")
 #plt.show()

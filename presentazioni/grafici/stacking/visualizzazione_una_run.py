@@ -25,6 +25,13 @@ from astropy.table import Table, vstack
 from photutils.segmentation import SourceFinder
 from photutils.detection import find_peaks
 from photutils.aperture import CircularAperture
+from astropy.nddata import Cutout2D
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+# Importo i moduli necessari per disegnare e calcolare il raggio del cerchio
+from matplotlib.patches import Circle
+from astropy.wcs.utils import proj_plane_pixel_scales
+
 
 # Set up wcs
 from astropy.wcs import WCS
@@ -181,7 +188,7 @@ hdu_list.close()
 # data = ma.masked_array(image_data, mask=~mask_max_coverage)
 mean, median, std = sigma_clipped_stats(image_data, sigma=3.0)
 print("Mediana: " , median)
-data = data - median
+#data = data - median
 
 # Visualizzazione
 # creo la figura con le dimensioni ottimizzate per LaTeX
@@ -203,14 +210,34 @@ ax.set_aspect('equal')
 # dimensiono i tick degli assi (RA e DEC)
 ax.tick_params(axis='both', which='major', labelsize=12)
 
-# configuro la colorbar affinché abbia i font proporzionati
-cbar = plt.colorbar(im, ax=ax)
-cbar.ax.tick_params(labelsize=12)
-cbar.set_label('ADU sum', fontsize=14)
+# Ottengo le coordinate della Nebulosa del Granchio
+crab_coord = SkyCoord.from_name("Crab Nebula")
+
+# Converto le coordinate celesti in coordinate pixel
+x_crab, y_crab = wcs.world_to_pixel(crab_coord)
+
+# Calcolo la dimensione del raggio in pixel impostandolo a 2.5 arcmin per un'ampiezza totale di 5
+pixel_scales = proj_plane_pixel_scales(wcs) * u.deg
+pixel_scale_arcmin = pixel_scales[0].to(u.arcmin)
+raggio_arcmin = 7.5 * u.arcmin
+raggio_pixel = (raggio_arcmin / pixel_scale_arcmin).value
 
 # imposto le nuove etichette in inglese britannico
 ax.set_xlabel('RA (deg)', fontsize=14)
 ax.set_ylabel('DEC (deg)', fontsize=14)
 
-plt.savefig("somma_un_immagine_RA_DEC.png", dpi=300, bbox_inches='tight')
+# Richiamo la figura e gli assi correnti
+fig = plt.gcf()
+ax = plt.gca()
+
+# Aggiungo il cerchio rosso vuoto al centro della nebulosa
+cerchio = Circle((x_crab, y_crab), raggio_pixel, edgecolor='red', facecolor='none')
+ax.add_patch(cerchio)
+
+# aggiungo la colorbar utilizzando fraction e pad per mantenerla in proporzione con l'asse
+cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+# imposto l'etichetta direttamente sulla colorbar
+cbar.set_label('ADU sum', fontsize=14)
+
+plt.savefig("somma_una_run_RA_DEC.png", dpi=300, bbox_inches='tight')
 #plt.show()

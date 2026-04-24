@@ -8,22 +8,22 @@ df = pd.read_csv('curva_PMC.csv')
 fig, ax = plt.subplots(figsize=(10, 5))
 
 # Definizione degli intervalli delle bande con i relativi colori
-intervalli = { # versione panstarr
+'''intervalli = { # versione panstarr
     'm_g [414;551]': (414, 551),    # banda g: da 400 a 550 nm
     'm_r [551;689]': (551, 689),    # banda r: da 555 a 705 nm
     'm_i [690;819]': (690, 819),    # banda i: da 688 a 850 nm
     'm_z [819;922]': (819, 922),    # banda z: da 812 a 920 nm
     'm_y [922;1001]': (922, 1001)    # banda y: da 922 a 1005 nm
-}
+}'''
 
 
-'''intervalli = { # versione classica
+intervalli = { # versione classica
     'm_g [400;550]': (400, 550),    # banda g: da 400 a 550 nm
     'm_r [555;705]': (555, 705),    # banda r: da 555 a 705 nm
     'm_i [688;850]': (688, 850),    # banda i: da 688 a 850 nm
     'm_z [812;920]': (812, 920),    # banda z: da 812 a 920 nm
     'm_y [922;1005]': (922, 1005)    # banda y: da 922 a 1005 nm
-}'''
+}
 
 # Mappa dei colori per le bande (sfumature tenui e riconoscibili)
 colori_bande = {
@@ -68,20 +68,20 @@ ax.yaxis.grid(True, linestyle='-', color='#c0c0c0', alpha=0.8)
 ax.xaxis.grid(False)
 
 # Mi assicuro che la linea dati parta esattamente dai bordi senza spazi vuoti
-ax.margins(x=0, y=0)
+#ax.margins(x=0, y=0)
 
 # Disegno un intervallo per la banda Vmag sopra il riquadro per non intaccare i colori delle altre bande.
 # Utilizzo ax.plot al posto di ax.annotate per fare in modo che le righe verticali siano solo sotto quella orizzontale.
-ax.plot([500, 500, 600, 600], [1.00, 1.02, 1.02, 1.00], color='black', lw=1., transform=ax.get_xaxis_transform(), clip_on=False)
+#ax.plot([500, 500, 600, 600], [1.00, 1.02, 1.02, 1.00], color='black', lw=1., transform=ax.get_xaxis_transform(), clip_on=False)
 
 # Aggiungo l'etichetta di testo "Vmag" centrata appena sopra la linea dell'intervallo
-ax.text(550, 1.03, 'm_V [500;600]', transform=ax.get_xaxis_transform(), ha='center', va='bottom', color='black', clip_on=False)
+#ax.text(550, 1.03, 'm_V [500;600]', transform=ax.get_xaxis_transform(), ha='center', va='bottom', color='black', clip_on=False)
 
 # Aggiusto i margini della figura per fare in modo che il titolo non venga tagliato
 plt.subplots_adjust(top=0.85)
 
 # Salvo l'immagine
-plt.savefig('curva_PMC_intervalli_calcolati.png', dpi=300, bbox_inches='tight')
+plt.savefig('curva_PMC_intervalli_ufficiali.png', dpi=300, bbox_inches='tight')
 
 # Avvio il render a schermo del grafico finale
 #plt.show()

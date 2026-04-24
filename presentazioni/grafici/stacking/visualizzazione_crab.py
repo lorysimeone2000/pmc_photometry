@@ -133,6 +133,9 @@ print("Mediana totale: ", median)
 # sottraggo il fondo mediano
 data_finale = total_data - median
 
+# shifto tutti i valori ADU in modo che il valore minimo sia 0
+data_finale = data_finale - np.min(data_finale)
+
 # preparo la visualizzazione
 norm = simple_norm(data_finale, 'sqrt')
 

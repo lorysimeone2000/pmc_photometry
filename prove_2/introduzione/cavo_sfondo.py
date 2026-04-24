@@ -57,7 +57,7 @@ plt.imshow(data_senza_fondo, cmap="grey_r", norm=LogNorm()) #genero l'immagine c
 plt.gca().invert_yaxis() # inverto asse y
 plt.colorbar()
 
-#plt.show()
+# plt.show()
 plt.close()
 
 print(type(data_senza_fondo.flatten())) #verifico di aver creato un array 1D

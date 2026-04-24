@@ -155,11 +155,17 @@ print(f"Dimensioni target: {target_shape} pixel")
 for percorso_file_fits in tqdm(tutti_file_fits, desc="Stacking", unit="img"):
     try:
         with fits.open(percorso_file_fits) as hdu_list:
-            data_sub = hdu_list[0].data
+            data = hdu_list[0].data
             header = hdu_list[0].header
 
             # aggiungo relax=True anche qui per gestire le distorsioni dell'immagine corrente
             wcs_input = WCS(header, relax=True)
+
+            mean, median, std = sigma_clipped_stats(data, sigma=3.0)
+            print("Mediana: ", median)
+
+            # Sottraggo il fondo
+            data_sub = data - median
 
             # riproietto direttamente sul target_wcs dell'intera immagine
             array_reprojected, footprint = reproject_interp(

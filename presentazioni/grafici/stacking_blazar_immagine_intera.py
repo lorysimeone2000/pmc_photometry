@@ -92,12 +92,20 @@ cartelle_target = ["20251220", "20251221", "20251223", "20260114", "20260115", "
 tutti_file_fits = []
 nomi_run_processate = []
 
-print(f"Cerco le cartelle specificate all'interno di {BASE_DIR}, potrebbe volerci del tempo...")
+print(f"Cerco la cartella PMC_DATA_BLAZAR all'interno di {BASE_DIR}...")
+# cerco la mia cartella PMC_DATA_BLAZAR all'interno del progetto base
+cartella_pmc = cerca_cartella_nel_progetto(BASE_DIR, "PMC_DATA_BLAZAR")
+
+if not cartella_pmc:
+    print("ERRORE: Cartella PMC_DATA_BLAZAR non trovata!")
+    exit()
+
+print(f"Cerco le cartelle specificate all'interno di {cartella_pmc}, potrebbe volerci del tempo...")
 
 # itero sulle mie cartelle target
 for nome_cartella in cartelle_target:
-    # cerco la mia cartella all'interno del progetto
-    cartella_trovata = cerca_cartella_nel_progetto(BASE_DIR, nome_cartella)
+    # cerco la mia cartella all'interno di PMC_DATA_BLAZAR
+    cartella_trovata = cerca_cartella_nel_progetto(cartella_pmc, nome_cartella)
 
     if cartella_trovata:
         # esploro esclusivamente la mia cartella trovata

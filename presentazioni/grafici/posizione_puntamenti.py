@@ -116,7 +116,7 @@ ax = fig.add_subplot(111, projection='aitoff')
 ax.scatter(l_rad, b_rad, s=1, color='blue', alpha=0.4, label="Runs")
 
 # disegno la mia circonferenza per ogni target
-ax.plot(l_crab, b_crab, color='red', linewidth=1, label='Crab')
+ax.plot(l_crab, b_crab, color='red', linewidth=1, label='Crab Nebula')
 ax.plot(l_mrk, b_mrk, color='orange', linewidth=1, label='Mrk 421')
 ax.plot(l_polo, b_polo, color='green', linewidth=1, label='North Celestial Pole')
 
@@ -133,4 +133,5 @@ ax.legend(loc='upper right', bbox_to_anchor=(1.0, 1.0))
 
 # salvo la mia immagine finale
 plt.savefig("mappa_puntamenti.png", dpi=300, bbox_inches='tight')
+plt.show()
 plt.close()

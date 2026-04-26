@@ -86,37 +86,32 @@ if PERCORSO_FUNZIONI not in sys.path:
 # =============================================================================
 print("--- INIZIO RICERCA IMMAGINI BLAZAR ---")
 
-astri1 = cerca_cartella_intero_pc('ASTRI1')
-
-# definisco l'elenco delle cartelle da cercare all'interno di astri1
+# definisco l'elenco delle cartelle da cercare all'interno del progetto
 cartelle_target = ["20251220", "20251221", "20251223", "20260114", "20260115", "20260116"]
 
 tutti_file_fits = []
 nomi_run_processate = []
 
-if astri1 is None:
-    print("ERRORE: Cartella ASTRI1 non trovata nel PC!")
-    exit()
+print(f"Cerco le cartelle specificate all'interno di {BASE_DIR}, potrebbe volerci del tempo...")
 
-print(f"Cerco le cartelle specificate all'interno di {astri1}, potrebbe volerci del tempo...")
+# itero sulle mie cartelle target
+for nome_cartella in cartelle_target:
+    # cerco la mia cartella all'interno del progetto
+    cartella_trovata = cerca_cartella_nel_progetto(BASE_DIR, nome_cartella)
 
-# esploro esclusivamente la mia directory astri1
-for root, dirs, files in os.walk(astri1):
-    # estraggo il nome della cartella corrente
-    nome_cartella = os.path.basename(root)
+    if cartella_trovata:
+        # esploro esclusivamente la mia cartella trovata
+        for root, dirs, files in os.walk(cartella_trovata):
+            # cerco tutti i file FITS all'interno della cartella e li ordino alfabeticamente
+            estensioni_valide = ['.fit', '.fits']
+            file_run = sorted(
+                [os.path.join(root, f) for f in files if os.path.splitext(f)[1].lower() in estensioni_valide])
 
-    # verifico se la cartella corrente è una di quelle target
-    if nome_cartella in cartelle_target:
-        # cerco tutti i file FITS all'interno della cartella e li ordino alfabeticamente
-        estensioni_valide = ['.fit', '.fits']
-        file_run = sorted(
-            [os.path.join(root, f) for f in files if os.path.splitext(f)[1].lower() in estensioni_valide])
-
-        # salto la prima e le ultime due immagini della singola cartella per evitare scarti
-        if len(file_run) > 3:
-            file_run_validi = file_run[1:-2]
-            tutti_file_fits.extend(file_run_validi)
-            nomi_run_processate.append(nome_cartella)
+            # salto la prima e le ultime due immagini della singola cartella per evitare scarti
+            if len(file_run) > 3:
+                file_run_validi = file_run[1:-2]
+                tutti_file_fits.extend(file_run_validi)
+                nomi_run_processate.append(nome_cartella)
 
 if not tutti_file_fits:
     print("ERRORE: Nessun file FITS valido trovato nelle cartelle specificate!")

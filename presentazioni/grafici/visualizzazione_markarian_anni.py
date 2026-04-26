@@ -71,6 +71,35 @@ def cerca_file_nel_progetto(base_dir, nome_file_esatto):
 # trovo la cartella base del mio progetto
 BASE_DIR = trova_cartella_base("Lorenzo")
 
+# --- PRE-CALCOLO LIMITI GLOBALI SCALA COLORI ---
+# inizializzo le variabili per i limiti di ADU e SNR
+min_adu_globale = np.inf
+max_adu_globale = -np.inf
+min_snr_globale = np.inf
+max_snr_globale = -np.inf
+
+# eseguo una prima iterazione per trovare i minimi e massimi assoluti
+for anno in [2025, 2026]:
+    nome_file_sum_temp = f"stacked_sum_mrk421_{anno}.fits"
+    percorso_sum_temp = cerca_file_nel_progetto(BASE_DIR, nome_file_sum_temp)
+    if percorso_sum_temp:
+        with fits.open(str(percorso_sum_temp)) as hdu_sum_temp:
+            temp_data = hdu_sum_temp[0].data
+            _, _, temp_std = sigma_clipped_stats(temp_data, sigma=3.0)
+            temp_snr = temp_data / temp_std
+
+            # aggiorno i limiti per l'immagine ADU
+            if np.min(temp_data) < min_adu_globale:
+                min_adu_globale = np.min(temp_data)
+            if np.max(temp_data) > max_adu_globale:
+                max_adu_globale = np.max(temp_data)
+
+            # aggiorno i limiti per l'immagine SNR
+            if np.min(temp_snr) < min_snr_globale:
+                min_snr_globale = np.min(temp_snr)
+            if np.max(temp_snr) > max_snr_globale:
+                max_snr_globale = np.max(temp_snr)
+
 # --- CARICAMENTO DEI FILE GLOBALI ---
 
 # eseguo un ciclo per gli anni 2025 e 2026
@@ -119,7 +148,8 @@ for anno in [2025, 2026]:
     '''
 
     # visualizzazione ottimizzata per 0.45\textwidth
-    norm = simple_norm(data_finale, 'sqrt')
+    # uso i limiti calcolati per mantenere la scala di colori coerente
+    norm = simple_norm(data_finale, 'sqrt', min_cut=min_adu_globale, max_cut=max_adu_globale)
     # inizializzo la figura per gestire la colorbar in proporzione
     fig = plt.figure(figsize=(4.5, 4))
 
@@ -152,7 +182,8 @@ for anno in [2025, 2026]:
 
             if col_ra in df_catalogate.columns and col_dec in df_catalogate.columns:
                 # creo un array di coordinate celesti dal catalogo
-                cat_coords = SkyCoord(ra=df_catalogate[col_ra].values * u.deg, dec=df_catalogate[col_dec].values * u.deg,
+                cat_coords = SkyCoord(ra=df_catalogate[col_ra].values * u.deg,
+                                      dec=df_catalogate[col_dec].values * u.deg,
                                       frame='icrs')
 
                 # converto le coordinate in pixel relativi alla mia immagine ritagliata
@@ -179,7 +210,7 @@ for anno in [2025, 2026]:
     # aggiungo la colorbar utilizzando fraction e pad per mantenerla in proporzione con l'asse
     cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     # imposto l'etichetta direttamente sulla colorbar
-    cbar.set_label('ADU sum', fontsize=14)
+    cbar.set_label('ADU mean', fontsize=14)
     cbar.ax.tick_params(labelsize=8)
 
     # traduco e dimensiono le etichette degli assi
@@ -205,7 +236,8 @@ for anno in [2025, 2026]:
     print(f"Deviazione standard calcolata per il {anno}: {std}")
 
     # preparo la visualizzazione della mappa SNR per 0.45\textwidth
-    norm_snr = simple_norm(data_snr, 'linear')  # uso una scala lineare per la mappa SNR
+    # applico i limiti globali anche qui
+    norm_snr = simple_norm(data_snr, 'linear', min_cut=min_snr_globale, max_cut=max_snr_globale)
     fig_snr = plt.figure(figsize=(4.5, 4))
 
     # imposto nuovamente il sistema di riferimento celeste

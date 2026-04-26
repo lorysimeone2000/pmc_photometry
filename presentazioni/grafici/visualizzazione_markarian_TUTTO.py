@@ -52,8 +52,8 @@ warnings.filterwarnings('ignore', category=FITSFixedWarning) # sopprimo il warni
 from pathlib import Path
 
 # --- DEFINIZIONE FILE ---
-'''image_file_c = "master_coverage_map.fits"'''
-image_file   = "stacked_sum_mrk421_globale.fits"
+'''image_file_c = "coverage_map_mrk421_COLOSSALE.fits"'''
+image_file   = "stacked_sum_mrk421_COLOSSALE.fits"
 
 # --- CARICAMENTO E CREAZIONE MASCHERA ---
 
@@ -132,7 +132,7 @@ ax.add_patch(cerchio)
 # aggiungo la colorbar utilizzando fraction e pad per mantenerla in proporzione con l'asse
 cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 # imposto l'etichetta direttamente sulla colorbar
-cbar.set_label('ADU sum', fontsize=14)
+cbar.set_label('ADU mean', fontsize=14)
 # configuro la colorbar affinché abbia i font proporzionati
 cbar.ax.tick_params(labelsize=12)
 
